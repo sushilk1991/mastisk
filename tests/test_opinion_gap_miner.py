@@ -93,7 +93,7 @@ def test_run_once_skips_within_cadence(agent, db):
         raise AssertionError("Claude should not be called within cadence")
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        "mastisk.agents.opinion_gap_miner.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -142,10 +142,10 @@ def test_cadence_guard_ignores_daily_kind(agent, db):
     }
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps(payload)}
+        return {"text": json.dumps(payload)}, "claude"
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        "mastisk.agents.opinion_gap_miner.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
@@ -173,7 +173,7 @@ def test_run_once_no_assertive_user_signal_writes_zero(agent, db):
         raise AssertionError("Claude should not be called when no assertions exist")
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        "mastisk.agents.opinion_gap_miner.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -197,7 +197,7 @@ def test_run_once_no_world_signal_writes_zero(agent, db):
         raise AssertionError("Claude should not be called when world signal is empty")
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        "mastisk.agents.opinion_gap_miner.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -360,10 +360,10 @@ def test_run_once_writes_opinion_topics_on_real_conflict(agent, db):
     }
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps(payload)}
+        return {"text": json.dumps(payload)}, "claude"
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        "mastisk.agents.opinion_gap_miner.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
@@ -427,10 +427,10 @@ def test_validator_skips_malformed_persists_survivors(agent, db, caplog):
     }
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps(payload)}
+        return {"text": json.dumps(payload)}, "claude"
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        "mastisk.agents.opinion_gap_miner.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
@@ -465,10 +465,10 @@ def test_zero_topics_response_does_not_block_next_week(agent, db):
     )
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps({"topics": []})}
+        return {"text": json.dumps({"topics": []})}, "claude"
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        "mastisk.agents.opinion_gap_miner.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())

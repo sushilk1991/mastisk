@@ -33,7 +33,7 @@ from typing import ClassVar
 import yaml
 
 from mastisk.agents.base import Agent
-from mastisk.bridges import claude_bridge
+from mastisk.bridges import intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import notes_daily_dir, notes_dir, notes_inbox_dir, vault_dir
@@ -282,7 +282,7 @@ class Notetaker(Agent):
             body=body_core,
         )
 
-        result = await claude_bridge.run_claude(prompt, timeout_s=180)
+        result, _ = await intelligence.run_intelligence(prompt, timeout_s=180)
         raw_text = result.get("text", "") if isinstance(result, dict) else str(result)
         parsed = _extract_json(raw_text)
 

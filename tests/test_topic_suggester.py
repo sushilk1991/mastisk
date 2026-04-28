@@ -92,7 +92,7 @@ def test_run_once_skips_within_cadence(agent, db):
         raise AssertionError("Claude should not be called within cadence")
 
     with patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -114,7 +114,7 @@ def test_run_once_no_user_signal_writes_zero_rows(agent, db):
         raise AssertionError("Claude should not be called when user signal is empty")
 
     with patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -133,7 +133,7 @@ def test_run_once_no_world_signal_writes_zero_rows(agent, db):
         raise AssertionError("Claude should not be called when world signal is empty")
 
     with patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -176,10 +176,10 @@ def test_run_once_writes_suggestions_on_real_crossing(agent, db):
     }
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps(payload)}
+        return {"text": json.dumps(payload)}, "claude"
 
     with patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
@@ -243,10 +243,10 @@ def test_validation_rejects_invalid_topic_shape(agent, db, caplog):
     }
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps(payload)}
+        return {"text": json.dumps(payload)}, "claude"
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
@@ -299,10 +299,10 @@ def test_validation_rejects_non_string_title(agent, db, caplog):
     }
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps(payload)}
+        return {"text": json.dumps(payload)}, "claude"
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
@@ -337,7 +337,7 @@ def test_zero_crossings_writes_nothing(agent, db):
         raise AssertionError("LLM should not be called when no crossings exist")
 
     with patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -376,10 +376,10 @@ def test_synthesis_articles_count_as_world_signal(agent, db):
     }
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps(payload)}
+        return {"text": json.dumps(payload)}, "claude"
 
     with patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
@@ -411,10 +411,10 @@ def test_malformed_json_response_writes_zero_rows(agent, db, caplog):
     )
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": "not json at all"}
+        return {"text": "not json at all"}, "claude"
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
@@ -521,10 +521,10 @@ def test_validator_rejects_cross_kind_confusion(agent, db, caplog):
     }
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps(payload)}
+        return {"text": json.dumps(payload)}, "claude"
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
@@ -574,10 +574,10 @@ def test_validator_returns_empty_when_all_topics_invalid(agent, db):
     }
 
     async def fake_claude(prompt, **kwargs):
-        return {"text": json.dumps(payload)}
+        return {"text": json.dumps(payload)}, "claude"
 
     with patch(
-        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
         new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())

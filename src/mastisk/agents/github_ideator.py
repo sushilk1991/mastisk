@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import ClassVar
 
 from mastisk.agents.base import Agent, enqueue
-from mastisk.bridges import claude_bridge, ollama_bridge
+from mastisk.bridges import claude_bridge, codex_bridge, ollama_bridge
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import notes_inbox_dir, vault_dir
@@ -171,7 +171,7 @@ class GithubIdeator(Agent):
             ideas_per_run=settings.ideas_per_run,
         )
 
-        # Call Claude (or Ollama fallback)
+        # Call Claude → Codex → Ollama
         now_iso = datetime.now(timezone.utc).isoformat()
         ideas: list[dict] = []
         model_used = ""
@@ -182,15 +182,27 @@ class GithubIdeator(Agent):
             ideas = _extract_json_array(text)
             model_used = "claude"
         except Exception as e:
-            log.warning("github_ideator: Claude failed for %s (%s); trying Ollama", slug, e)
+            log.warning("github_ideator: Claude failed for %s (%s); trying Codex", slug, e)
             try:
-                result = await ollama_bridge.run_ollama(prompt, "llama3.1:8b")
-                text = result.get("text", "")
+                result = await codex_bridge.run_codex(prompt)
+                text = result.get("text", "") if isinstance(result, dict) else str(result)
                 ideas = _extract_json_array(text)
-                model_used = "ollama"
+                model_used = "codex"
             except Exception as e2:
-                log.error("github_ideator: Ollama also failed for %s (%s)", slug, e2)
-                error_msg = f"both models failed: claude={e}; ollama={e2}"
+                log.warning(
+                    "github_ideator: Codex failed for %s (%s); falling back to Ollama",
+                    slug, e2,
+                )
+                try:
+                    result = await ollama_bridge.run_ollama(prompt, "llama3.1:8b")
+                    text = result.get("text", "")
+                    ideas = _extract_json_array(text)
+                    model_used = "ollama"
+                except Exception as e3:
+                    log.error("github_ideator: Ollama also failed for %s (%s)", slug, e3)
+                    error_msg = (
+                        f"all models failed: claude={e}; codex={e2}; ollama={e3}"
+                    )
 
         # If we got ideas, write each as a note
         note_ids: list[int] = []

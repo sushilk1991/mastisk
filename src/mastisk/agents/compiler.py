@@ -13,7 +13,7 @@ from pathlib import Path
 from slugify import slugify
 
 from mastisk.agents.base import Agent
-from mastisk.bridges import claude_bridge
+from mastisk.bridges import claude_bridge, intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import vault_dir
@@ -112,10 +112,26 @@ class Compiler(Agent):
             f"{SCHEMA_MD}"
         )
 
-        resp = await claude_bridge.run_claude(prompt)
-        data = claude_bridge.extract_json_block(resp["text"])
+        resp, provider = await intelligence.run_intelligence(prompt)
+        text = resp.get("text") or ""
+        # Claude usually honours the ```json fence; Codex and Ollama often
+        # emit naked {...}. Fall back to a brace-bracketed parse when the
+        # fenced extractor returns nothing — without this, the Codex/Ollama
+        # tiers silently produce no article when Claude is unreachable.
+        data = claude_bridge.extract_json_block(text)
         if not data:
-            log.warning("compiler: no JSON block in claude response for source %s", source_id)
+            start = text.find("{")
+            end = text.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    data = json.loads(text[start : end + 1])
+                except json.JSONDecodeError:
+                    data = None
+        if not data:
+            log.warning(
+                "compiler: no JSON block in %s response for source %s",
+                provider, source_id,
+            )
             return
 
         if data.get("skip"):

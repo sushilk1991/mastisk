@@ -26,7 +26,7 @@ import logging
 import re
 
 from mastisk.agents.base import Agent
-from mastisk.bridges import claude_bridge
+from mastisk.bridges import intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 
@@ -161,16 +161,16 @@ class ArtifactAgent(Agent):
 
         prompt = self._build_prompt(article)
 
-        # Fail loud if Claude is unreachable — the user clicked regenerate and
+        # Fail loud if every bridge is unreachable — the user clicked regenerate and
         # deserves to see the failure in the queue row instead of a silent no-op.
         try:
-            reply = await claude_bridge.run_claude(prompt, timeout_s=300)
+            reply, _ = await intelligence.run_intelligence(prompt, timeout_s=300)
         except Exception as e:
-            log.warning("artifact-agent: claude unreachable for article %s: %s",
+            log.warning("artifact-agent: all LLM bridges unreachable for article %s: %s",
                         article_id, e)
             raise RuntimeError(
-                f"Claude Code unreachable — check your `claude` CLI install "
-                f"(article {article_id})"
+                f"all LLM bridges unreachable — check your `claude` / `codex` / "
+                f"`ollama` install (article {article_id})"
             ) from e
 
         text = reply.get("text", "") if isinstance(reply, dict) else str(reply)

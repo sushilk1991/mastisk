@@ -61,17 +61,19 @@ def test_ideator_writes_ideas_as_notes(db, vault_tmp):
     assert repo["last_ideated_at"] is not None
 
 
-def test_ideator_falls_back_to_ollama_on_claude_failure(db, vault_tmp):
+def test_ideator_falls_back_to_ollama_on_claude_and_codex_failure(db, vault_tmp):
     from mastisk.agents.github_ideator import GithubIdeator
     from mastisk.agents.base import enqueue
     _seed_repo_with_context_and_snapshot(db)
     enqueue("github_ideator", "ideate", {"repo_slug": "a/b"})
 
     async def claude_fails(**kwargs): raise RuntimeError("quota")
+    async def codex_fails(*args, **kwargs): raise RuntimeError("codex down")
     async def ollama_ok(prompt, model):
         return {"text": _FAKE_IDEAS_JSON}
 
     with patch("mastisk.agents.github_ideator.claude_bridge.run_claude", side_effect=claude_fails), \
+         patch("mastisk.agents.github_ideator.codex_bridge.run_codex", side_effect=codex_fails), \
          patch("mastisk.agents.github_ideator.ollama_bridge.run_ollama", side_effect=ollama_ok):
         asyncio.run(GithubIdeator().run_once())
 
@@ -80,7 +82,32 @@ def test_ideator_falls_back_to_ollama_on_claude_failure(db, vault_tmp):
     assert json.loads(runs[0]["note_ids_json"])  # non-empty
 
 
-def test_ideator_records_error_when_both_models_fail(db, vault_tmp):
+def test_ideator_uses_codex_when_claude_fails(db, vault_tmp):
+    """Claude raises; Codex serves the ideas. ``model`` column says 'codex'.
+    Pins the new middle tier between Claude and Ollama."""
+    from mastisk.agents.github_ideator import GithubIdeator
+    from mastisk.agents.base import enqueue
+    _seed_repo_with_context_and_snapshot(db)
+    enqueue("github_ideator", "ideate", {"repo_slug": "a/b"})
+
+    async def claude_fails(**kwargs): raise RuntimeError("quota")
+    async def codex_ok(*args, **kwargs):
+        return {"text": _FAKE_IDEAS_JSON, "raw": _FAKE_IDEAS_JSON}
+
+    async def ollama_should_not_run(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("ollama must not be called when codex serves")
+
+    with patch("mastisk.agents.github_ideator.claude_bridge.run_claude", side_effect=claude_fails), \
+         patch("mastisk.agents.github_ideator.codex_bridge.run_codex", side_effect=codex_ok), \
+         patch("mastisk.agents.github_ideator.ollama_bridge.run_ollama", side_effect=ollama_should_not_run):
+        asyncio.run(GithubIdeator().run_once())
+
+    runs = db.execute("SELECT * FROM repo_idea_runs WHERE repo_slug='a/b'").fetchall()
+    assert runs[0]["model"] == "codex"
+    assert json.loads(runs[0]["note_ids_json"])  # non-empty
+
+
+def test_ideator_records_error_when_all_models_fail(db, vault_tmp):
     from mastisk.agents.github_ideator import GithubIdeator
     from mastisk.agents.base import enqueue
     _seed_repo_with_context_and_snapshot(db)
@@ -89,13 +116,14 @@ def test_ideator_records_error_when_both_models_fail(db, vault_tmp):
     async def always_fails(*args, **kwargs): raise RuntimeError("down")
 
     with patch("mastisk.agents.github_ideator.claude_bridge.run_claude", side_effect=always_fails), \
+         patch("mastisk.agents.github_ideator.codex_bridge.run_codex", side_effect=always_fails), \
          patch("mastisk.agents.github_ideator.ollama_bridge.run_ollama", side_effect=always_fails):
         asyncio.run(GithubIdeator().run_once())
 
     runs = db.execute("SELECT * FROM repo_idea_runs WHERE repo_slug='a/b'").fetchall()
     assert len(runs) == 1
     assert runs[0]["error"] is not None
-    assert "both models failed" in runs[0]["error"]
+    assert "all models failed" in runs[0]["error"]
     # Note count 0
     notes = db.execute("SELECT COUNT(*) AS c FROM notes").fetchone()
     assert notes["c"] == 0

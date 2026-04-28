@@ -19,7 +19,7 @@ from typing import ClassVar
 
 from mastisk.agents.base import Agent
 from mastisk.agents.blog_writer import STOP_WORDS
-from mastisk.bridges import claude_bridge
+from mastisk.bridges import intelligence
 from mastisk.db.queries import connect
 from mastisk.settings import get_settings
 
@@ -334,7 +334,7 @@ class TopicSuggester(Agent):
             crossings_block=self._format_crossings_block(crossings),
         )
         try:
-            result = await claude_bridge.run_claude(prompt, timeout_s=180)
+            result, _ = await intelligence.run_intelligence(prompt, timeout_s=180)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             parsed = json.loads(text.strip())
         except Exception as e:

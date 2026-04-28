@@ -33,7 +33,7 @@ from typing import Any, ClassVar
 from slugify import slugify
 
 from mastisk.agents.base import Agent, enqueue
-from mastisk.bridges import claude_bridge, ollama_bridge
+from mastisk.bridges import claude_bridge, codex_bridge, ollama_bridge
 from mastisk.bridges.claude_bridge import ClaudeError
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -433,7 +433,7 @@ class Escalator(Agent):
             payload={"stub_id": stub_id, "title": title},
         )
 
-    # ───── Claude / Ollama plumbing ─────
+    # ───── Claude / Codex / Ollama plumbing ─────
 
     async def _call_claude(self, prompt: str) -> dict:
         """Run Claude and extract the JSON block. ParseFailure → ClaudeError."""
@@ -443,6 +443,30 @@ class Escalator(Agent):
         if parsed is None:
             raise ClaudeError(
                 f"could not extract JSON block from claude response: {text[:200]!r}"
+            )
+        return parsed
+
+    async def _call_codex(self, prompt: str) -> dict:
+        """Run Codex (cloud-class fallback) and extract JSON.
+
+        Codex sits between Claude and Ollama in the fallback chain. Same JSON
+        extraction tolerance as ``_call_ollama`` — fenced block first, then
+        naked-braces parse for models that skip the fence.
+        """
+        result = await codex_bridge.run_codex(prompt)
+        text = result.get("text", "") if isinstance(result, dict) else str(result)
+        parsed = claude_bridge.extract_json_block(text)
+        if parsed is None:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    parsed = json.loads(text[start : end + 1])
+                except json.JSONDecodeError:
+                    parsed = None
+        if parsed is None:
+            raise RuntimeError(
+                f"escalator: could not extract JSON from codex response: {text[:200]!r}"
             )
         return parsed
 
@@ -477,12 +501,13 @@ class Escalator(Agent):
         error: ClaudeError,
         settings,
     ) -> None:
-        """Retry with backoff, or fall back to Ollama on exhaustion.
+        """Retry with backoff, or fall back to Codex → Ollama on exhaustion.
 
         State machine (§9.4):
             pending --ClaudeError, budget remains--> retrying
-            pending --budget exhausted, Ollama ok--> auto_done|manual_done
-            pending --budget exhausted, Ollama fail--> failed
+            pending --budget exhausted, Codex ok--> auto_done|manual_done
+            pending --budget exhausted, Codex fail, Ollama ok--> auto_done|manual_done
+            pending --budget exhausted, Codex+Ollama fail--> failed
         """
         with connect() as conn:
             note_row = q.get_note(conn, note_id)
@@ -508,7 +533,8 @@ class Escalator(Agent):
             )
             return
 
-        # Exhausted. Bump retry_count (records that retries are used) and try Ollama.
+        # Exhausted. Bump retry_count (records that retries are used) and try
+        # Codex (cloud-class) before falling all the way down to local Ollama.
         self._transition(
             note_id,
             state="pending",
@@ -516,9 +542,27 @@ class Escalator(Agent):
             retry_count=new_count,
         )
         log.info(
-            "escalator: note %s claude exhausted (count=%s), falling back to ollama",
+            "escalator: note %s claude exhausted (count=%s), trying codex",
             note_id, new_count,
         )
+        try:
+            parsed = await self._call_codex(prompt)
+        except Exception as codex_err:
+            log.warning(
+                "escalator: note %s codex fallback failed (%s); trying ollama",
+                note_id, codex_err,
+            )
+        else:
+            with connect() as conn:
+                fresh = q.get_note(conn, note_id)
+            if fresh is None:
+                return
+            self._finish_success(
+                note_id=note_id, note=fresh, trigger=trigger,
+                parsed=parsed, model="codex",
+            )
+            return
+
         try:
             parsed = await self._call_ollama(prompt, model=settings.escalator_model)
         except Exception as oll_err:

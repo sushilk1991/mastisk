@@ -131,6 +131,23 @@ def _patch_ollama(return_value=None, side_effect=None):
     )
 
 
+def _patch_codex(return_value=None, side_effect=None):
+    """Patch codex_bridge.run_codex inside the escalator module.
+
+    Codex sits between Claude and Ollama in the fallback chain. Tests that
+    exercised Claude→Ollama directly need to neutralise Codex (default:
+    raise) so Ollama is reached.
+    """
+    if side_effect is None and return_value is None:
+        side_effect = RuntimeError("codex unavailable in test")
+    return patch(
+        "mastisk.agents.escalator.codex_bridge.run_codex",
+        new_callable=AsyncMock,
+        return_value=return_value if side_effect is None else None,
+        side_effect=side_effect,
+    )
+
+
 # ─────────────────────────────── rule-pass / happy path ───────────────────────────────
 
 
@@ -362,9 +379,11 @@ def test_claude_exhausted_falls_back_to_ollama(escalator, db, vault_tmp):
         }),
     }
     with _patch_claude(side_effect=ClaudeError("still broken")) as mock_claude, \
+         _patch_codex() as mock_codex, \
          _patch_ollama(return_value=ollama_resp) as mock_ollama:
         asyncio.run(escalator.run_once())
     assert mock_claude.call_count == 1
+    assert mock_codex.call_count == 1
     assert mock_ollama.call_count == 1
 
     row = db.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
@@ -377,6 +396,56 @@ def test_claude_exhausted_falls_back_to_ollama(escalator, db, vault_tmp):
     ).fetchone()
     assert esc["result"] == "stub_created"
     assert esc["model"] == "ollama"
+
+
+def test_claude_exhausted_codex_serves_succeeds(escalator, db, vault_tmp):
+    """After Claude is exhausted and Codex succeeds, Ollama is never called.
+    Pins the Codex tier between Claude and Ollama in the fallback chain."""
+    from mastisk.bridges.claude_bridge import ClaudeError
+
+    note_id = _seed_note(
+        db,
+        escalation_state="retrying",
+        escalation_retry_count=2,
+        escalation_trigger="auto",
+        escalation_next_attempt_at=(
+            datetime.now().astimezone() - timedelta(minutes=1)
+        ).isoformat(),
+    )
+    _enqueue_evaluate(note_id)
+
+    codex_resp = {
+        "text": (
+            "```json\n"
+            + json.dumps({
+                "title": "codex stub",
+                "kind": "Concept",
+                "framing_paragraph": "Codex built this stub after Claude exhausted.",
+                "research_questions": ["q1?", "q2?", "q3?"],
+            })
+            + "\n```"
+        ),
+        "raw": "raw",
+    }
+
+    with _patch_claude(side_effect=ClaudeError("still broken")) as mock_claude, \
+         _patch_codex(return_value=codex_resp) as mock_codex, \
+         _patch_ollama(side_effect=AssertionError("ollama must not be called")) as mock_ollama:
+        asyncio.run(escalator.run_once())
+    assert mock_claude.call_count == 1
+    assert mock_codex.call_count == 1
+    assert mock_ollama.call_count == 0
+
+    row = db.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+    assert row["escalation_state"] == "auto_done"
+    assert row["escalation_article_id"] is not None
+
+    esc = db.execute(
+        "SELECT * FROM note_escalations WHERE note_id=? ORDER BY id DESC LIMIT 1",
+        (note_id,),
+    ).fetchone()
+    assert esc["result"] == "stub_created"
+    assert esc["model"] == "codex"
 
 
 def test_ollama_also_fails_state_is_failed(escalator, db, vault_tmp):
@@ -395,6 +464,7 @@ def test_ollama_also_fails_state_is_failed(escalator, db, vault_tmp):
     _enqueue_evaluate(note_id)
 
     with _patch_claude(side_effect=ClaudeError("claude down")), \
+         _patch_codex(), \
          _patch_ollama(side_effect=RuntimeError("ollama dead")):
         asyncio.run(escalator.run_once())
 

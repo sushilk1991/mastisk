@@ -59,6 +59,19 @@ def _enqueue(bp_id: int) -> None:
     enqueue("blog_writer", "draft", {"blog_post_id": bp_id})
 
 
+def _patch_codex_dead():
+    """Default-defuse the Codex tier so tests that exercise the Claude→Ollama
+    path still reach Ollama. The intelligence chain inserts Codex between
+    Claude and Ollama; tests that don't care about Codex need it to raise so
+    the next tier is reached.
+    """
+    return patch(
+        "mastisk.agents.blog_writer.codex_bridge.run_codex",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("codex unavailable in test"),
+    )
+
+
 _FAKE_DRAFT = {
     "title": "The shape of the draft",
     "tags": ["test-time-compute", "agents"],
@@ -197,7 +210,7 @@ def test_claude_failure_falls_back_to_ollama(agent, db, vault_tmp):
     with patch(
         "mastisk.agents.blog_writer.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=fake_claude,
-    ), patch(
+    ), _patch_codex_dead(), patch(
         "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
         new_callable=AsyncMock, side_effect=fake_ollama,
     ):
@@ -210,6 +223,41 @@ def test_claude_failure_falls_back_to_ollama(agent, db, vault_tmp):
     assert row["model"] == "ollama"
 
 
+def test_codex_serves_when_claude_fails(agent, db, vault_tmp):
+    """Claude raises → Codex serves the draft → ``model='codex'`` lands.
+    Pins the new middle tier between Claude and Ollama."""
+    _seed_note(db, body="n", summary="s")
+    bp_id = _seed_blog_post(db)
+    _enqueue(bp_id)
+
+    async def fake_claude(*a, **kw):
+        raise RuntimeError("claude quota")
+
+    async def fake_codex(*a, **kw):
+        return {"text": json.dumps(_FAKE_DRAFT), "raw": "raw"}
+
+    async def ollama_should_not_run(*a, **kw):  # pragma: no cover - asserts no call
+        raise AssertionError("ollama must not be called when codex serves")
+
+    with patch(
+        "mastisk.agents.blog_writer.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
+    ), patch(
+        "mastisk.agents.blog_writer.codex_bridge.run_codex",
+        new_callable=AsyncMock, side_effect=fake_codex,
+    ), patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock, side_effect=ollama_should_not_run,
+    ):
+        asyncio.run(agent.run_once())
+
+    row = db.execute(
+        "SELECT status, model FROM blog_posts WHERE id=?", (bp_id,),
+    ).fetchone()
+    assert row["status"] == "done"
+    assert row["model"] == "codex"
+
+
 def test_both_models_fail(agent, db):
     _seed_note(db, body="n", summary="s")
     bp_id = _seed_blog_post(db)
@@ -220,6 +268,9 @@ def test_both_models_fail(agent, db):
 
     with patch(
         "mastisk.agents.blog_writer.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=always_fail,
+    ), patch(
+        "mastisk.agents.blog_writer.codex_bridge.run_codex",
         new_callable=AsyncMock, side_effect=always_fail,
     ), patch(
         "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
@@ -652,7 +703,7 @@ def test_claude_non_json_retries_once_then_falls_back(agent, db, vault_tmp):
     with patch(
         "mastisk.agents.blog_writer.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=fake_claude,
-    ), patch(
+    ), _patch_codex_dead(), patch(
         "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
         new_callable=AsyncMock, side_effect=fake_ollama,
     ):
@@ -687,7 +738,7 @@ def test_claude_returns_list_json_retries_then_ollama(agent, db, vault_tmp):
     with patch(
         "mastisk.agents.blog_writer.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=fake_claude,
-    ), patch(
+    ), _patch_codex_dead(), patch(
         "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
         new_callable=AsyncMock, side_effect=fake_ollama,
     ):
@@ -720,7 +771,7 @@ def test_claude_bad_body_md_retries_then_ollama(agent, db, vault_tmp, bad_body):
     with patch(
         "mastisk.agents.blog_writer.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=fake_claude,
-    ), patch(
+    ), _patch_codex_dead(), patch(
         "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
         new_callable=AsyncMock, side_effect=fake_ollama,
     ):
@@ -754,7 +805,7 @@ def test_claude_transport_error_skips_retry(agent, db, vault_tmp):
     with patch(
         "mastisk.agents.blog_writer.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=fake_claude,
-    ), patch(
+    ), _patch_codex_dead(), patch(
         "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
         new_callable=AsyncMock, side_effect=fake_ollama,
     ):
@@ -840,7 +891,7 @@ def test_ollama_fallback_prompt_within_char_limit(agent, db, vault_tmp):
     with patch(
         "mastisk.agents.blog_writer.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=fake_claude,
-    ), patch(
+    ), _patch_codex_dead(), patch(
         "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
         new_callable=AsyncMock, side_effect=fake_ollama,
     ):

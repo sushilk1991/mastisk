@@ -22,21 +22,24 @@ def notetaker(db, vault_tmp):
 
 @pytest.fixture
 def fake_ollama():
-    """Patch ``claude_bridge.run_claude`` inside the notetaker module with a canned response.
+    """Patch ``intelligence.run_intelligence`` inside the notetaker module with a canned response.
 
     Fixture name kept for historical churn-avoidance — the patched target is
-    Claude now, but the call sites still reference ``fake_ollama``."""
-    default = {
-        "text": json.dumps({
-            "classification": "idea",
-            "summary": "a brief summary",
-            "confidence": 0.85,
-            "tags": ["ai", "mastisk"],
-            "related_articles": [],
-        }),
-    }
+    the LLM fallback chain now, but the call sites still reference ``fake_ollama``."""
+    default = (
+        {
+            "text": json.dumps({
+                "classification": "idea",
+                "summary": "a brief summary",
+                "confidence": 0.85,
+                "tags": ["ai", "mastisk"],
+                "related_articles": [],
+            }),
+        },
+        "claude",
+    )
     with patch(
-        "mastisk.agents.notetaker.claude_bridge.run_claude",
+        "mastisk.agents.notetaker.intelligence.run_intelligence",
         new_callable=AsyncMock,
     ) as mock:
         mock.return_value = default
@@ -180,17 +183,20 @@ def test_notetaker_links_existing_related_articles(notetaker, db, vault_tmp):
     )
     enqueue("notetaker", "classify", {"note_id": note_id})
 
-    canned = {
-        "text": json.dumps({
-            "classification": "insight",
-            "summary": "thoughts on real-article",
-            "confidence": 0.9,
-            "tags": ["tag-a"],
-            "related_articles": ["real-article", "hallucinated-slug"],
-        }),
-    }
+    canned = (
+        {
+            "text": json.dumps({
+                "classification": "insight",
+                "summary": "thoughts on real-article",
+                "confidence": 0.9,
+                "tags": ["tag-a"],
+                "related_articles": ["real-article", "hallucinated-slug"],
+            }),
+        },
+        "claude",
+    )
     with patch(
-        "mastisk.agents.notetaker.claude_bridge.run_claude",
+        "mastisk.agents.notetaker.intelligence.run_intelligence",
         new_callable=AsyncMock,
         return_value=canned,
     ):

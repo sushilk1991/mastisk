@@ -39,7 +39,7 @@ from pathlib import Path
 from slugify import slugify
 
 from mastisk.agents.base import Agent
-from mastisk.bridges import claude_bridge
+from mastisk.bridges import intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import vault_dir
@@ -556,7 +556,7 @@ class Synthesizer(Agent):
         """
         prompt = self._draft_prompt(members, positives, negatives)
         try:
-            reply = await claude_bridge.run_claude(prompt, timeout_s=300)
+            reply, _ = await intelligence.run_intelligence(prompt, timeout_s=300)
         except Exception as e:
             log.warning("synthesizer: draft model unreachable: %s", e)
             return None, None, None
@@ -584,7 +584,7 @@ class Synthesizer(Agent):
         ship an uncritiqued draft than skip entirely."""
         prompt = self._critic_prompt(draft_data, members)
         try:
-            resp = await claude_bridge.run_claude(prompt, timeout_s=180)
+            resp, _ = await intelligence.run_intelligence(prompt, timeout_s=180)
         except Exception as e:
             log.warning("synthesizer: critic unreachable (%s); shipping uncritiqued", e)
             return None, None

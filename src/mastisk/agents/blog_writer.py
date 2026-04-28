@@ -22,7 +22,7 @@ from typing import Any, ClassVar
 from slugify import slugify
 
 from mastisk.agents.base import Agent
-from mastisk.bridges import claude_bridge, ollama_bridge
+from mastisk.bridges import claude_bridge, codex_bridge, ollama_bridge
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import blog_drafts_dir, vault_dir
@@ -742,16 +742,17 @@ class BlogWriter(Agent):
     async def _call_llm(
         self, *, prompt: str, ranked: list[dict], theme: str,
     ) -> tuple[dict | None, str]:
-        """Try Claude; fall back to Ollama with a tighter prompt. See spec §13.
+        """Try Claude → Codex → Ollama (with tighter prompt). See spec §13.
 
         Returns (parsed_json_dict, model_label). ``model_label`` is 'claude',
-        'ollama', or 'none' on double failure.
+        'codex', 'ollama', or 'none' on triple failure.
 
         Spec §17 mandates one retry on JSON-shape failure (bad parse, missing/
         empty body_md) before falling through to Ollama — we catch JSON errors
         distinctly from transport errors so the retry fires only when the
         model *responded* but misformatted. Transport exceptions (timeout,
-        non-zero exit) skip the retry and fall straight to Ollama.
+        non-zero exit) skip the retry and fall straight to the next tier.
+        Codex sits between Claude and Ollama as a second cloud-class tier.
         """
         settings = get_settings().blog
 
@@ -775,7 +776,7 @@ class BlogWriter(Agent):
             if claude_retried:
                 log.warning(
                     "blog_writer: Claude retry also produced invalid JSON; "
-                    "falling back to Ollama",
+                    "falling back to Codex",
                 )
                 break
             log.warning(
@@ -783,6 +784,19 @@ class BlogWriter(Agent):
             )
             claude_retried = True
             claude_prompt = prompt + _JSON_RETRY_SUFFIX
+
+        # Codex tier: same prompt as Claude, single attempt, no JSON-retry.
+        try:
+            result = await codex_bridge.run_codex(
+                prompt, timeout=float(settings.claude_timeout_seconds),
+            )
+            text = result.get("text", "") if isinstance(result, dict) else str(result)
+            parsed = _try_parse_draft(text)
+            if parsed is not None:
+                return parsed, "codex"
+            log.warning("blog_writer: Codex JSON invalid/missing body_md; falling back to Ollama")
+        except Exception as e:
+            log.warning("blog_writer: Codex call failed (%s); falling back to Ollama", e)
 
         # Re-render with the Ollama-tighter budget. llama3.1:8b degrades past
         # roughly 16-32k context, so we cap the full prompt at 20k by default.
