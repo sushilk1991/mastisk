@@ -201,7 +201,17 @@ CREATE TRIGGER IF NOT EXISTS articles_ad AFTER DELETE ON articles BEGIN
   INSERT INTO articles_fts(articles_fts, rowid, title, summary, body_md)
     VALUES ('delete', old.rowid, old.title, old.summary, old.body_md);
 END;
-CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles BEGIN
+-- Same WHEN-guard rationale as notes_au and blog_posts_au further down: every
+-- link insert/delete fires links_ai/links_ad triggers that bump
+-- backlinks_count and forwardlinks_count on the linked article, which
+-- otherwise would re-index the article's full title+summary+body for FTS
+-- even though none of those columns changed. Article ingestion is link-heavy,
+-- so this is the hottest of the three tables for spurious reindex traffic.
+CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles
+WHEN old.title IS NOT new.title
+  OR old.summary IS NOT new.summary
+  OR old.body_md IS NOT new.body_md
+BEGIN
   INSERT INTO articles_fts(articles_fts, rowid, title, summary, body_md)
     VALUES ('delete', old.rowid, old.title, old.summary, old.body_md);
   INSERT INTO articles_fts(rowid, title, summary, body_md)

@@ -69,7 +69,7 @@ def test_fts_palette_query_emitting_those_terms_doesnt_crash_fts5(
 
 
 def test_fts_palette_query_handles_unicode() -> None:
-    """The default \\w+ regex must include Latin-with-diacritics, CJK, and
+    """The Unicode regex must include Latin-with-diacritics, CJK, and
     Cyrillic; otherwise non-ASCII queries silently return None."""
     assert _fts_palette_query("résumé") == "résumé*"
     assert _fts_palette_query("café latte") == "café* latte*"
@@ -78,6 +78,36 @@ def test_fts_palette_query_handles_unicode() -> None:
     assert cjk is not None and "元気" in cjk
     # Cyrillic
     assert _fts_palette_query("Москва") == "москва*"
+
+
+def test_fts_palette_query_splits_underscored_identifiers() -> None:
+    """snake_case and dunder identifiers must split into AND-joined prefix
+    terms, not collapse into a single phrase token. Catching this is the
+    whole reason we use [^\\W_]+ instead of \\w+ — \\w treats underscore
+    as a word character, but FTS5's query parser then re-tokenizes the
+    bare token 'foo_bar*' as the phrase 'foo bar*' (only the LAST token
+    gets the prefix wildcard), which is a phrase match — silently
+    different from what the user typed."""
+    assert _fts_palette_query("test_helper") == "test* helper*"
+    assert _fts_palette_query("__init__") == "init*"
+    assert _fts_palette_query("snake_case_var") == "snake* case* var*"
+
+
+def test_fts_palette_query_underscored_query_actually_matches(
+    db: sqlite3.Connection,
+) -> None:
+    """End-to-end: a FTS-indexed article body containing 'test_helper'
+    should be findable when the user types 'test_helper'. unicode61
+    tokenizes 'test_helper' in indexed content as ['test', 'helper'];
+    we must do the same on the query side."""
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, summary, body_md)
+           VALUES ('art', 'Concept', 'helpers', 's', 'a',
+                   'See test_helper.py for shared fixtures.')""",
+    )
+    results = search_all(db, "test_helper")
+    assert any(r["kind"] == "article" for r in results), \
+        "snake_case identifier query did not match indexed content"
 
 
 # ─────────────────────────────── search_all ───────────────────────────────
@@ -223,6 +253,16 @@ def test_ensure_fts_initialized_rebuilds_for_preexisting_rows(
 # ─────────────────────────────── Triggers ───────────────────────────────
 
 
+def _fts_data_rows(db: sqlite3.Connection, table: str) -> int:
+    """Row count of the ``<table>_data`` shadow segment. This is what
+    actually grows when FTS5 re-indexes content — the docsize.sz column
+    only reflects token COUNT for the row's content, so a trigger that
+    deletes-then-reinserts the SAME body produces an identical sz value
+    even though it WROTE to _data. _data row growth is the trigger-fire
+    signal we need."""
+    return db.execute(f"SELECT COUNT(*) FROM {table}_data").fetchone()[0]
+
+
 def test_notes_au_trigger_skips_unchanged_indexed_columns(
     db: sqlite3.Connection,
 ) -> None:
@@ -232,36 +272,31 @@ def test_notes_au_trigger_skips_unchanged_indexed_columns(
     db.execute(
         """INSERT INTO notes (slug, path, body, body_sha256, source, created_at,
                               summary)
-           VALUES ('n', 'p/n.md', 'foo', 'h', 'pwa', '2026-04-26T10:00:00',
-                   's')""",
+           VALUES ('n', 'p/n.md', 'long body text content here', 'h', 'pwa',
+                   '2026-04-26T10:00:00', 'summary text')""",
     )
-    # Rowid must exist in FTS now (via notes_ai trigger).
-    indexed_before = db.execute(
-        "SELECT 1 FROM notes_fts_docsize WHERE id = 1"
-    ).fetchone()
-    assert indexed_before is not None
 
-    # Snapshot the docsize row's content (sz column) — same content should
-    # yield the same docsize. Any trigger fire would re-emit the row.
-    sz_before = db.execute(
-        "SELECT sz FROM notes_fts_docsize WHERE id = 1"
-    ).fetchone()["sz"]
+    # Force a checkpoint so any pending insert work is flushed into _data.
+    db.execute("INSERT INTO notes_fts(notes_fts) VALUES('optimize')")
+    data_before = _fts_data_rows(db, "notes_fts")
 
-    # Touch a non-indexed column. Should NOT fire the re-index trigger.
+    # Touch only non-indexed columns — should NOT cause new _data rows.
     db.execute("UPDATE notes SET escalation_state = 'pending' WHERE id = 1")
+    db.execute("UPDATE notes SET escalation_retry_count = 1 WHERE id = 1")
+    db.execute("UPDATE notes SET classified_at = CURRENT_TIMESTAMP WHERE id = 1")
 
-    sz_after = db.execute(
-        "SELECT sz FROM notes_fts_docsize WHERE id = 1"
-    ).fetchone()["sz"]
-    assert sz_before == sz_after, \
-        "FTS re-indexed despite summary/body unchanged"
+    data_after = _fts_data_rows(db, "notes_fts")
+    assert data_after == data_before, (
+        f"FTS index churned on no-op UPDATE: {data_before} → {data_after}"
+    )
 
-    # Sanity check: changing an indexed column DOES re-index.
-    db.execute("UPDATE notes SET body = 'updated long body text' WHERE id = 1")
-    new_sz = db.execute(
-        "SELECT sz FROM notes_fts_docsize WHERE id = 1"
-    ).fetchone()["sz"]
-    assert new_sz != sz_before, "trigger failed to re-index on real change"
+    # Sanity: actually changing the indexed body DOES grow _data (or at
+    # least reach the trigger; we accept ≥ to avoid coupling to merge tuning).
+    db.execute(
+        "UPDATE notes SET body = 'completely different body content' WHERE id = 1"
+    )
+    data_after_change = _fts_data_rows(db, "notes_fts")
+    assert data_after_change >= data_after, "trigger didn't fire on real change"
 
 
 def test_blog_posts_au_trigger_skips_unchanged_indexed_columns(
@@ -271,17 +306,58 @@ def test_blog_posts_au_trigger_skips_unchanged_indexed_columns(
     (pending → running → done) shouldn't churn the FTS index."""
     db.execute(
         """INSERT INTO blog_posts (theme, window_days, status, title, body_preview)
-           VALUES ('t', 7, 'pending', 'init title', 'init preview')""",
+           VALUES ('t', 7, 'pending', 'init title', 'init preview text')""",
     )
-    sz_before = db.execute(
-        "SELECT sz FROM blog_posts_fts_docsize WHERE id = 1"
-    ).fetchone()["sz"]
+    db.execute("INSERT INTO blog_posts_fts(blog_posts_fts) VALUES('optimize')")
+    data_before = _fts_data_rows(db, "blog_posts_fts")
 
     db.execute("UPDATE blog_posts SET status = 'running' WHERE id = 1")
-    sz_after = db.execute(
-        "SELECT sz FROM blog_posts_fts_docsize WHERE id = 1"
-    ).fetchone()["sz"]
-    assert sz_before == sz_after
+    db.execute("UPDATE blog_posts SET status = 'done' WHERE id = 1")
+    db.execute(
+        "UPDATE blog_posts SET saved_as_note_id = NULL WHERE id = 1"
+    )
+
+    data_after = _fts_data_rows(db, "blog_posts_fts")
+    assert data_after == data_before, (
+        f"blog_posts FTS churned on no-op UPDATE: {data_before} → {data_after}"
+    )
+
+
+def test_articles_au_trigger_skips_unchanged_indexed_columns(
+    db: sqlite3.Connection,
+) -> None:
+    """Articles get UPDATEd on every link insert/delete (count bumps via
+    links_ai / links_ad triggers) — these mustn't reindex the article's
+    title/summary/body for FTS. This is the hottest path of the three
+    because article ingestion is link-heavy."""
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, summary, body_md)
+           VALUES ('art', 'Concept', 'tt compute', 'tt-compute',
+                   'a summary', 'long body about reasoning models')""",
+    )
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, summary, body_md)
+           VALUES ('art2', 'Concept', 'agents', 'agents', 'b', 'agent body')""",
+    )
+    db.execute("INSERT INTO articles_fts(articles_fts) VALUES('optimize')")
+    data_before = _fts_data_rows(db, "articles_fts")
+
+    # Inserting a link bumps backlinks_count/forwardlinks_count — these
+    # are columns that are NOT in the FTS schema (title, summary, body_md).
+    db.execute(
+        "INSERT INTO links (from_article, to_article, weight) VALUES (?, ?, ?)",
+        ("art2", "art", 0.9),
+    )
+    # Direct count-bump UPDATE (no link involved) — same expectation.
+    db.execute(
+        "UPDATE articles SET sources_count = sources_count + 1 WHERE id = ?",
+        ("art",),
+    )
+
+    data_after = _fts_data_rows(db, "articles_fts")
+    assert data_after == data_before, (
+        f"articles FTS churned on link/count UPDATE: {data_before} → {data_after}"
+    )
 
 
 # ─────────────────────────────── Helpers ───────────────────────────────

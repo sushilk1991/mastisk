@@ -606,11 +606,15 @@ def _fts_palette_query(q: str) -> str | None:
     the SELECT entirely in that case.
     """
     import re
-    # Split on non-word so "test-time" → ["test", "time"], "résumé" stays as
-    # a single token. The \w class with re.UNICODE matches accented Latin,
-    # CJK, Cyrillic etc., aligning with FTS5's default unicode61 tokenizer.
-    # Otherwise an ASCII-only regex would silently drop all non-ASCII queries.
-    tokens = re.findall(r"\w+", q, flags=re.UNICODE)
+    # Tokenization: keep letters/digits/marks across all scripts (Latin with
+    # diacritics, CJK, Cyrillic, etc.) and split on everything else INCLUDING
+    # underscore. `[^\W_]+` is "word chars but not underscore" — it gives us
+    # \w's Unicode coverage without `\w`'s gotcha that "test_helper" stays a
+    # single token (which FTS5's query parser would then re-tokenize into a
+    # phrase 'test helper', defeating the AND-joined prefix-match contract).
+    # An ASCII-only regex would silently drop all non-ASCII queries; this
+    # one aligns with what users actually mean for snake_case identifiers.
+    tokens = re.findall(r"[^\W_]+", q, flags=re.UNICODE)
     terms: list[str] = []
     for t in tokens:
         lower = t.lower()

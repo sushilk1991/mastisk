@@ -84,6 +84,12 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
     if (!open) return;
     const trimmed = query.trim();
     if (trimmed.length < MIN_QUERY_LEN) {
+      // Bump the sequence number on early-return too, so any in-flight
+      // request from a longer query (whose response may have already crossed
+      // the wire and queued .then() before AbortController.abort() ran)
+      // sees mySeq !== seqRef.current and bails out instead of repopulating
+      // results we just cleared.
+      seqRef.current += 1;
       setResults([]);
       setActive(0);
       setLoading(false);
