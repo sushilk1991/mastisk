@@ -18,10 +18,13 @@ KIND_COLOR = {
 @router.get("/graph")
 def graph():
     with connect() as conn:
+        # backlinks_count / forwardlinks_count are maintained by the
+        # links_ai / links_ad triggers (see schema.sql), so reading them is
+        # cheaper than recounting via correlated subqueries on every request.
         articles = [dict(r) for r in conn.execute(
             """SELECT id, title, kind,
-                      (SELECT COUNT(*) FROM links WHERE to_article   = articles.id) AS backlinks,
-                      (SELECT COUNT(*) FROM links WHERE from_article = articles.id) AS forwardlinks
+                      backlinks_count    AS backlinks,
+                      forwardlinks_count AS forwardlinks
                FROM articles ORDER BY updated_at DESC"""
         )]
         edges = [dict(r) for r in conn.execute(
