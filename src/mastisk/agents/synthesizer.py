@@ -11,11 +11,12 @@ Cluster selection: Personalized PageRank (HippoRAG2-style).
   3. Top-K (K<=8) by PPR score = the cluster.
   4. Require at least 3 members and one non-seed, else skip.
 
-Generation: Draft→Critic self-refine loop (bounded to 2 iterations).
-  - Draft model: the heavy Ollama model (currently kimi-k2.*:cloud).
-  - Critic model: Claude (different family, dodges self-preference bias).
-  - Critic writes rationale bullets first, then ``SCORE: <1-5>``. We stop
-    early if score>=4, else redraft once with the rationale inlined.
+Generation: single Claude draft + single Claude critique for bookkeeping.
+  - Draft model: Claude (via the local ``claude`` CLI).
+  - Critic model: Claude (same family — looping it on its own output is
+    recursive and adds latency without value, so we don't).
+  - Critic writes rationale bullets first, then ``SCORE: <1-5>``. The score
+    is recorded but never triggers a revision; emit policy below covers it.
 
 Emit policy: we do NOT gate on score. Every synthesis ships as a
 kind='Synthesis' article with ``updated_by='Synthesizer'``; the UI's
@@ -38,7 +39,7 @@ from pathlib import Path
 from slugify import slugify
 
 from mastisk.agents.base import Agent
-from mastisk.bridges import claude_bridge, ollama_bridge
+from mastisk.bridges import claude_bridge
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import vault_dir
@@ -70,13 +71,6 @@ _SEED_LIMIT = 10
 # attempt one spontaneous synthesis. APScheduler's max_instances=1 prevents
 # overlap with the next tick.
 _MAX_QUEUED_JOBS_PER_TICK = 3
-
-# Self-Refine budget. Max two LLM round-trips per synthesis — one draft
-# plus one critique; optionally one redraft if the first critique scored
-# <4 and we have iterations left.
-_MAX_REFINE_ITERATIONS = 2
-_GOOD_ENOUGH_SCORE = 4.0
-
 
 # JSON schema the draft model must emit. Mirrors Compiler.SCHEMA_MD but
 # slightly slimmer — Synthesis articles don't need aka, their kind is
@@ -554,60 +548,32 @@ class Synthesizer(Agent):
         positives: list[dict],
         negatives: list[dict],
     ) -> tuple[dict | None, float | None, str | None]:
-        """Run up to _MAX_REFINE_ITERATIONS draft/critique cycles.
+        """Run a single Claude draft, then a single Claude critique for a score.
 
-        Returns (draft_data, score, rationale). draft_data is None only if
-        *every* attempt produced malformed JSON; we still bubble up the last
-        critic score/rationale for bookkeeping.
+        Returns (draft_data, score, rationale). draft_data is None only if the
+        draft call failed or produced malformed JSON. The critic's score is
+        recorded for bookkeeping but never triggers a revision.
         """
-        draft_data: dict | None = None
-        score: float | None = None
-        rationale: str | None = None
-        revision_note = ""
+        prompt = self._draft_prompt(members, positives, negatives)
+        try:
+            reply = await claude_bridge.run_claude(prompt, timeout_s=300)
+        except Exception as e:
+            log.warning("synthesizer: draft model unreachable: %s", e)
+            return None, None, None
 
-        for i in range(_MAX_REFINE_ITERATIONS):
-            prompt = self._draft_prompt(members, positives, negatives)
-            if revision_note:
-                prompt = f"{prompt}\n\n─── revise: previous critique ───\n{revision_note}\n"
-            try:
-                reply = await ollama_bridge.chat(prompt, cheap=False)
-            except Exception as e:
-                log.warning("synthesizer: draft model unreachable: %s", e)
-                return draft_data, score, rationale
-
-            candidate = self._extract_draft_json(reply)
-            if candidate is None:
-                log.info(
-                    "synthesizer: malformed draft JSON on iter %d (reply len=%d)",
-                    i,
-                    len(reply or ""),
-                )
-                # Retry with an explicit nudge. On the *second* failure we
-                # give up and let the caller record the run as failed.
-                revision_note = (
-                    "Your previous response did not contain a parseable ```json``` "
-                    "block. Return ONLY the JSON object in a fenced block, nothing else."
-                )
-                continue
-
-            draft_data = self._normalise_draft(candidate, members)
-
-            score, rationale = await self._critique(draft_data, members)
-            if score is None:
-                # Critic call failed — keep the draft but bail out of the
-                # refinement loop. We'd rather ship an uncritiqued draft than
-                # loop forever when Claude is down.
-                return draft_data, None, None
-
-            if score >= _GOOD_ENOUGH_SCORE:
-                return draft_data, score, rationale
-
-            # Feed the critique back in for the next attempt.
-            revision_note = (
-                f"The reviewer gave your last draft {score:.1f}/5 with these notes. "
-                f"Fix these issues and return a fresh JSON object:\n\n{rationale}"
+        text = reply.get("text") or ""
+        candidate = self._extract_draft_json(text)
+        if candidate is None:
+            log.info(
+                "synthesizer: malformed draft JSON (reply len=%d)",
+                len(text),
             )
+            return None, None, None
 
+        draft_data = self._normalise_draft(candidate, members)
+        score, rationale = await self._critique(draft_data, members)
+        # Critic failure → ship the uncritiqued draft. Low score → still ship;
+        # the UI's accept/discard layer is what gates emit.
         return draft_data, score, rationale
 
     async def _critique(

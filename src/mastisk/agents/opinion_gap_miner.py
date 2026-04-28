@@ -23,7 +23,7 @@ from typing import ClassVar
 
 from mastisk.agents.base import Agent
 from mastisk.agents.blog_writer import STOP_WORDS
-from mastisk.bridges import ollama_bridge
+from mastisk.bridges import claude_bridge
 from mastisk.db.queries import connect
 from mastisk.settings import get_settings
 
@@ -392,17 +392,14 @@ class OpinionGapMiner(Agent):
         return "\n".join(lines).rstrip() + "\n"
 
     async def _llm_suggest(self, pairs: list[dict]) -> list[dict] | None:
-        """Single Ollama call. Returns the parsed topics list or None on
+        """Single Claude call. Returns the parsed topics list or None on
         transport / parse failure (caller logs and writes zero rows)."""
-        s = get_settings()
         prompt = SUGGEST_PROMPT_TEMPLATE.format(
             identity_preamble=self._identity_preamble(),
             pairs_block=self._format_pairs_block(pairs),
         )
         try:
-            result = await ollama_bridge.run_ollama(
-                prompt, s.summarize_model_cheap,
-            )
+            result = await claude_bridge.run_claude(prompt, timeout_s=180)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             parsed = json.loads(text.strip())
         except Exception as e:

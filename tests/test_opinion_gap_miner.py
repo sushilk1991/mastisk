@@ -1,4 +1,4 @@
-"""OpinionGapMiner agent tests. Ollama is mocked so no network calls fire.
+"""OpinionGapMiner agent tests. Claude is mocked so no subprocess calls fire.
 
 See src/mastisk/agents/opinion_gap_miner.py.
 """
@@ -90,10 +90,10 @@ def test_run_once_skips_within_cadence(agent, db):
     )
 
     async def never_called(*args, **kwargs):  # pragma: no cover - asserts no call
-        raise AssertionError("Ollama should not be called within cadence")
+        raise AssertionError("Claude should not be called within cadence")
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.ollama_bridge.run_ollama",
+        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -141,12 +141,12 @@ def test_cadence_guard_ignores_daily_kind(agent, db):
         ]
     }
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps(payload)}
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 
@@ -170,10 +170,10 @@ def test_run_once_no_assertive_user_signal_writes_zero(agent, db):
     _seed_article(db, article_id="a1")  # world signal exists, user does not assert.
 
     async def never_called(*args, **kwargs):  # pragma: no cover
-        raise AssertionError("Ollama should not be called when no assertions exist")
+        raise AssertionError("Claude should not be called when no assertions exist")
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.ollama_bridge.run_ollama",
+        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -194,10 +194,10 @@ def test_run_once_no_world_signal_writes_zero(agent, db):
     )
 
     async def never_called(*args, **kwargs):  # pragma: no cover
-        raise AssertionError("Ollama should not be called when world signal is empty")
+        raise AssertionError("Claude should not be called when world signal is empty")
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.ollama_bridge.run_ollama",
+        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -359,12 +359,12 @@ def test_run_once_writes_opinion_topics_on_real_conflict(agent, db):
         ]
     }
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps(payload)}
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 
@@ -426,12 +426,12 @@ def test_validator_skips_malformed_persists_survivors(agent, db, caplog):
         ]
     }
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps(payload)}
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.opinion_gap_miner.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 
@@ -464,12 +464,12 @@ def test_zero_topics_response_does_not_block_next_week(agent, db):
         body_md="some prose conflict witnessed",
     )
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps({"topics": []})}
 
     with patch(
-        "mastisk.agents.opinion_gap_miner.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.opinion_gap_miner.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 

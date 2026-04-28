@@ -1,4 +1,4 @@
-"""TopicSuggester agent tests. Ollama is mocked so no network calls fire.
+"""TopicSuggester agent tests. Claude is mocked so no subprocess calls fire.
 
 See src/mastisk/agents/topic_suggester.py.
 """
@@ -89,10 +89,10 @@ def test_run_once_skips_within_cadence(agent, db):
     )
 
     async def never_called(*args, **kwargs):  # pragma: no cover - asserts no call
-        raise AssertionError("Ollama should not be called within cadence")
+        raise AssertionError("Claude should not be called within cadence")
 
     with patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -111,10 +111,10 @@ def test_run_once_no_user_signal_writes_zero_rows(agent, db):
     _seed_article(db, article_id="a1")  # world signal exists, user does not.
 
     async def never_called(*args, **kwargs):  # pragma: no cover
-        raise AssertionError("Ollama should not be called when user signal is empty")
+        raise AssertionError("Claude should not be called when user signal is empty")
 
     with patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -130,10 +130,10 @@ def test_run_once_no_world_signal_writes_zero_rows(agent, db):
     _seed_note(db, body="hello world about agents", summary="agents in code")
 
     async def never_called(*args, **kwargs):  # pragma: no cover
-        raise AssertionError("Ollama should not be called when world signal is empty")
+        raise AssertionError("Claude should not be called when world signal is empty")
 
     with patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -175,12 +175,12 @@ def test_run_once_writes_suggestions_on_real_crossing(agent, db):
         ]
     }
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps(payload)}
 
     with patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 
@@ -242,12 +242,12 @@ def test_validation_rejects_invalid_topic_shape(agent, db, caplog):
         ]
     }
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps(payload)}
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 
@@ -298,12 +298,12 @@ def test_validation_rejects_non_string_title(agent, db, caplog):
         ]
     }
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps(payload)}
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 
@@ -337,7 +337,7 @@ def test_zero_crossings_writes_nothing(agent, db):
         raise AssertionError("LLM should not be called when no crossings exist")
 
     with patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
         new_callable=AsyncMock, side_effect=never_called,
     ):
         asyncio.run(agent.run_once())
@@ -375,12 +375,12 @@ def test_synthesis_articles_count_as_world_signal(agent, db):
         ]
     }
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps(payload)}
 
     with patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 
@@ -410,12 +410,12 @@ def test_malformed_json_response_writes_zero_rows(agent, db, caplog):
         body_md="flag prose",
     )
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": "not json at all"}
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 
@@ -520,12 +520,12 @@ def test_validator_rejects_cross_kind_confusion(agent, db, caplog):
         ]
     }
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps(payload)}
 
     with caplog.at_level("WARNING"), patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 
@@ -573,12 +573,12 @@ def test_validator_returns_empty_when_all_topics_invalid(agent, db):
         ]
     }
 
-    async def fake_ollama(prompt, model, **kwargs):
+    async def fake_claude(prompt, **kwargs):
         return {"text": json.dumps(payload)}
 
     with patch(
-        "mastisk.agents.topic_suggester.ollama_bridge.run_ollama",
-        new_callable=AsyncMock, side_effect=fake_ollama,
+        "mastisk.agents.topic_suggester.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
     ):
         asyncio.run(agent.run_once())
 

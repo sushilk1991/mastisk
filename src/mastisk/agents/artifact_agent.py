@@ -1,4 +1,4 @@
-"""ArtifactAgent — generates 1–3 visual artifacts per article via a heavy Ollama model.
+"""ArtifactAgent — generates 1–3 visual artifacts per article via Claude Code.
 
 Unlike Scout/Compiler/Linter, this agent is **purely job-driven**: it doesn't
 spontaneously scan the corpus. The frontend (or any other caller) enqueues an
@@ -8,17 +8,16 @@ tick.
 
 Pipeline per job:
   1. Load the article.
-  2. Ask the heavy model for a JSON array of 1–3 artifacts (chart/comparison/
-     timeline/stat) that illuminate the article.
+  2. Ask Claude for a JSON array of 1–3 artifacts (chart/comparison/timeline/
+     stat) that illuminate the article.
   3. Parse + validate. Drop any malformed entries rather than failing the whole
      batch — one bad entry shouldn't blank the right-rail.
   4. Replace-strategy: delete prior ``artifact-agent``-authored artifacts for
      this article (preserving user-created ones), insert the new batch.
   5. Emit a ``feed`` row so the live rail shows the regeneration.
 
-Fail-open: if Ollama is unreachable or returns unparseable output, we log and
-return. The job marks ``done`` either way — a future regenerate click will
-re-queue.
+Fail-loud: if Claude is unreachable or returns unparseable output, the job is
+marked failed so the Queue view shows the error instead of a silent no-op.
 """
 from __future__ import annotations
 
@@ -27,7 +26,7 @@ import logging
 import re
 
 from mastisk.agents.base import Agent
-from mastisk.bridges import ollama_bridge
+from mastisk.bridges import claude_bridge
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 
@@ -162,25 +161,26 @@ class ArtifactAgent(Agent):
 
         prompt = self._build_prompt(article)
 
-        # Fail loud if Ollama is unreachable — the user clicked regenerate and
+        # Fail loud if Claude is unreachable — the user clicked regenerate and
         # deserves to see the failure in the queue row instead of a silent no-op.
         try:
-            reply = await ollama_bridge.chat(prompt, cheap=False)
+            reply = await claude_bridge.run_claude(prompt, timeout_s=300)
         except Exception as e:
-            log.warning("artifact-agent: ollama unreachable for article %s: %s",
+            log.warning("artifact-agent: claude unreachable for article %s: %s",
                         article_id, e)
             raise RuntimeError(
-                f"ollama unreachable — check your local Ollama server or cloud key "
-                f"in Settings (article {article_id})"
+                f"Claude Code unreachable — check your `claude` CLI install "
+                f"(article {article_id})"
             ) from e
 
-        artifacts = self._parse_response(reply)
+        text = reply.get("text", "") if isinstance(reply, dict) else str(reply)
+        artifacts = self._parse_response(text)
         if not artifacts:
             log.info("artifact-agent: no valid artifacts parsed for article %s "
-                     "(reply len=%d)", article_id, len(reply or ""))
+                     "(reply len=%d)", article_id, len(text))
             raise RuntimeError(
                 f"model returned no parseable artifacts for {article_id} "
-                f"(reply len={len(reply or '')})"
+                f"(reply len={len(text)})"
             )
 
         valid = [a for a in artifacts if self._is_valid(a)]

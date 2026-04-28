@@ -1,4 +1,4 @@
-"""Notetaker unit tests. Mocks ollama_bridge.run_ollama so no network."""
+"""Notetaker unit tests. Mocks claude_bridge.run_claude so no subprocess."""
 from __future__ import annotations
 
 import asyncio
@@ -22,7 +22,10 @@ def notetaker(db, vault_tmp):
 
 @pytest.fixture
 def fake_ollama():
-    """Patch ``ollama_bridge.run_ollama`` inside the notetaker module with a canned response."""
+    """Patch ``claude_bridge.run_claude`` inside the notetaker module with a canned response.
+
+    Fixture name kept for historical churn-avoidance — the patched target is
+    Claude now, but the call sites still reference ``fake_ollama``."""
     default = {
         "text": json.dumps({
             "classification": "idea",
@@ -33,7 +36,7 @@ def fake_ollama():
         }),
     }
     with patch(
-        "mastisk.agents.notetaker.ollama_bridge.run_ollama",
+        "mastisk.agents.notetaker.claude_bridge.run_claude",
         new_callable=AsyncMock,
     ) as mock:
         mock.return_value = default
@@ -187,7 +190,7 @@ def test_notetaker_links_existing_related_articles(notetaker, db, vault_tmp):
         }),
     }
     with patch(
-        "mastisk.agents.notetaker.ollama_bridge.run_ollama",
+        "mastisk.agents.notetaker.claude_bridge.run_claude",
         new_callable=AsyncMock,
         return_value=canned,
     ):

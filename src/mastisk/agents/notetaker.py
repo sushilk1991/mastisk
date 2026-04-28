@@ -1,4 +1,4 @@
-"""Notetaker — scans vault/_notes/inbox/ every 30s, classifies stable files via Ollama.
+"""Notetaker — scans vault/_notes/inbox/ every 30s, classifies stable files via Claude Code.
 
 Behavior per spec §9.1, §10, §11, §12:
 - Scan inbox for *.md; skip .icloud, dotfiles, conflict copies.
@@ -33,7 +33,7 @@ from typing import ClassVar
 import yaml
 
 from mastisk.agents.base import Agent
-from mastisk.bridges import ollama_bridge
+from mastisk.bridges import claude_bridge
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import notes_daily_dir, notes_dir, notes_inbox_dir, vault_dir
@@ -282,12 +282,7 @@ class Notetaker(Agent):
             body=body_core,
         )
 
-        top_settings = get_settings()
-        # Fall back to summarize_model_cheap (exposed in the Settings UI) when
-        # notes.notetaker_model is unset — avoids pinning to a model the user
-        # may not have pulled.
-        model = top_settings.notes.notetaker_model or top_settings.summarize_model_cheap
-        result = await ollama_bridge.run_ollama(prompt, model)
+        result = await claude_bridge.run_claude(prompt, timeout_s=180)
         raw_text = result.get("text", "") if isinstance(result, dict) else str(result)
         parsed = _extract_json(raw_text)
 
@@ -551,7 +546,7 @@ def _extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    raise ValueError(f"no parseable JSON in ollama response: {text[:200]!r}")
+    raise ValueError(f"no parseable JSON in classifier response: {text[:200]!r}")
 
 
 def _parse_iso(value: str) -> datetime:
