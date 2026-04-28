@@ -255,6 +255,29 @@ CREATE INDEX IF NOT EXISTS idx_notes_escalation_pending ON notes(escalation_stat
   WHERE escalation_state IN ('pending', 'retrying');
 CREATE INDEX IF NOT EXISTS idx_notes_deleted_at         ON notes(deleted_at);
 
+-- External-content FTS5 over user notes. Same shape as articles_fts: rowid in
+-- FTS = id in notes (notes uses INTEGER PK so id == rowid). Search columns are
+-- summary (Claude-derived classifier output) and body (raw user text).
+CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+  summary, body,
+  content='notes', content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+  INSERT INTO notes_fts(rowid, summary, body)
+    VALUES (new.id, new.summary, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
+  INSERT INTO notes_fts(notes_fts, rowid, summary, body)
+    VALUES ('delete', old.id, old.summary, old.body);
+END;
+CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+  INSERT INTO notes_fts(notes_fts, rowid, summary, body)
+    VALUES ('delete', old.id, old.summary, old.body);
+  INSERT INTO notes_fts(rowid, summary, body)
+    VALUES (new.id, new.summary, new.body);
+END;
+
 CREATE TABLE IF NOT EXISTS note_links (
   note_id    INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
   article_id TEXT    NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
@@ -420,6 +443,30 @@ CREATE INDEX IF NOT EXISTS idx_blog_posts_created ON blog_posts(created_at DESC)
 CREATE INDEX IF NOT EXISTS idx_blog_posts_status  ON blog_posts(status)
   WHERE status IN ('pending', 'running');
 CREATE INDEX IF NOT EXISTS idx_blog_posts_not_deleted ON blog_posts(id) WHERE deleted_at IS NULL;
+
+-- External-content FTS5 over blog posts. body_md lives in the vault file (not
+-- the row), so we index the columns we have: title, theme, and body_preview
+-- (first ~400 chars). Good enough for the command palette's narrow-as-you-type
+-- experience; full-body search would require streaming files at query time.
+CREATE VIRTUAL TABLE IF NOT EXISTS blog_posts_fts USING fts5(
+  title, theme, body_preview,
+  content='blog_posts', content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS blog_posts_ai AFTER INSERT ON blog_posts BEGIN
+  INSERT INTO blog_posts_fts(rowid, title, theme, body_preview)
+    VALUES (new.id, new.title, new.theme, new.body_preview);
+END;
+CREATE TRIGGER IF NOT EXISTS blog_posts_ad AFTER DELETE ON blog_posts BEGIN
+  INSERT INTO blog_posts_fts(blog_posts_fts, rowid, title, theme, body_preview)
+    VALUES ('delete', old.id, old.title, old.theme, old.body_preview);
+END;
+CREATE TRIGGER IF NOT EXISTS blog_posts_au AFTER UPDATE ON blog_posts BEGIN
+  INSERT INTO blog_posts_fts(blog_posts_fts, rowid, title, theme, body_preview)
+    VALUES ('delete', old.id, old.title, old.theme, old.body_preview);
+  INSERT INTO blog_posts_fts(rowid, title, theme, body_preview)
+    VALUES (new.id, new.title, new.theme, new.body_preview);
+END;
 
 -- Citation ledger: one row per (blog_post, source item) considered by the agent.
 -- used=1 means cited in the draft; used=0 means offered but Claude didn't pick it.

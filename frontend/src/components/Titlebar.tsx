@@ -86,10 +86,16 @@ export function Titlebar({
       </div>
       <div className="tb-search" onClick={onSearchClick} role="button">
         {Icon.search}
-        <span style={{flex:1}}>Search wiki, ask, jump to page…</span>
+        <span style={{flex:1}}>Search wiki, notes, blog…</span>
         <kbd>⌘K</kbd>
       </div>
       <div className="tb-actions">
+        <button
+          className="tb-btn tb-search-btn"
+          onClick={onSearchClick}
+          title="Search (⌘K)"
+          aria-label="Search"
+        >{Icon.search}</button>
         <button className="tb-btn" onClick={onCapture} title="New note (⌘+)">+</button>
         <button className="tb-btn" onClick={onAsk} title="Ask Mastisk">{Icon.ask}</button>
         <button className="tb-btn" onClick={onToggleSide} title="Toggle sidebar">{Icon.panel}</button>

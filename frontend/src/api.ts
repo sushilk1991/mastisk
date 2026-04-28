@@ -2,7 +2,8 @@ import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
   BlogPostSummary, Digest, DigestAudit, Feed,
   FeedTick, AgentInfo, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
-  PinnedItem, RepoDetail, RepoIdeasResponse, RepoSummary, Roundtable, RoundtableSummary, SettingsBundle, SettingsPatch,
+  PinnedItem, RepoDetail, RepoIdeasResponse, RepoSummary, Roundtable, RoundtableSummary, SearchResult,
+  SettingsBundle, SettingsPatch,
   SynthesisRunResponse, UserInfo, VaultItem,
 } from './types';
 
@@ -141,10 +142,16 @@ export const api = {
       body: JSON.stringify({ question, ...opts }),
     }),
 
-  search: (q: string) =>
-    j<{ results: { id: string; title: string; kind: string; snippet: string }[] }>(
-      `${BASE}/search?q_param=${encodeURIComponent(q)}`,
-    ),
+  /** Unified keyword search across articles, notes, and blog posts. */
+  search: (q: string, opts?: { limit?: number; signal?: AbortSignal }) =>
+    fetch(
+      `${BASE}/search?q_param=${encodeURIComponent(q)}` +
+        (opts?.limit ? `&limit=${opts.limit}` : ''),
+      { signal: opts?.signal },
+    ).then(async (r) => {
+      if (!r.ok) throw new Error(`${r.status}`);
+      return r.json() as Promise<{ results: SearchResult[] }>;
+    }),
 
   signal: (kind: string, article_id?: string | null, value?: unknown) =>
     fetch(`${BASE}/signals`, {

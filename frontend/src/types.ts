@@ -271,6 +271,21 @@ export interface AskResponse {
   hits: { id: string; title: string; snippet?: string }[];
 }
 
+export type SearchResultKind = 'article' | 'note' | 'blog';
+
+export interface SearchResult {
+  kind: SearchResultKind;
+  /** Article id (string) for articles; numeric rowid (as string) for notes/blog. */
+  id: string;
+  title: string;
+  /** Short label under the title — article kind, "Note · Observation", "Blog post". */
+  subtitle: string;
+  /** FTS5 snippet with `<mark>` tags around hits, or fallback prefix of summary. */
+  snippet: string;
+  /** Lower = better. Frontend doesn't sort (server already did) but exposes for tests. */
+  score: number;
+}
+
 export interface RoundtablePerspective {
   backend: string;
   model: string | null;

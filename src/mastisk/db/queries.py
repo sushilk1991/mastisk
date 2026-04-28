@@ -62,6 +62,45 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     )
     _add_column_if_missing(conn, "repos", "source_type", "TEXT NOT NULL DEFAULT 'github'")
     _add_column_if_missing(conn, "repos", "local_path", "TEXT")
+    # Backfill the FTS indexes for pre-existing DBs. The CREATE VIRTUAL TABLE in
+    # schema.sql is idempotent, but the AFTER INSERT triggers only fire on rows
+    # written *after* the index existed — so any notes/blog_posts that were
+    # already in the table are invisible to FTS until we ask it to rebuild.
+    _ensure_fts_initialized(conn, "notes_fts", "notes")
+    _ensure_fts_initialized(conn, "blog_posts_fts", "blog_posts")
+
+
+def _ensure_fts_initialized(
+    conn: sqlite3.Connection, fts_table: str, content_table: str
+) -> None:
+    """If the FTS5 index is empty but the content table has rows, rebuild it.
+
+    Why we can't just check ``SELECT 1 FROM <fts_table> LIMIT 1``: FTS5
+    external-content tables project rows from the content table, so a SELECT
+    returns one row per content row even when the FTS *index* is unbuilt. The
+    populated-or-not signal lives in the ``<fts_table>_data`` shadow table —
+    fresh FTS5 indexes have only ~2 config rows there; anything indexed adds
+    many more.
+
+    No-op when the content table is empty (fresh install, no rows to index)
+    or when the index is already populated (steady state — triggers maintain
+    it). Runs at most once per FTS table per daemon's lifetime, on the boot
+    that first sees a content table with rows but no built index.
+    """
+    has_content = conn.execute(
+        f"SELECT 1 FROM {content_table} LIMIT 1"
+    ).fetchone() is not None
+    if not has_content:
+        return
+    # Threshold of >2 is conservative: I see exactly 2 config rows on freshly
+    # created FTS5 tables, but rebuild adds many more even for a single doc.
+    data_rows = conn.execute(
+        f"SELECT COUNT(*) AS n FROM {fts_table}_data"
+    ).fetchone()["n"]
+    if data_rows > 2:
+        return
+    # Identifiers are hardcoded above — interpolation is safe.
+    conn.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES ('rebuild')")
 
 
 @contextmanager
@@ -543,6 +582,156 @@ def _fts_escape(q: str) -> str:
         return f'"{q.strip()}"' if q.strip() else "NULL"
     # Quote each term, OR-join. FTS5 is case-insensitive.
     return " OR ".join(f'"{t}"' for t in terms)
+
+
+def _fts_palette_query(q: str) -> str | None:
+    """Build an FTS5 MATCH for the command palette: prefix match, AND-joined.
+
+    Optimised for narrow-as-you-type behaviour. "test ag" should match an
+    article whose title contains both "test*" and "ag*" (e.g. "test agent"),
+    not "anything that mentions test OR agent" (that's the Ask flow).
+
+    Hyphens are split into separate tokens so "test-time" still matches
+    "test-time compute" even if the user typed "test time". Stopwords are
+    dropped. Returns None when the query has no usable terms — caller should
+    skip the SELECT entirely in that case.
+    """
+    import re
+    # Split on non-alphanumeric so "test-time" → ["test", "time"]. We can't
+    # AND-match "test-time" as a phrase here because FTS5 doesn't tokenize
+    # hyphens consistently with the underlying content indexer.
+    tokens = re.findall(r"[A-Za-z0-9]+", q)
+    terms = [t for t in tokens if t.lower() not in _STOPWORDS and len(t) >= 2]
+    if not terms:
+        return None
+    # `term*` is FTS5 prefix match. AND is the implicit operator between bare
+    # tokens, so "foo* bar*" means "starts-with-foo AND starts-with-bar".
+    return " ".join(f"{t}*" for t in terms)
+
+
+_PALETTE_ARTICLE_CAP = 10
+_PALETTE_NOTE_CAP = 6
+_PALETTE_BLOG_CAP = 4
+
+
+def search_all(
+    conn: sqlite3.Connection, q: str, *, limit: int = 20
+) -> list[dict]:
+    """Unified palette search across articles, notes, and blog posts.
+
+    Each result is a dict with a stable shape the frontend can render
+    uniformly::
+
+        {kind, id, title, subtitle, snippet, score}
+
+    ``kind`` is one of ``'article'``, ``'note'``, ``'blog'`` — the frontend
+    routes off it. ``id`` is a string for articles (article_id) and the
+    integer rowid (as a string) for notes/blogs so callers can build a URL
+    without switching on type.
+
+    Why per-kind quotas instead of a global BM25 sort: BM25's IDF term
+    punishes terms that appear in a high fraction of documents in the
+    *corpus*. For a small notes corpus where 12/14 notes mention "agent",
+    the IDF for "agent" collapses to ~0 — every matching note ties at
+    score 0. A naive global merge then floods the result list with
+    articles (where "agent" is rarer and so scores higher), and notes
+    never appear regardless of how relevant they are to the user's mental
+    model. Allotting fixed slots per kind means the user sees notes and
+    blog hits even on terms that are common in their own writing.
+
+    Returns rows in fixed order: articles first, then notes, then blogs,
+    each block sorted internally by BM25 (lower = better) with a recency
+    tiebreaker so freshly-edited content surfaces over stale matches at
+    a tied score. Capped at ``limit`` total.
+    """
+    expr = _fts_palette_query(q)
+    if expr is None:
+        return []
+
+    rows: list[dict] = []
+
+    # Articles. bm25 weights: title=10, summary=5, body=1. Tie-break by
+    # updated_at so an edit to an older article surfaces above a stale one.
+    # snippet column index -1 means "FTS5 picks the best matching column",
+    # so a body hit shows body context and a title hit shows the title.
+    for r in conn.execute(
+        """SELECT articles.id AS id, articles.title AS title,
+                  articles.kind AS subkind, articles.summary AS summary,
+                  snippet(articles_fts, -1, '<mark>', '</mark>', '…', 10) AS snippet,
+                  bm25(articles_fts, 10.0, 5.0, 1.0) AS score
+           FROM articles_fts JOIN articles ON articles.rowid = articles_fts.rowid
+           WHERE articles_fts MATCH ?
+           ORDER BY score, articles.updated_at DESC
+           LIMIT ?""",
+        (expr, _PALETTE_ARTICLE_CAP),
+    ):
+        rows.append({
+            "kind": "article",
+            "id": r["id"],
+            "title": r["title"],
+            "subtitle": r["subkind"],
+            "snippet": r["snippet"] or (r["summary"] or "")[:160],
+            "score": float(r["score"]),
+        })
+
+    # Notes. notes_fts schema is (summary, body). Title for the result is
+    # always the summary (else first line of body), so we point snippet at
+    # column 1 (body) — keeps the snippet text distinct from the title and
+    # always shows context the title doesn't already cover.
+    for r in conn.execute(
+        """SELECT notes.id AS id, notes.summary AS summary, notes.body AS body,
+                  notes.classification AS classification,
+                  snippet(notes_fts, 1, '<mark>', '</mark>', '…', 10) AS snippet,
+                  bm25(notes_fts, 3.0, 1.0) AS score
+           FROM notes_fts JOIN notes ON notes.id = notes_fts.rowid
+           WHERE notes_fts MATCH ? AND notes.deleted_at IS NULL
+           ORDER BY score, notes.created_at DESC
+           LIMIT ?""",
+        (expr, _PALETTE_NOTE_CAP),
+    ):
+        body = r["body"] or ""
+        first_line = next(
+            (ln.strip() for ln in body.splitlines() if ln.strip()), ""
+        )
+        title = (r["summary"] or first_line or "(empty note)").strip()
+        if len(title) > 80:
+            title = title[:77] + "…"
+        kind_label = (r["classification"] or "Note").capitalize()
+        rows.append({
+            "kind": "note",
+            "id": str(r["id"]),
+            "title": title,
+            "subtitle": f"Note · {kind_label}",
+            "snippet": r["snippet"] or "",
+            "score": float(r["score"]),
+        })
+
+    # Blog posts. Excludes tombstoned rows AND pending/failed drafts (a draft
+    # has no body to read yet). bm25 weights: title=10, theme=3, body_preview=1.
+    for r in conn.execute(
+        """SELECT blog_posts.id AS id, blog_posts.title AS title,
+                  blog_posts.theme AS theme, blog_posts.body_preview AS body_preview,
+                  snippet(blog_posts_fts, -1, '<mark>', '</mark>', '…', 10) AS snippet,
+                  bm25(blog_posts_fts, 10.0, 3.0, 1.0) AS score
+           FROM blog_posts_fts JOIN blog_posts ON blog_posts.id = blog_posts_fts.rowid
+           WHERE blog_posts_fts MATCH ?
+             AND blog_posts.deleted_at IS NULL
+             AND blog_posts.status = 'done'
+           ORDER BY score, blog_posts.created_at DESC
+           LIMIT ?""",
+        (expr, _PALETTE_BLOG_CAP),
+    ):
+        title = (r["title"] or r["theme"] or "Untitled draft").strip()
+        rows.append({
+            "kind": "blog",
+            "id": str(r["id"]),
+            "title": title,
+            "subtitle": "Blog post",
+            "snippet": r["snippet"] or (r["body_preview"] or "")[:160],
+            "score": float(r["score"]),
+        })
+
+    return rows[:limit]
 
 
 # ─────────────────────────────── Article artifacts ───────────────────────────────

@@ -16,6 +16,7 @@ import { DigestAuditView } from './components/DigestAuditView';
 import { AgentsView } from './components/AgentsView';
 import { GraphView } from './components/GraphView';
 import { AskDrawer } from './components/AskDrawer';
+import { CommandPalette } from './components/CommandPalette';
 import { IngestView } from './components/IngestView';
 import { OpenQuestionsView } from './components/OpenQuestionsView';
 import { QueueView } from './components/QueueView';
@@ -47,6 +48,7 @@ export function App() {
   const [sideOpen, setSideOpen] = useState(window.innerWidth > 900);
   const [railOpen, setRailOpen] = useState(window.innerWidth > 900);
   const [askOpen, setAskOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [addRepoOpen, setAddRepoOpen] = useState(false);
   const [captureBlogOpen, setCaptureBlogOpen] = useState(false);
@@ -144,6 +146,21 @@ export function App() {
     setAskOpen(true);
   }, [currentArticle]);
 
+  // Global ⌘K / Ctrl+K — open the command palette from anywhere. Intercepted
+  // even inside form fields because ⌘K is universally a palette shortcut and
+  // doesn't conflict with normal typing. We don't toggle on repeat presses
+  // (re-opening already-open just resets the input, which is fine).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <div className="app" data-rail={railOpen ? 'open' : 'closed'} data-side={sideOpen ? 'open' : 'closed'}>
       <Titlebar
@@ -157,7 +174,7 @@ export function App() {
         onToggleSide={() => setSideOpen((s) => !s)}
         onToggleRail={() => setRailOpen((s) => !s)}
         onAsk={() => openAsk("What's most important in my wiki right now?", null)}
-        onSearchClick={() => openAsk("", null)}
+        onSearchClick={() => setPaletteOpen(true)}
         onCapture={() => setCaptureOpen(true)}
       />
 
@@ -246,6 +263,12 @@ export function App() {
       )}
 
       <AskDrawer open={askOpen} ctx={askCtx} onClose={() => setAskOpen(false)}/>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onAsk={(q) => openAsk(q, null)}
+        onNavigate={navigate}
+      />
       <NoteCaptureModal
         open={captureOpen}
         onClose={() => setCaptureOpen(false)}
