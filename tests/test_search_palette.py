@@ -372,47 +372,85 @@ def test_ensure_fts_initialized_no_op_on_empty_content_table(
     assert rows == 0
 
 
+# Legacy (pre-WHEN-clause) DDL for each FTS update trigger, captured from the
+# git history at the point the trigger first shipped. Used by the migration
+# test to faithfully reproduce the upgrade path.
+_LEGACY_AU_TRIGGER_SQL: dict[str, str] = {
+    "articles_au": """CREATE TRIGGER articles_au AFTER UPDATE ON articles BEGIN
+      INSERT INTO articles_fts(articles_fts, rowid, title, summary, body_md)
+        VALUES ('delete', old.rowid, old.title, old.summary, old.body_md);
+      INSERT INTO articles_fts(rowid, title, summary, body_md)
+        VALUES (new.rowid, new.title, new.summary, new.body_md);
+    END""",
+    "notes_au": """CREATE TRIGGER notes_au AFTER UPDATE ON notes BEGIN
+      INSERT INTO notes_fts(notes_fts, rowid, summary, body)
+        VALUES ('delete', old.id, old.summary, old.body);
+      INSERT INTO notes_fts(rowid, summary, body)
+        VALUES (new.id, new.summary, new.body);
+    END""",
+    "blog_posts_au": """CREATE TRIGGER blog_posts_au AFTER UPDATE ON blog_posts BEGIN
+      INSERT INTO blog_posts_fts(blog_posts_fts, rowid, title, theme, body_preview)
+        VALUES ('delete', old.id, old.title, old.theme, old.body_preview);
+      INSERT INTO blog_posts_fts(rowid, title, theme, body_preview)
+        VALUES (new.id, new.title, new.theme, new.body_preview);
+    END""",
+}
+
+
+@pytest.mark.parametrize("trigger_name", list(_LEGACY_AU_TRIGGER_SQL.keys()))
 def test_init_schema_migrates_legacy_au_triggers_to_when_clause(
-    tmp_path: Path,
+    tmp_path: Path, trigger_name: str,
 ) -> None:
     """`CREATE TRIGGER IF NOT EXISTS` is a no-op when a trigger of the same
     name already exists, so a shape-change (adding a WHEN clause) to a
     pre-existing trigger never reaches upgraded users without an explicit
-    drop. This pins the migration: a DB carrying the legacy unguarded
-    articles_au must end up with the WHEN-clause version after init_schema.
+    drop. Parametrised over all three FTS update triggers so a typo in the
+    migration's trigger-name tuple, or a shape divergence between any
+    individual trigger's legacy and new DDL, is caught.
     """
-    dbpath = tmp_path / "legacy.db"
+    dbpath = tmp_path / f"legacy-{trigger_name}.db"
     raw = sqlite3.connect(dbpath, isolation_level=None)
     raw.row_factory = sqlite3.Row
 
-    # Bootstrap schema, then pretend we're on the old version: drop the
-    # WHEN-guarded articles_au and recreate the LEGACY shape (no WHEN).
+    # Bootstrap schema, then pretend we're on the pre-WHEN version of this
+    # specific trigger by dropping it and recreating with the legacy shape.
     init_schema(raw)
-    raw.execute("DROP TRIGGER articles_au")
-    raw.execute(
-        """CREATE TRIGGER articles_au AFTER UPDATE ON articles BEGIN
-             INSERT INTO articles_fts(articles_fts, rowid, title, summary, body_md)
-               VALUES ('delete', old.rowid, old.title, old.summary, old.body_md);
-             INSERT INTO articles_fts(rowid, title, summary, body_md)
-               VALUES (new.rowid, new.title, new.summary, new.body_md);
-           END"""
-    )
+    raw.execute(f"DROP TRIGGER {trigger_name}")
+    raw.execute(_LEGACY_AU_TRIGGER_SQL[trigger_name])
     legacy_sql = raw.execute(
-        "SELECT sql FROM sqlite_master WHERE name='articles_au'"
+        "SELECT sql FROM sqlite_master WHERE name=?", (trigger_name,),
     ).fetchone()["sql"]
-    assert "WHEN" not in legacy_sql.upper(), "test setup did not install legacy shape"
+    assert "WHEN" not in legacy_sql.upper(), (
+        f"test setup did not install legacy shape for {trigger_name}"
+    )
 
     # Re-running init_schema must replace the legacy trigger with the new
     # WHEN-guarded version.
     init_schema(raw)
     new_sql = raw.execute(
-        "SELECT sql FROM sqlite_master WHERE name='articles_au'"
+        "SELECT sql FROM sqlite_master WHERE name=?", (trigger_name,),
     ).fetchone()["sql"]
-    assert "WHEN" in new_sql.upper(), \
-        f"legacy articles_au not migrated: {new_sql}"
+    assert "WHEN" in new_sql.upper(), (
+        f"legacy {trigger_name} not migrated: {new_sql}"
+    )
+    raw.close()
 
-    # And the new trigger must actually be installed AND working: after the
-    # migration, a no-op UPDATE shouldn't grow the FTS shadow.
+
+def test_migrated_articles_au_trigger_skips_count_bump_updates(
+    tmp_path: Path,
+) -> None:
+    """End-to-end behaviour proof for the articles_au migration: after the
+    legacy trigger is replaced, a count-bump UPDATE (the hot path that
+    motivated the WHEN-clause fix) must NOT grow articles_fts_data. The
+    parametrised migration test above covers DDL shape; this covers the
+    runtime contract that shape change buys us."""
+    dbpath = tmp_path / "behaviour.db"
+    raw = sqlite3.connect(dbpath, isolation_level=None)
+    raw.row_factory = sqlite3.Row
+    init_schema(raw)
+    raw.execute("DROP TRIGGER articles_au")
+    raw.execute(_LEGACY_AU_TRIGGER_SQL["articles_au"])
+    init_schema(raw)  # migration kicks in here
     raw.execute(
         """INSERT INTO articles (id, kind, title, slug, summary, body_md)
            VALUES ('art', 'Concept', 't', 's', 'a', 'b')""",
@@ -428,8 +466,9 @@ def test_init_schema_migrates_legacy_au_triggers_to_when_clause(
     data_after = raw.execute(
         "SELECT COUNT(*) FROM articles_fts_data"
     ).fetchone()[0]
-    assert data_before == data_after, \
+    assert data_before == data_after, (
         "migrated trigger still re-indexes on count-bump UPDATE"
+    )
     raw.close()
 
 
