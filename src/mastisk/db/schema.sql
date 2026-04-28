@@ -507,3 +507,37 @@ CREATE TABLE IF NOT EXISTS blog_post_sources (
 
 CREATE INDEX IF NOT EXISTS idx_blog_post_sources_post ON blog_post_sources(blog_post_id);
 CREATE INDEX IF NOT EXISTS idx_blog_post_sources_ref ON blog_post_sources(kind, ref);
+
+-- ─────────────────────────────── Topic suggestions ───────────────────────────────
+-- Topic suggestions surfaced by topic_suggester (kind='daily') and
+-- opinion_gap_miner (kind='opinion'). The agent runs on a cadence and
+-- writes 1-2 suggestion rows per run. The UI reads non-dismissed,
+-- non-used rows and offers them as one-click blog drafts.
+CREATE TABLE IF NOT EXISTS topic_suggestions (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind             TEXT NOT NULL,                          -- 'daily' | 'opinion'
+  title            TEXT NOT NULL,                          -- short noun-phrase, fills theme field
+  hook             TEXT NOT NULL,                          -- 1-2 sentence framing the user reads first
+  angle            TEXT,                                   -- optional: the angle/argument the writer should take
+  source_refs_json TEXT NOT NULL DEFAULT '[]',             -- list of {kind: 'note'|'article'|'roundtable', ref: int|str}
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  dismissed_at     DATETIME,                               -- user-clicked-dismiss, null if active
+  used_blog_id     INTEGER REFERENCES blog_posts(id) ON DELETE SET NULL  -- set when user drafts a post from this
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_suggestions_active
+  ON topic_suggestions(created_at DESC)
+  WHERE dismissed_at IS NULL AND used_blog_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_topic_suggestions_kind_created
+  ON topic_suggestions(kind, created_at DESC);
+
+-- Cadence backstop: collapses exact-duplicate (kind, day, title) rows.
+-- The cadence guard in run_once already prevents the agent from running
+-- twice in 22h within one process; this defends against multi-process
+-- races (user runs `mastisk` CLI alongside the daemon) by deduping by
+-- title. Two genuinely-different topics in the same batch get distinct
+-- titles and both insert; an LLM hallucinating the same title twice or
+-- a racing process landing the same title gets collapsed.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_topic_suggestions_dedup
+  ON topic_suggestions(kind, date(created_at), title);

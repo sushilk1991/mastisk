@@ -52,10 +52,26 @@ async def create_blog_post_endpoint(req: CreateBlogRequest) -> dict:
             detail="no sources in window — try widening window_days or capturing more notes first",
         )
 
+    theme_clean = req.theme.strip()
     with connect() as conn:
         bp_id = q.create_blog_post(
-            conn, theme=req.theme.strip(), window_days=req.window_days,
+            conn, theme=theme_clean, window_days=req.window_days,
         )
+        # Topic-suggester link: if the user drafted from an active suggestion
+        # whose title equals the theme, mark it used. Title comparison is
+        # case-insensitive on a trimmed value to absorb minor PWA round-trip
+        # noise. Multi-row safety: in the unlikely event two active rows
+        # share a title, all of them get linked to this draft so neither
+        # lingers in the active list.
+        if theme_clean:
+            conn.execute(
+                """UPDATE topic_suggestions
+                   SET used_blog_id = ?
+                   WHERE used_blog_id IS NULL
+                     AND dismissed_at IS NULL
+                     AND lower(trim(title)) = lower(?)""",
+                (bp_id, theme_clean),
+            )
     enqueue("blog_writer", "draft", {"blog_post_id": bp_id})
     return {"id": bp_id, "status": "pending"}
 

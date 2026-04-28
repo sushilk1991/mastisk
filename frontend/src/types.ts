@@ -505,3 +505,21 @@ export interface SynthesisRunResponse {
 export interface PendingSynthesisResponse {
   runs: SynthesisRun[];
 }
+
+export type TopicSuggestionKind = 'daily' | 'opinion';
+
+export interface TopicSourceRef {
+  kind: 'note' | 'article' | 'roundtable';
+  ref: number | string;
+  label: string;
+}
+
+export interface TopicSuggestion {
+  id: number;
+  kind: TopicSuggestionKind;
+  title: string;
+  hook: string;
+  angle: string | null;
+  source_refs: TopicSourceRef[];
+  created_at: string;
+}

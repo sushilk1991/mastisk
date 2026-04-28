@@ -52,6 +52,18 @@ export function App() {
   const [captureOpen, setCaptureOpen] = useState(false);
   const [addRepoOpen, setAddRepoOpen] = useState(false);
   const [captureBlogOpen, setCaptureBlogOpen] = useState(false);
+  // Optional theme to pre-fill BlogCreationModal with when it opens — set by
+  // the topic-suggestions panel's "Draft this →", reset to undefined on every
+  // close so the next manual "+ new draft" still opens an empty modal.
+  const [pendingTheme, setPendingTheme] = useState<string | undefined>(undefined);
+  const openBlogModalWithTheme = useCallback((title: string) => {
+    setPendingTheme(title);
+    setCaptureBlogOpen(true);
+  }, []);
+  const closeBlogModal = useCallback(() => {
+    setCaptureBlogOpen(false);
+    setPendingTheme(undefined);
+  }, []);
   // Bumped after a successful add-repo, so ReposView re-fetches its list when
   // we're already on /repos (navigating there is a no-op in that case).
   const [reposReloadKey, setReposReloadKey] = useState(0);
@@ -228,6 +240,7 @@ export function App() {
         {view === 'blog' && (
           <BlogListView
             onCreateBlog={() => setCaptureBlogOpen(true)}
+            onCreateBlogWithTheme={openBlogModalWithTheme}
             onNavigate={navigate}
           />
         )}
@@ -299,9 +312,10 @@ export function App() {
       />
       <BlogCreationModal
         open={captureBlogOpen}
-        onClose={() => setCaptureBlogOpen(false)}
+        initialTheme={pendingTheme}
+        onClose={closeBlogModal}
         onCreated={(id) => {
-          setCaptureBlogOpen(false);
+          closeBlogModal();
           navigate('blog_post', String(id));
         }}
       />

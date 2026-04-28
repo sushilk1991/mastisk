@@ -4,7 +4,7 @@ import type {
   FeedTick, AgentInfo, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
   PinnedItem, RepoDetail, RepoIdeasResponse, RepoSummary, Roundtable, RoundtableSummary, SearchResult,
   SettingsBundle, SettingsPatch,
-  SynthesisRunResponse, UserInfo, VaultItem,
+  SynthesisRunResponse, TopicSuggestion, UserInfo, VaultItem,
 } from './types';
 
 const BASE = '/api';
@@ -338,6 +338,13 @@ export const api = {
       fetch(`/api/blog-posts/${id}`, { method: 'DELETE' }).then(async r => {
         if (!r.ok) await throwApiError(r);
       }),
+  },
+
+  topicSuggestions: {
+    list: () => j<{ suggestions: TopicSuggestion[] }>(`${BASE}/topic-suggestions`),
+    dismiss: (id: number): Promise<void> =>
+      fetch(`${BASE}/topic-suggestions/${id}/dismiss`, { method: 'POST' })
+        .then((r) => { if (!r.ok) throw new Error(`dismiss → ${r.status}`); }),
   },
 
   github: {

@@ -4,6 +4,11 @@ import { useModalA11y } from '../hooks/useModalA11y';
 
 interface Props {
   open: boolean;
+  /** Optional pre-fill for the theme textarea. When the modal opens the field
+   *  resets to this value (or empty when omitted) — match-on-create relies on
+   *  the user not editing it, so this is how "Draft this →" pipes a topic
+   *  suggestion's title through to the backend's auto-link. */
+  initialTheme?: string;
   onClose: () => void;
   onCreated: (id: number) => void;
 }
@@ -11,7 +16,7 @@ interface Props {
 const WINDOW_CHOICES = [7, 14, 30, 90] as const;
 type WindowChoice = (typeof WINDOW_CHOICES)[number];
 
-export function BlogCreationModal({ open, onClose, onCreated }: Props) {
+export function BlogCreationModal({ open, initialTheme, onClose, onCreated }: Props) {
   const [theme, setTheme] = useState('');
   const [windowDays, setWindowDays] = useState<WindowChoice>(14);
   const [busy, setBusy] = useState(false);
@@ -28,12 +33,12 @@ export function BlogCreationModal({ open, onClose, onCreated }: Props) {
 
   useEffect(() => {
     if (open) {
-      setTheme('');
+      setTheme(initialTheme ?? '');
       setWindowDays(14);
       setBusy(false);
       setError(null);
     }
-  }, [open]);
+  }, [open, initialTheme]);
 
   // Abort any in-flight submit when the modal unmounts. Also cleared on
   // next submit (see below) so only the latest call is live.

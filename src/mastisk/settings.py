@@ -103,6 +103,14 @@ class BlogSettings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
     min_relevance_score: float = 0.4
 
+    # ── topic_suggester ──
+    # 48-hour windows over notes (user signal) and articles (world signal).
+    # Caps bound the pairwise crossing cost: max_user * max_world pair scores
+    # then top max_crossings flow into the LLM prompt.
+    topic_suggester_max_user_items: int = 30
+    topic_suggester_max_world_items: int = 60
+    topic_suggester_max_crossings: int = 8
+
 
 class Settings(BaseSettings):
     # populate_by_name: accept both the field name (from TOML) AND the alias

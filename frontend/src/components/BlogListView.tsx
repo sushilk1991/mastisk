@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import type { BlogPostSummary, View } from '../types';
+import { TopicSuggestionsPanel } from './TopicSuggestionsPanel';
 
 interface Props {
   onCreateBlog: () => void;
+  onCreateBlogWithTheme: (theme: string) => void;
   onNavigate: (view: View, id?: string) => void;
 }
 
 const PAGE_SIZE = 50;
 
-export function BlogListView({ onCreateBlog, onNavigate }: Props) {
+export function BlogListView({ onCreateBlog, onCreateBlogWithTheme, onNavigate }: Props) {
   const [rows, setRows] = useState<BlogPostSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -45,6 +47,7 @@ export function BlogListView({ onCreateBlog, onNavigate }: Props) {
   if (rows.length === 0) {
     return (
       <div className="view">
+        <TopicSuggestionsPanel onUseSuggestion={onCreateBlogWithTheme} />
         <div className="view-h">Blog Posts</div>
         <h1 className="view-title">No drafts yet</h1>
         <p className="view-sub">
@@ -76,6 +79,7 @@ export function BlogListView({ onCreateBlog, onNavigate }: Props) {
 
   return (
     <div className="view">
+      <TopicSuggestionsPanel onUseSuggestion={onCreateBlogWithTheme} />
       <div className="view-h">Blog Posts</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
         <h1 className="view-title" style={{ margin: 0 }}>

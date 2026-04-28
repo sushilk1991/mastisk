@@ -213,6 +213,23 @@ async def start_scheduler():
     except Exception as e:
         log.warning("scheduler: blog_writer registration failed: %s", e)
 
+    try:
+        from mastisk.agents.topic_suggester import TopicSuggester
+        # TopicSuggester is timer-driven (no jobs queue). 10-min tick keeps
+        # it cheap; the agent self-times via cadence_hours so we won't write
+        # twice in the same day. First run 90s after boot — let the boot
+        # storm of other agents settle before we start hitting Ollama.
+        sched.add_job(
+            TopicSuggester().run_once, "interval",
+            seconds=TopicSuggester.tick_seconds, id="topic_suggester",
+            max_instances=1,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90),
+            coalesce=True,
+        )
+        log.info("scheduler: topic_suggester registered (10min tick)")
+    except Exception as e:
+        log.warning("scheduler: topic_suggester registration failed: %s", e)
+
     sched.start()
     log.info("scheduler started")
     return sched
