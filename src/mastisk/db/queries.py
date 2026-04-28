@@ -77,10 +77,13 @@ def _ensure_fts_initialized(
 
     Why we can't just check ``SELECT 1 FROM <fts_table> LIMIT 1``: FTS5
     external-content tables project rows from the content table, so a SELECT
-    returns one row per content row even when the FTS *index* is unbuilt. The
-    populated-or-not signal lives in the ``<fts_table>_data`` shadow table —
-    fresh FTS5 indexes have only ~2 config rows there; anything indexed adds
-    many more.
+    returns one row per content row even when the FTS *index* is unbuilt.
+
+    The semantic signal we need is "does the FTS index know about any docs?"
+    — that lives in the ``<fts_table>_docsize`` shadow table, which gets one
+    row per indexed document. Empty docsize ⇔ unbuilt index, regardless of
+    SQLite version (other shadow tables like ``_data`` carry config rows
+    whose count varies across SQLite builds).
 
     No-op when the content table is empty (fresh install, no rows to index)
     or when the index is already populated (steady state — triggers maintain
@@ -92,12 +95,11 @@ def _ensure_fts_initialized(
     ).fetchone() is not None
     if not has_content:
         return
-    # Threshold of >2 is conservative: I see exactly 2 config rows on freshly
-    # created FTS5 tables, but rebuild adds many more even for a single doc.
-    data_rows = conn.execute(
-        f"SELECT COUNT(*) AS n FROM {fts_table}_data"
-    ).fetchone()["n"]
-    if data_rows > 2:
+    # docsize has one row per indexed doc; any row means the rebuild has run.
+    indexed = conn.execute(
+        f"SELECT 1 FROM {fts_table}_docsize LIMIT 1"
+    ).fetchone() is not None
+    if indexed:
         return
     # Identifiers are hardcoded above — interpolation is safe.
     conn.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES ('rebuild')")
@@ -593,15 +595,30 @@ def _fts_palette_query(q: str) -> str | None:
 
     Hyphens are split into separate tokens so "test-time" still matches
     "test-time compute" even if the user typed "test time". Stopwords are
-    dropped. Returns None when the query has no usable terms — caller should
-    skip the SELECT entirely in that case.
+    dropped. Tokens are lowercased before emitting — this is what protects
+    the MATCH parser from reserved-word collisions: FTS5 only treats the
+    *all-uppercase* tokens AND/OR/NOT/NEAR as operators, so "NOT NULL"
+    becomes "not* null*" which is parsed as two prefix search terms (and
+    still matches the indexed "not"/"null" content because FTS5 is
+    case-insensitive at index time).
+
+    Returns None when the query has no usable terms — caller should skip
+    the SELECT entirely in that case.
     """
     import re
-    # Split on non-alphanumeric so "test-time" → ["test", "time"]. We can't
-    # AND-match "test-time" as a phrase here because FTS5 doesn't tokenize
-    # hyphens consistently with the underlying content indexer.
-    tokens = re.findall(r"[A-Za-z0-9]+", q)
-    terms = [t for t in tokens if t.lower() not in _STOPWORDS and len(t) >= 2]
+    # Split on non-word so "test-time" → ["test", "time"], "résumé" stays as
+    # a single token. The \w class with re.UNICODE matches accented Latin,
+    # CJK, Cyrillic etc., aligning with FTS5's default unicode61 tokenizer.
+    # Otherwise an ASCII-only regex would silently drop all non-ASCII queries.
+    tokens = re.findall(r"\w+", q, flags=re.UNICODE)
+    terms: list[str] = []
+    for t in tokens:
+        lower = t.lower()
+        if lower in _STOPWORDS:
+            continue
+        if len(t) < 2:
+            continue
+        terms.append(lower)
     if not terms:
         return None
     # `term*` is FTS5 prefix match. AND is the implicit operator between bare
@@ -642,7 +659,14 @@ def search_all(
     Returns rows in fixed order: articles first, then notes, then blogs,
     each block sorted internally by BM25 (lower = better) with a recency
     tiebreaker so freshly-edited content surfaces over stale matches at
-    a tied score. Capped at ``limit`` total.
+    a tied score. Capped at ``limit`` total — note the per-kind quotas
+    above are the real ceiling (10+6+4=20), so passing ``limit > 20``
+    can't widen the result set; the parameter only narrows it.
+
+    Snippet markers: matched terms are wrapped with ASCII STX (``\\x02``)
+    and ETX (``\\x03``) instead of HTML ``<mark>`` tags so they can never
+    collide with literal ``<mark>`` text a user might have written in a
+    note about HTML. The frontend renders them as React ``<mark>`` nodes.
     """
     expr = _fts_palette_query(q)
     if expr is None:
@@ -657,7 +681,7 @@ def search_all(
     for r in conn.execute(
         """SELECT articles.id AS id, articles.title AS title,
                   articles.kind AS subkind, articles.summary AS summary,
-                  snippet(articles_fts, -1, '<mark>', '</mark>', '…', 10) AS snippet,
+                  snippet(articles_fts, -1, char(2), char(3), '…', 10) AS snippet,
                   bm25(articles_fts, 10.0, 5.0, 1.0) AS score
            FROM articles_fts JOIN articles ON articles.rowid = articles_fts.rowid
            WHERE articles_fts MATCH ?
@@ -681,7 +705,7 @@ def search_all(
     for r in conn.execute(
         """SELECT notes.id AS id, notes.summary AS summary, notes.body AS body,
                   notes.classification AS classification,
-                  snippet(notes_fts, 1, '<mark>', '</mark>', '…', 10) AS snippet,
+                  snippet(notes_fts, 1, char(2), char(3), '…', 10) AS snippet,
                   bm25(notes_fts, 3.0, 1.0) AS score
            FROM notes_fts JOIN notes ON notes.id = notes_fts.rowid
            WHERE notes_fts MATCH ? AND notes.deleted_at IS NULL
@@ -711,7 +735,7 @@ def search_all(
     for r in conn.execute(
         """SELECT blog_posts.id AS id, blog_posts.title AS title,
                   blog_posts.theme AS theme, blog_posts.body_preview AS body_preview,
-                  snippet(blog_posts_fts, -1, '<mark>', '</mark>', '…', 10) AS snippet,
+                  snippet(blog_posts_fts, -1, char(2), char(3), '…', 10) AS snippet,
                   bm25(blog_posts_fts, 10.0, 3.0, 1.0) AS score
            FROM blog_posts_fts JOIN blog_posts ON blog_posts.id = blog_posts_fts.rowid
            WHERE blog_posts_fts MATCH ?

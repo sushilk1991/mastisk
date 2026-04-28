@@ -280,7 +280,9 @@ export interface SearchResult {
   title: string;
   /** Short label under the title — article kind, "Note · Observation", "Blog post". */
   subtitle: string;
-  /** FTS5 snippet with `<mark>` tags around hits, or fallback prefix of summary. */
+  /** FTS5 snippet wrapping match terms with STX (\x02) / ETX (\x03) so the
+   * marker chars can never collide with literal `<mark>` text the user wrote
+   * in a note about HTML. The palette renders these as React `<mark>` nodes. */
   snippet: string;
   /** Lower = better. Frontend doesn't sort (server already did) but exposes for tests. */
   score: number;

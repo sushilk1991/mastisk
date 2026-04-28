@@ -271,7 +271,14 @@ CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
   INSERT INTO notes_fts(notes_fts, rowid, summary, body)
     VALUES ('delete', old.id, old.summary, old.body);
 END;
-CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+-- Only re-index when an indexed column actually changed. Notes get UPDATEd on
+-- every escalation_state transition (none → pending → auto_done/manual_done →
+-- retrying) and on every cascade SET NULL when a linked article is deleted —
+-- none of which touch summary or body. Without this WHEN clause every state
+-- transition would emit a redundant delete+reinsert into the FTS index.
+CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes
+WHEN old.summary IS NOT new.summary OR old.body IS NOT new.body
+BEGIN
   INSERT INTO notes_fts(notes_fts, rowid, summary, body)
     VALUES ('delete', old.id, old.summary, old.body);
   INSERT INTO notes_fts(rowid, summary, body)
@@ -461,7 +468,14 @@ CREATE TRIGGER IF NOT EXISTS blog_posts_ad AFTER DELETE ON blog_posts BEGIN
   INSERT INTO blog_posts_fts(blog_posts_fts, rowid, title, theme, body_preview)
     VALUES ('delete', old.id, old.title, old.theme, old.body_preview);
 END;
-CREATE TRIGGER IF NOT EXISTS blog_posts_au AFTER UPDATE ON blog_posts BEGIN
+-- Same rationale as notes_au: blog_posts get UPDATEd on status transitions
+-- (pending → running → done|failed) and saved_as_note_id mutations that
+-- don't touch any indexed column. WHEN gates the re-index to real changes.
+CREATE TRIGGER IF NOT EXISTS blog_posts_au AFTER UPDATE ON blog_posts
+WHEN old.title IS NOT new.title
+  OR old.theme IS NOT new.theme
+  OR old.body_preview IS NOT new.body_preview
+BEGIN
   INSERT INTO blog_posts_fts(blog_posts_fts, rowid, title, theme, body_preview)
     VALUES ('delete', old.id, old.title, old.theme, old.body_preview);
   INSERT INTO blog_posts_fts(rowid, title, theme, body_preview)

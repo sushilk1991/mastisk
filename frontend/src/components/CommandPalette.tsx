@@ -22,6 +22,11 @@ const DEBOUNCE_MS = 180;
 const MIN_QUERY_LEN = 2;
 const RESULT_LIMIT = 20;
 
+// Snippet markers from the backend: STX/ETX (ASCII control chars) instead of
+// `<mark>` so they cannot collide with literal `<mark>` strings in user notes.
+const MARK_OPEN = '';
+const MARK_CLOSE = '';
+
 export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -30,6 +35,14 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Monotonically increasing per request — guards against a stale .then()
+  // microtask writing state after the user's typed another character. abort()
+  // stops the network leg, but a response that already returned and queued
+  // .then() before abort() runs will still execute; we drop it via this seq.
+  const seqRef = useRef(0);
+  // Element to restore focus to when the palette closes (e.g. AskDrawer's
+  // textarea if the user opened the palette via ⌘K from inside it).
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   // Reset everything on open. We don't reset on close so a re-open can in
   // theory restore the prior query, but right now we always clear — keeps
@@ -41,41 +54,69 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
     setError(null);
     setActive(0);
     setLoading(false);
+    // Capture whatever was focused when the palette opened so we can restore
+    // it on close. Ignore the body element (default fallback when nothing
+    // else is focused) — restoring focus to body is meaningless.
+    const prev = document.activeElement;
+    previousFocusRef.current =
+      prev instanceof HTMLElement && prev !== document.body ? prev : null;
     // Wait one frame for the input to mount, then grab focus.
     const t = window.setTimeout(() => inputRef.current?.focus(), 0);
     return () => window.clearTimeout(t);
   }, [open]);
 
+  // Restore focus on close. Runs when `open` transitions true → false.
+  useEffect(() => {
+    if (open) return;
+    const target = previousFocusRef.current;
+    if (target && document.contains(target)) {
+      // Best-effort: silently ignored if the element was unmounted while the
+      // palette was open (e.g. user navigated to a different view).
+      try { target.focus(); } catch { /* ignore */ }
+    }
+    previousFocusRef.current = null;
+  }, [open]);
+
   // Debounced search. Aborts in-flight requests when the query changes faster
-  // than the network can keep up — otherwise out-of-order responses can
-  // overwrite a newer query's results with a stale page.
+  // than the network can keep up — combined with the seqRef guard, stale
+  // responses can never overwrite a newer query's results.
   useEffect(() => {
     if (!open) return;
     const trimmed = query.trim();
     if (trimmed.length < MIN_QUERY_LEN) {
       setResults([]);
+      setActive(0);
       setLoading(false);
       setError(null);
       return;
     }
     const ctrl = new AbortController();
+    const mySeq = ++seqRef.current;
     setLoading(true);
+    setError(null);
     const timer = window.setTimeout(() => {
       api.search(trimmed, { limit: RESULT_LIMIT, signal: ctrl.signal })
         .then((r) => {
-          setResults(r.results);
+          // Stale-response guard: a slower earlier request whose .then() runs
+          // after a newer one was already issued must NOT clobber state.
+          if (mySeq !== seqRef.current) return;
+          // Defensive — server contract says results is an array; if a proxy
+          // injects HTML or the body shape ever drifts, render an empty list
+          // rather than crashing the whole palette on `undefined.map`.
+          setResults(Array.isArray(r?.results) ? r.results : []);
           setActive(0);
           setError(null);
         })
         .catch((e: unknown) => {
-          // AbortError is expected — user typed another character.
+          if (mySeq !== seqRef.current) return;
           if (e instanceof Error && e.name === 'AbortError') return;
           const msg = e instanceof Error ? e.message : 'search failed';
           setError(msg);
           setResults([]);
         })
         .finally(() => {
-          if (!ctrl.signal.aborted) setLoading(false);
+          if (mySeq !== seqRef.current) return;
+          setLoading(false);
         });
     }, DEBOUNCE_MS);
     return () => {
@@ -94,10 +135,21 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
   if (!open) return null;
 
   function handleSelect(r: SearchResult) {
-    if (r.kind === 'article') onNavigate('article', r.id);
-    else if (r.kind === 'note') onNavigate('note', r.id);
-    else if (r.kind === 'blog') onNavigate('blog_post', r.id);
     onClose();
+    switch (r.kind) {
+      case 'article': onNavigate('article', r.id); break;
+      case 'note':    onNavigate('note', r.id);    break;
+      case 'blog':    onNavigate('blog_post', r.id); break;
+      default: {
+        // Exhaustive-switch sentinel: the unused binding makes TS error if a
+        // new SearchResultKind is added without updating this switch. At
+        // runtime, log and bail out so the user can pick a different result.
+        const _exhaustive: never = r.kind;
+        // eslint-disable-next-line no-console
+        console.warn('CommandPalette: unhandled result kind', _exhaustive, r);
+        return;
+      }
+    }
   }
 
   function handleAsk() {
@@ -111,6 +163,13 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
+      return;
+    }
+    if (e.key === 'Tab') {
+      // The palette has only one focusable element (the input), so allowing
+      // default Tab behaviour would move focus to the underlying page. Pin
+      // it to the input so aria-modal="true" actually holds.
+      e.preventDefault();
       return;
     }
     if (e.key === 'ArrowDown') {
@@ -175,7 +234,7 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
             </div>
           )}
 
-          {loading && results.length === 0 && (
+          {loading && results.length === 0 && !error && (
             <div className="cmd-hint">Searching…</div>
           )}
 
@@ -233,32 +292,32 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
 }
 
 /**
- * Render a snippet that contains literal `<mark>...</mark>` tags from FTS5
- * `snippet()`. We can't use dangerouslySetInnerHTML because the inner text
- * comes from user content — we'd need to HTML-escape everything else around
- * the marks. Splitting into React nodes lets React handle escaping for us.
+ * Render a snippet that wraps matches with STX (\x02) and ETX (\x03) into
+ * highlighted React `<mark>` nodes. We can't use dangerouslySetInnerHTML
+ * (would require manually escaping every non-marker character to avoid XSS)
+ * and we deliberately don't use `<mark>` strings as markers because user
+ * notes about HTML legitimately contain those — splitting on control chars
+ * is collision-free.
  */
-function renderHighlighted(snippet: string): ReactNode {
+export function renderHighlighted(snippet: string): ReactNode {
   const parts: ReactNode[] = [];
-  const OPEN = '<mark>';
-  const CLOSE = '</mark>';
   let i = 0;
   let key = 0;
   while (i < snippet.length) {
-    const start = snippet.indexOf(OPEN, i);
+    const start = snippet.indexOf(MARK_OPEN, i);
     if (start === -1) {
       parts.push(snippet.slice(i));
       break;
     }
     if (start > i) parts.push(snippet.slice(i, start));
-    const end = snippet.indexOf(CLOSE, start + OPEN.length);
+    const end = snippet.indexOf(MARK_CLOSE, start + 1);
     if (end === -1) {
       // Malformed — show the rest as plain text so we never lose content.
-      parts.push(snippet.slice(start));
+      parts.push(snippet.slice(start + 1));
       break;
     }
-    parts.push(<mark key={key++}>{snippet.slice(start + OPEN.length, end)}</mark>);
-    i = end + CLOSE.length;
+    parts.push(<mark key={key++}>{snippet.slice(start + 1, end)}</mark>);
+    i = end + 1;
   }
   return parts;
 }

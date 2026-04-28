@@ -148,8 +148,9 @@ export function App() {
 
   // Global ⌘K / Ctrl+K — open the command palette from anywhere. Intercepted
   // even inside form fields because ⌘K is universally a palette shortcut and
-  // doesn't conflict with normal typing. We don't toggle on repeat presses
-  // (re-opening already-open just resets the input, which is fine).
+  // doesn't conflict with normal typing. Pressing ⌘K when the palette is
+  // already open is a no-op (state stays true; the open-effect only runs on
+  // false→true transitions). Esc is the canonical close.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
@@ -266,8 +267,18 @@ export function App() {
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        onAsk={(q) => openAsk(q, null)}
-        onNavigate={navigate}
+        onAsk={(q) => {
+          // Escalating to AI: dismiss any other modal that was floating
+          // (most commonly an already-open AskDrawer with a stale prompt).
+          setAskOpen(false);
+          openAsk(q, null);
+        }}
+        onNavigate={(view, id) => {
+          // Same intent on result-pick navigation: don't leave AskDrawer
+          // hovering with an unrelated question over the new page.
+          setAskOpen(false);
+          navigate(view, id);
+        }}
       />
       <NoteCaptureModal
         open={captureOpen}
