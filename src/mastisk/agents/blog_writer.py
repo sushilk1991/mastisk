@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +64,19 @@ _JSON_RETRY_SUFFIX = (
 )
 
 
+# Personal-evidence boost factors applied to LLM rerank scores. Notes (the
+# user's own writing, including repo_ideator-tagged ones) and roundtable
+# syntheses outweigh external articles so claims anchor to personal evidence
+# first. Articles default to 1.0 (unboosted) via .get fallback. Not user-
+# tunable yet — kept here as a single source of truth rather than in
+# BlogSettings.
+_KIND_BOOST: dict[str, float] = {
+    "note": 1.6,        # user's own writing — both plain notes and repo_ideator-tagged
+    "roundtable": 1.4,  # user's own synthesis (multi-agent debate they ran)
+    # articles default to 1.0 (unboosted) via .get fallback
+}
+
+
 def _try_parse_draft(text: str) -> dict | None:
     """Parse an LLM response into a draft dict or None.
 
@@ -94,10 +108,15 @@ Sources (0-indexed):
 {source_list}
 
 Return JSON matching this schema exactly:
-{{"relevant": [<int>, <int>, ...]}}
+{{"scored": [{{"i": <int>, "score": <float in [0,1]>}}, ...]}}
 
-Where the list contains source indices in descending order of relevance to the theme.
-Exclude indices that are not relevant. Maximum 30 indices.
+Score semantics:
+- 1.0 = directly supports the theme as a thesis claim
+- 0.7 = clearly related
+- 0.4 = same domain but not on-thesis
+- 0.0 = unrelated
+
+Exclude indices that are not relevant. Maximum 30 entries.
 Do not include any prose before or after the JSON.
 """
 
@@ -368,10 +387,22 @@ class BlogWriter(Agent):
     async def _rank(self, candidates: list[dict], *, theme: str) -> list[dict]:
         """Rank candidates. See spec §6.2.
 
-        No theme → sort by recency (ts DESC), take top max_sources.
+        No theme → sort by recency (ts DESC).
         Theme → cheap keyword overlap pass → top pre_rank_limit → LLM rerank →
         validated rerank used for ordering (fallback to keyword order on
         validation failure).
+
+        On rerank success: apply kind-based personal-evidence boost (notes
+        and repo-ideator-tagged notes 1.6x; roundtables 1.4x; articles 1.0x),
+        drop anything below ``settings.blog.min_relevance_score``, sort by
+        boosted score DESC then ts DESC. The note multiplier is applied to
+        every note regardless of ``origin`` — both plain notes and repo_ideator-
+        tagged notes are the user's own evidence (notes the user wrote vs.
+        notes derived from the user's commits), so they share the same factor.
+
+        On rerank failure (None) or empty survivors after threshold filter:
+        fall back to the keyword-order pre_ranked list AS-IS — the keyword
+        pass doesn't have comparable scores.
         """
         if not theme or not theme.strip():
             return sorted(candidates, key=lambda c: (c.get("ts") or ""), reverse=True)
@@ -396,7 +427,31 @@ class BlogWriter(Agent):
         reranked = await self._llm_rerank(pre_ranked, theme=theme)
         if reranked is None:
             return pre_ranked
-        return reranked
+
+        # Personal-evidence boost: the user's own notes (including those
+        # tagged repo_ideator) and roundtable syntheses outweigh external
+        # articles, so claims anchor to personal evidence first.
+        boosted: list[tuple[dict, float]] = []
+        for cand, raw_score in reranked:
+            multiplier = _KIND_BOOST.get(cand.get("kind") or "", 1.0)
+            boosted.append((cand, raw_score * multiplier))
+
+        threshold = settings.min_relevance_score
+        survivors = [(c, s) for c, s in boosted if s >= threshold]
+        if not survivors:
+            # Threshold ate everything — the LLM produced no usable signal at
+            # the requested cutoff. Same fallback as a None rerank: trust the
+            # keyword pass rather than draft from zero sources.
+            log.warning(
+                "blog_writer: rerank survivors empty after threshold; "
+                "falling back to keyword order",
+            )
+            return pre_ranked
+        # Sort by boosted score DESC, ts DESC for tiebreak.
+        survivors.sort(
+            key=lambda cs: (cs[1], cs[0].get("ts") or ""), reverse=True,
+        )
+        return [c for c, _ in survivors]
 
     @staticmethod
     def _tokenize(text: str) -> set[str]:
@@ -406,16 +461,23 @@ class BlogWriter(Agent):
 
     async def _llm_rerank(
         self, candidates: list[dict], *, theme: str,
-    ) -> list[dict] | None:
+    ) -> list[tuple[dict, float]] | None:
         """Ollama rerank pass. Returns ``None`` on any validation failure.
 
-        Prompt returns a strict JSON object ``{"relevant": [ints...]}``. Theme
-        text is user-controlled (§17 attack surface), so we validate hard:
-        - Top-level JSON object.
-        - ``relevant`` is a list.
-        - Every element is an int in ``[0, len(candidates))``.
+        Prompt returns a strict JSON object
+        ``{"scored": [{"i": int, "score": float}, ...]}``. Theme text is
+        user-controlled (§17 attack surface), so we validate hard:
+        - Top-level JSON object with ``scored`` key.
+        - ``scored`` is a list.
+        - Every element is a dict with int ``i`` in ``[0, len(candidates))``
+          and a numeric (int or float) ``score``.
         Any violation → log.warning, return None so the caller falls back to
         the keyword-pass ordering. No retry — the rerank is best-effort.
+
+        Duplicates by ``i`` are dropped (first occurrence wins). If every
+        surviving entry has score 0, returns None — the LLM said nothing is
+        relevant, so the caller should fall back to keyword order rather than
+        treating "all zeros" as "all equally non-relevant".
         """
         settings = get_settings().blog
         if not candidates:
@@ -443,34 +505,54 @@ class BlogWriter(Agent):
             log.warning("blog_writer: rerank LLM call failed (%s)", e)
             return None
 
-        if not isinstance(parsed, dict) or "relevant" not in parsed:
-            log.warning("blog_writer: rerank response missing 'relevant' key")
+        if not isinstance(parsed, dict) or "scored" not in parsed:
+            log.warning("blog_writer: rerank response missing 'scored' key")
             return None
-        raw = parsed["relevant"]
+        raw = parsed["scored"]
         if not isinstance(raw, list):
-            log.warning("blog_writer: rerank 'relevant' is not a list")
+            log.warning("blog_writer: rerank 'scored' is not a list")
             return None
         seen: set[int] = set()
-        ordered: list[int] = []
+        scored_pairs: list[tuple[dict, float]] = []
         upper = len(candidates)
-        for v in raw:
-            if not isinstance(v, int) or isinstance(v, bool):
-                log.warning("blog_writer: rerank list contained non-int %r", v)
+        for entry in raw:
+            if not isinstance(entry, dict):
+                log.warning("blog_writer: rerank entry %r is not a dict", entry)
                 return None
-            if v < 0 or v >= upper:
-                log.warning("blog_writer: rerank index %s out of range", v)
+            i = entry.get("i")
+            score = entry.get("score")
+            if not isinstance(i, int) or isinstance(i, bool):
+                log.warning("blog_writer: rerank entry i %r is not an int", i)
                 return None
-            if v in seen:
+            if i < 0 or i >= upper:
+                log.warning("blog_writer: rerank index %s out of range", i)
+                return None
+            if isinstance(score, bool) or not isinstance(score, (int, float)):
+                log.warning("blog_writer: rerank entry score %r is not numeric", score)
+                return None
+            if math.isnan(score) or math.isinf(score):
+                log.warning("blog_writer: rerank entry score %r is not finite", score)
+                return None
+            if score < 0 or score > 1:
+                log.warning("blog_writer: rerank entry score %r outside [0,1]", score)
+                return None
+            if i in seen:
                 continue
-            seen.add(v)
-            ordered.append(v)
-        if not ordered:
+            seen.add(i)
+            scored_pairs.append((candidates[i], float(score)))
+        if not scored_pairs:
             # Empty / all-duplicate ranking isn't a useful result — the caller
             # would draft with zero sources. Signal failure so the caller
             # falls back to keyword-pass ordering.
             log.warning("blog_writer: rerank returned empty list; falling back")
             return None
-        return [candidates[i] for i in ordered]
+        if all(score == 0 for _, score in scored_pairs):
+            # The LLM said every source is unrelated — that's not "no signal",
+            # it's "negative signal". Don't draft with all-zero scores; trust
+            # the keyword pass instead.
+            log.warning("blog_writer: rerank returned all-zero scores; falling back")
+            return None
+        return scored_pairs
 
     # ───── prompt rendering ─────
 
@@ -633,6 +715,13 @@ class BlogWriter(Agent):
             "- Cite specifically. Every non-trivial claim must end with `[source N]` "
             "pointing at the exact source that supports it. If two sources back the same "
             "claim, write `[source 2, source 5]`. Do not invent source numbers.\n"
+            "- Cite a source only when it directly supports the surrounding claim. If a "
+            "source is only loosely related, leave it out — do not reach for it. Drop "
+            "tangential examples rather than redirecting them with phrases like \"what's "
+            "really interesting here\".\n"
+            "- When the user's own notes, commits (in repo-ideator notes), or roundtables "
+            "are available, anchor claims to those over external articles. Personal "
+            "evidence makes the post specific.\n"
             "- End with one forward-looking question or open thread — something the author "
             "is still thinking about. Do not wrap with a pat conclusion.\n\n"
             "## Output contract\n"

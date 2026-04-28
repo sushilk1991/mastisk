@@ -82,10 +82,16 @@ class BlogSettings(BaseSettings):
     No ``blog_model`` key: ``claude_bridge.run_claude()`` doesn't take a
     model arg — it uses whatever the user's ``claude -p`` default is. The
     Ollama fallback (and the theme-rerank pass) both use ``ollama_model``.
+
+    ``min_relevance_score`` is the cutoff applied to LLM-reranked sources
+    after the personal-evidence boost; entries below it are dropped before
+    drafting so weak fits don't get cited. ``max_sources`` was lowered from
+    40 to 20 alongside introducing the threshold so the filter does the
+    trimming rather than a flat top-N cap.
     """
     default_window_days: int = 14
     allowed_window_days: list[int] = Field(default_factory=lambda: [7, 14, 30, 90])
-    max_sources: int = 40
+    max_sources: int = 20
     pre_rank_limit: int = 80
     per_source_char_limit: int = 1500
     min_per_source_chars: int = 300
@@ -95,6 +101,7 @@ class BlogSettings(BaseSettings):
     draft_word_count_max: int = 2000
     claude_timeout_seconds: int = 240
     ollama_model: str = "llama3.1:8b"
+    min_relevance_score: float = 0.4
 
 
 class Settings(BaseSettings):

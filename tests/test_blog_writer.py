@@ -328,18 +328,23 @@ def test_theme_rerank_validation_failure_falls_back_to_keyword(agent, db, vault_
 
 
 def test_theme_rerank_success_reorders_sources(agent, db, vault_tmp):
-    """A valid rerank with {"relevant": [1, 0]} should put the second note first."""
-    # Seed in order: n_a (most recent, kw-match) then n_b.
-    _seed_note(db, body="body about X", summary="X", days_ago=0, slug="a")
-    _seed_note(db, body="body about Y", summary="Y", days_ago=1, slug="b")
-    bp_id = _seed_blog_post(db, theme="X")
+    """A valid rerank with scored entries should put the second note first."""
+    # Seed in order: n_a (most recent) then n_b. The theme "alpha" is too
+    # specific to overlap with either body, so the keyword pre-rank produces
+    # a recency-tiebreak order [a, b] (indices 0, 1). The rerank then flips
+    # them by giving index 1 the higher score.
+    a_id = _seed_note(db, body="body about alpha thread", summary="alpha-summary",
+                      days_ago=0, slug="a")
+    b_id = _seed_note(db, body="body about beta thread", summary="beta-summary",
+                      days_ago=1, slug="b")
+    bp_id = _seed_blog_post(db, theme="zeta-theme-keyword")
     _enqueue(bp_id)
 
-    # This reorder depends on how many candidates survive the keyword pass.
-    # We only know it's <= 2; the rerank returns [1, 0] meaning "index 1 first,
-    # then 0" — i.e. flips whatever order keyword returned.
+    # Rerank puts index 1 (note_b) first with the higher score. After the 1.6
+    # note multiplier both clear the 0.4 threshold, so both survive but b is
+    # ranked above a in the final order.
     async def good_rerank(prompt, model, **kw):
-        return {"text": '{"relevant": [1, 0]}'}
+        return {"text": '{"scored": [{"i": 1, "score": 0.8}, {"i": 0, "score": 0.7}]}'}
 
     async def fake_claude(*a, **kw):
         return {"text": json.dumps({"title": "t", "tags": [], "body_md": "x [source 1]"})}
@@ -357,6 +362,15 @@ def test_theme_rerank_success_reorders_sources(agent, db, vault_tmp):
         "SELECT status FROM blog_posts WHERE id=?", (bp_id,),
     ).fetchone()
     assert row["status"] == "done"
+    # The rerank put index 1 (note_b) first → blog_post_sources rank=1 must
+    # be note_b. If the boost or threshold filter drops the wrong row, this
+    # check would catch it.
+    rank1 = db.execute(
+        "SELECT kind, ref FROM blog_post_sources WHERE blog_post_id=? AND rank=1",
+        (bp_id,),
+    ).fetchone()
+    assert rank1["kind"] == "note"
+    assert int(rank1["ref"]) == b_id
 
 
 # ─────────────────────────────── terminal-status guard ───────────────────────────────
@@ -754,15 +768,20 @@ def test_claude_transport_error_skips_retry(agent, db, vault_tmp):
 
 
 def test_empty_rerank_falls_back_to_keyword(agent, db, vault_tmp):
-    """``{"relevant": []}`` is a valid-JSON but useless response — the caller
+    """``{"scored": []}`` is a valid-JSON but useless response — the caller
     should fall back to keyword ordering rather than draft with zero sources."""
-    _seed_note(db, body="body about X", summary="X", slug="a")
-    _seed_note(db, body="body about Y", summary="Y", days_ago=1, slug="b")
-    bp_id = _seed_blog_post(db, theme="X")
+    # Note b (older) has the matching keyword in its summary; note a (more
+    # recent) does not. Without rerank, the keyword-overlap pass should put
+    # b above a despite a being newer, since keyword score outranks ts.
+    _seed_note(db, body="unrelated text", summary="unrelated topic",
+               days_ago=0, slug="a")
+    b_id = _seed_note(db, body="body about throughline keyword",
+                      summary="throughline summary", days_ago=1, slug="b")
+    bp_id = _seed_blog_post(db, theme="throughline")
     _enqueue(bp_id)
 
     async def empty_rerank(prompt, model, **kw):
-        return {"text": '{"relevant": []}'}
+        return {"text": '{"scored": []}'}
 
     async def fake_claude(**kw):
         return {"text": json.dumps({
@@ -783,11 +802,14 @@ def test_empty_rerank_falls_back_to_keyword(agent, db, vault_tmp):
         "SELECT status FROM blog_posts WHERE id=?", (bp_id,),
     ).fetchone()
     assert row["status"] == "done"
-    n_sources = db.execute(
-        "SELECT COUNT(*) AS c FROM blog_post_sources WHERE blog_post_id=?",
+    # Empty rerank → fall back to keyword-pass order. Note b has the
+    # matching keyword, so it lands at rank 1 even though a is more recent.
+    rank1 = db.execute(
+        "SELECT kind, ref FROM blog_post_sources WHERE blog_post_id=? AND rank=1",
         (bp_id,),
-    ).fetchone()["c"]
-    assert n_sources >= 1
+    ).fetchone()
+    assert rank1["kind"] == "note"
+    assert int(rank1["ref"]) == b_id
 
 
 # ───── Ollama prompt re-truncation (test gap) ─────
@@ -933,3 +955,330 @@ def test_regenerate_rolls_back_on_reset_failure(db, vault_tmp):
         (bp_id,),
     ).fetchone()["c"]
     assert n_after == 1
+
+
+# ───── rerank scoring + personal-evidence boost ─────
+
+
+def _candidate(
+    *, kind: str, ref: int, summary: str = "", body: str = "",
+    ts: str = "2026-04-22T00:00:00", origin: str | None = None,
+) -> dict:
+    """Bare-minimum candidate dict for unit-testing _rank/_llm_rerank."""
+    c: dict = {
+        "kind": kind, "ref": ref, "slug": f"s{ref}", "title": None,
+        "summary": summary, "body": body, "ts": ts, "origin": origin,
+    }
+    return c
+
+
+def test_rerank_filters_below_relevance_threshold():
+    """Candidates whose boosted score falls below min_relevance_score get
+    dropped from the final ranking."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    # Two articles → multiplier 1.0, so raw score == boosted score.
+    keep = _candidate(kind="article", ref=1, summary="theme stuff")
+    drop = _candidate(kind="article", ref=2, summary="other")
+    candidates = [keep, drop]
+
+    async def fake_rerank(self, cands, *, theme):
+        # Return both, but with one score above and one below the threshold.
+        return [(keep, 0.5), (drop, 0.2)]
+
+    with patch.object(BlogWriter, "_llm_rerank", new=fake_rerank):
+        ranked = asyncio.run(BlogWriter()._rank(candidates, theme="theme"))
+
+    refs = [c["ref"] for c in ranked]
+    assert refs == [1]
+
+
+def test_personal_evidence_boost_reorders():
+    """A note with raw 0.5 (boosted 0.8) outranks an article with raw 0.7
+    (boosted 0.7)."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    note = _candidate(kind="note", ref=1, summary="my note")
+    article = _candidate(kind="article", ref=2, summary="external article")
+    # Pre-rank pass receives both. Mocked rerank returns both.
+    candidates = [note, article]
+
+    async def fake_rerank(self, cands, *, theme):
+        return [(note, 0.5), (article, 0.7)]
+
+    with patch.object(BlogWriter, "_llm_rerank", new=fake_rerank):
+        ranked = asyncio.run(BlogWriter()._rank(candidates, theme="theme"))
+
+    refs = [c["ref"] for c in ranked]
+    # Note boosted 0.5*1.6=0.8 beats article 0.7*1.0=0.7.
+    assert refs == [1, 2]
+
+
+def test_repo_ideator_origin_is_boosted():
+    """A repo_ideator-tagged note gets the SAME 1.6x multiplier as a plain
+    note — both are personal evidence — so origin doesn't subtly tilt the
+    score either direction.
+
+    Real differential: same raw score for both notes, plus an article with a
+    higher raw score that would beat the unboosted notes but loses to the
+    boosted ones. Both notes must land above the article, AND their relative
+    order must follow ts DESC tiebreak (proving the boost is identical, not
+    subtly different by origin)."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    plain_note = _candidate(
+        kind="note", ref=1, summary="plain user note",
+        ts="2026-04-22T00:00:00",  # newer
+    )
+    repo_note = _candidate(
+        kind="note", ref=2, summary="repo-derived", origin="repo_ideator",
+        ts="2026-04-21T00:00:00",  # older
+    )
+    # Article raw 0.7 would beat unboosted notes (0.6) but loses to boosted
+    # (0.6 * 1.6 = 0.96).
+    article = _candidate(
+        kind="article", ref=3, summary="article", ts="2026-04-23T00:00:00",
+    )
+    candidates = [plain_note, repo_note, article]
+
+    async def fake_rerank(self, cands, *, theme):
+        # Same raw score for both notes; article higher raw score.
+        return [(plain_note, 0.6), (repo_note, 0.6), (article, 0.7)]
+
+    with patch.object(BlogWriter, "_llm_rerank", new=fake_rerank):
+        ranked = asyncio.run(BlogWriter()._rank(candidates, theme="theme"))
+
+    refs = [c["ref"] for c in ranked]
+    # Both notes (boosted to 0.96) must beat article (0.7).
+    assert refs[0] in (1, 2)
+    assert refs[1] in (1, 2)
+    assert refs[2] == 3
+    # The boost is identical for both notes — relative order is ts DESC, so
+    # plain_note (newer) comes before repo_note (older). If the boost were
+    # subtly different by origin, this would flip.
+    assert refs == [1, 2, 3]
+
+
+def test_rerank_validation_rejects_missing_scored_key():
+    """A response that omits the 'scored' key should fail validation and
+    return None."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    async def bad_rerank(prompt, model, **kw):
+        return {"text": '{"foo": 1}'}
+
+    candidates = [_candidate(kind="note", ref=1, summary="s")]
+
+    with patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock, side_effect=bad_rerank,
+    ):
+        result = asyncio.run(
+            BlogWriter()._llm_rerank(candidates, theme="theme"),
+        )
+    assert result is None
+
+
+def test_rerank_validation_rejects_non_numeric_score():
+    """A response with a non-numeric score (string 'high') should fail
+    validation and return None."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    async def bad_rerank(prompt, model, **kw):
+        return {"text": '{"scored": [{"i": 0, "score": "high"}]}'}
+
+    candidates = [_candidate(kind="note", ref=1, summary="s")]
+
+    with patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock, side_effect=bad_rerank,
+    ):
+        result = asyncio.run(
+            BlogWriter()._llm_rerank(candidates, theme="theme"),
+        )
+    assert result is None
+
+
+def test_rerank_failure_falls_back_unboosted():
+    """When _llm_rerank returns None, _rank returns the keyword-order
+    pre_ranked list AS-IS — no boost, no threshold filter applied."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    # Articles only; if the boost/threshold path were taken these would all
+    # be at multiplier 1.0 and none would have a "score" attached. Build the
+    # input so we can assert the fallback returns the raw candidates.
+    a = _candidate(kind="article", ref=1, summary="theme aligned",
+                   ts="2026-04-22T00:00:00")
+    b = _candidate(kind="article", ref=2, summary="theme aligned too",
+                   ts="2026-04-21T00:00:00")
+    candidates = [a, b]
+
+    async def fail_rerank(self, cands, *, theme):
+        return None
+
+    with patch.object(BlogWriter, "_llm_rerank", new=fail_rerank):
+        ranked = asyncio.run(BlogWriter()._rank(candidates, theme="theme"))
+
+    # Same objects, in the keyword/recency order produced by the pre-rank
+    # pass (both have identical keyword scores, so they're sorted by ts DESC).
+    assert ranked == [a, b]
+    # The candidate dicts themselves are untouched (no score field added).
+    for c in ranked:
+        assert "score" not in c
+
+
+def test_rerank_all_low_scores_falls_back_to_pre_ranked():
+    """When every reranked entry's boosted score is below min_relevance_score,
+    survivors is empty and _rank must fall back to the keyword pre-rank rather
+    than return [] (which would draft from no sources)."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    a = _candidate(kind="article", ref=1, summary="theme one",
+                   ts="2026-04-22T00:00:00")
+    b = _candidate(kind="article", ref=2, summary="theme two",
+                   ts="2026-04-21T00:00:00")
+    c = _candidate(kind="article", ref=3, summary="theme three",
+                   ts="2026-04-20T00:00:00")
+    candidates = [a, b, c]
+
+    async def low_score_rerank(self, cands, *, theme):
+        # Articles → multiplier 1.0, so boosted == raw. All below 0.4.
+        return [(a, 0.05), (b, 0.2), (c, 0.3)]
+
+    with patch.object(BlogWriter, "_llm_rerank", new=low_score_rerank):
+        ranked = asyncio.run(BlogWriter()._rank(candidates, theme="theme one"))
+
+    # Fallback returns pre_ranked AS-IS — non-empty, in keyword/recency order.
+    assert len(ranked) == 3
+    # All three input candidates have the same keyword overlap with "theme one"
+    # (token "theme" matches each), so they tiebreak by ts DESC: a, b, c.
+    refs = [r["ref"] for r in ranked]
+    assert refs == [1, 2, 3]
+
+
+def test_rerank_rejects_nan_score():
+    """NaN is not a finite float — validator rejects it.
+
+    Python's json.loads accepts the bare ``NaN`` literal by default (cpython
+    extension), so a malicious or buggy LLM response can slip a non-finite
+    value past the basic isinstance check.
+    """
+    from mastisk.agents.blog_writer import BlogWriter
+
+    async def nan_rerank(prompt, model, **kw):
+        return {"text": '{"scored": [{"i": 0, "score": NaN}]}'}
+
+    candidates = [_candidate(kind="note", ref=1, summary="s")]
+
+    with patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock, side_effect=nan_rerank,
+    ):
+        result = asyncio.run(
+            BlogWriter()._llm_rerank(candidates, theme="theme"),
+        )
+    assert result is None
+
+
+def test_rerank_rejects_infinity_score():
+    """Infinity is not a finite float — validator rejects it."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    async def inf_rerank(prompt, model, **kw):
+        return {"text": '{"scored": [{"i": 0, "score": Infinity}]}'}
+
+    candidates = [_candidate(kind="note", ref=1, summary="s")]
+
+    with patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock, side_effect=inf_rerank,
+    ):
+        result = asyncio.run(
+            BlogWriter()._llm_rerank(candidates, theme="theme"),
+        )
+    assert result is None
+
+
+def test_rerank_rejects_negative_score():
+    """Score below 0 violates the [0,1] contract — validator rejects it."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    async def neg_rerank(prompt, model, **kw):
+        return {"text": '{"scored": [{"i": 0, "score": -0.5}]}'}
+
+    candidates = [_candidate(kind="note", ref=1, summary="s")]
+
+    with patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock, side_effect=neg_rerank,
+    ):
+        result = asyncio.run(
+            BlogWriter()._llm_rerank(candidates, theme="theme"),
+        )
+    assert result is None
+
+
+def test_rerank_rejects_score_above_one():
+    """Score above 1 violates the [0,1] contract — validator rejects it."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    async def high_rerank(prompt, model, **kw):
+        return {"text": '{"scored": [{"i": 0, "score": 1.5}]}'}
+
+    candidates = [_candidate(kind="note", ref=1, summary="s")]
+
+    with patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock, side_effect=high_rerank,
+    ):
+        result = asyncio.run(
+            BlogWriter()._llm_rerank(candidates, theme="theme"),
+        )
+    assert result is None
+
+
+def test_rerank_skips_duplicate_indices():
+    """When the LLM returns the same i twice, first occurrence wins; the
+    duplicate is silently dropped (not a validation failure)."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    async def dup_rerank(prompt, model, **kw):
+        return {"text": '{"scored": [{"i": 0, "score": 0.8}, {"i": 0, "score": 0.2}]}'}
+
+    candidates = [_candidate(kind="note", ref=1, summary="s")]
+
+    with patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock, side_effect=dup_rerank,
+    ):
+        result = asyncio.run(
+            BlogWriter()._llm_rerank(candidates, theme="theme"),
+        )
+    assert result is not None
+    assert len(result) == 1
+    cand, score = result[0]
+    assert cand is candidates[0]
+    assert score == 0.8
+
+
+def test_threshold_boundary_inclusive():
+    """A note with raw 0.25 → boosted 0.4 (1.6×) exactly equals the default
+    threshold and must be KEPT. The comparison is `>=`; pin this so a future
+    drift to `>` would surface here.
+
+    Worth noting: 0.25 * 1.6 == 0.4 in IEEE 754 (0.25 has an exact binary
+    representation). If either constant changes, recompute the product.
+    """
+    from mastisk.agents.blog_writer import BlogWriter
+
+    note = _candidate(kind="note", ref=1, summary="boundary note")
+    candidates = [note]
+
+    async def boundary_rerank(self, cands, *, theme):
+        return [(note, 0.25)]
+
+    with patch.object(BlogWriter, "_llm_rerank", new=boundary_rerank):
+        ranked = asyncio.run(BlogWriter()._rank(candidates, theme="theme"))
+
+    refs = [c["ref"] for c in ranked]
+    assert refs == [1]
