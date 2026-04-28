@@ -230,6 +230,24 @@ async def start_scheduler():
     except Exception as e:
         log.warning("scheduler: topic_suggester registration failed: %s", e)
 
+    try:
+        from mastisk.agents.opinion_gap_miner import OpinionGapMiner
+        # OpinionGapMiner is timer-driven, weekly cadence. Hourly tick is
+        # plenty — the agent self-times via cadence_hours so we won't run
+        # twice in the same week. First run 5 minutes after boot so the
+        # initial system settle (compiler + scout + topic_suggester) finishes
+        # before this agent starts hitting Ollama.
+        sched.add_job(
+            OpinionGapMiner().run_once, "interval",
+            seconds=OpinionGapMiner.tick_seconds, id="opinion_gap_miner",
+            max_instances=1,
+            next_run_time=datetime.now(timezone.utc) + timedelta(minutes=5),
+            coalesce=True,
+        )
+        log.info("scheduler: opinion_gap_miner registered (1h tick, 7d cadence)")
+    except Exception as e:
+        log.warning("scheduler: opinion_gap_miner registration failed: %s", e)
+
     sched.start()
     log.info("scheduler started")
     return sched

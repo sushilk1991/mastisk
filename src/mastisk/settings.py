@@ -111,6 +111,15 @@ class BlogSettings(BaseSettings):
     topic_suggester_max_world_items: int = 60
     topic_suggester_max_crossings: int = 8
 
+    # ── opinion_gap_miner ──
+    # Weekly cadence; lower yield + smaller candidate set than topic_suggester
+    # because the conflict signal is rarer than the crossing signal. The
+    # caps trim before the pairwise scan — assertive notes are pre-filtered
+    # in _pull_user_assertions.
+    opinion_gap_miner_max_user_items: int = 20
+    opinion_gap_miner_max_world_items: int = 40
+    opinion_gap_miner_max_pairs: int = 6
+
 
 class Settings(BaseSettings):
     # populate_by_name: accept both the field name (from TOML) AND the alias
