@@ -32,11 +32,59 @@ def init_schema(conn: sqlite3.Connection | None = None) -> None:
     own = conn is None
     c = conn or connect()
     try:
+        # Migrate legacy FTS triggers BEFORE the schema script runs. The CREATE
+        # TRIGGER IF NOT EXISTS lines in schema.sql are a no-op when a trigger
+        # of the same name already exists, so a shape-change to an existing
+        # trigger (e.g. adding a WHEN clause) wouldn't reach upgraded users
+        # without an explicit drop. Dropping happens here; the executescript
+        # below recreates them with the current shape.
+        _migrate_legacy_fts_triggers(c)
         c.executescript(_SCHEMA_PATH.read_text())
         _run_migrations(c)
     finally:
         if own:
             c.close()
+
+
+_FTS_UPDATE_TRIGGERS: tuple[str, ...] = (
+    "articles_au",
+    "notes_au",
+    "blog_posts_au",
+)
+
+
+def _migrate_legacy_fts_triggers(conn: sqlite3.Connection) -> None:
+    """Drop any FTS UPDATE trigger whose installed DDL is missing the
+    `WHEN old.col IS NOT new.col` guard.
+
+    Without the guard the trigger fires on every UPDATE — including
+    count-bump UPDATEs from links_ai/links_ad/article_sources_ai and
+    state-transition UPDATEs from the escalator and blog writer — and
+    each fire emits a delete+reinsert into the FTS shadow tables for
+    content that didn't actually change. Adding the guard via the
+    schema's CREATE TRIGGER IF NOT EXISTS doesn't reach existing DBs
+    (the trigger already exists with the old shape), so we drop the
+    legacy ones here and let executescript recreate them.
+
+    Safe on fresh installs: the SELECT returns no row, the loop is a
+    no-op, and the schema script then creates triggers with the current
+    shape on first run.
+    """
+    for trigger in _FTS_UPDATE_TRIGGERS:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+            (trigger,),
+        ).fetchone()
+        if not row:
+            continue
+        sql = row["sql"] or ""
+        # Match the keyword as a whole word so we don't false-positive on
+        # something like "WHENever" inside a comment. Case-insensitive
+        # because schema.sql could in theory be reformatted.
+        import re
+        if re.search(r"\bWHEN\b", sql, flags=re.IGNORECASE):
+            continue
+        conn.execute(f"DROP TRIGGER IF EXISTS {trigger}")
 
 
 def _add_column_if_missing(

@@ -370,3 +370,80 @@ def test_ensure_fts_initialized_no_op_on_empty_content_table(
     _ensure_fts_initialized(db, "notes_fts", "notes")
     rows = db.execute("SELECT COUNT(*) AS n FROM notes_fts_docsize").fetchone()["n"]
     assert rows == 0
+
+
+def test_init_schema_migrates_legacy_au_triggers_to_when_clause(
+    tmp_path: Path,
+) -> None:
+    """`CREATE TRIGGER IF NOT EXISTS` is a no-op when a trigger of the same
+    name already exists, so a shape-change (adding a WHEN clause) to a
+    pre-existing trigger never reaches upgraded users without an explicit
+    drop. This pins the migration: a DB carrying the legacy unguarded
+    articles_au must end up with the WHEN-clause version after init_schema.
+    """
+    dbpath = tmp_path / "legacy.db"
+    raw = sqlite3.connect(dbpath, isolation_level=None)
+    raw.row_factory = sqlite3.Row
+
+    # Bootstrap schema, then pretend we're on the old version: drop the
+    # WHEN-guarded articles_au and recreate the LEGACY shape (no WHEN).
+    init_schema(raw)
+    raw.execute("DROP TRIGGER articles_au")
+    raw.execute(
+        """CREATE TRIGGER articles_au AFTER UPDATE ON articles BEGIN
+             INSERT INTO articles_fts(articles_fts, rowid, title, summary, body_md)
+               VALUES ('delete', old.rowid, old.title, old.summary, old.body_md);
+             INSERT INTO articles_fts(rowid, title, summary, body_md)
+               VALUES (new.rowid, new.title, new.summary, new.body_md);
+           END"""
+    )
+    legacy_sql = raw.execute(
+        "SELECT sql FROM sqlite_master WHERE name='articles_au'"
+    ).fetchone()["sql"]
+    assert "WHEN" not in legacy_sql.upper(), "test setup did not install legacy shape"
+
+    # Re-running init_schema must replace the legacy trigger with the new
+    # WHEN-guarded version.
+    init_schema(raw)
+    new_sql = raw.execute(
+        "SELECT sql FROM sqlite_master WHERE name='articles_au'"
+    ).fetchone()["sql"]
+    assert "WHEN" in new_sql.upper(), \
+        f"legacy articles_au not migrated: {new_sql}"
+
+    # And the new trigger must actually be installed AND working: after the
+    # migration, a no-op UPDATE shouldn't grow the FTS shadow.
+    raw.execute(
+        """INSERT INTO articles (id, kind, title, slug, summary, body_md)
+           VALUES ('art', 'Concept', 't', 's', 'a', 'b')""",
+    )
+    raw.execute("INSERT INTO articles_fts(articles_fts) VALUES('optimize')")
+    data_before = raw.execute(
+        "SELECT COUNT(*) FROM articles_fts_data"
+    ).fetchone()[0]
+    raw.execute(
+        "UPDATE articles SET sources_count = sources_count + 1 WHERE id = ?",
+        ("art",),
+    )
+    data_after = raw.execute(
+        "SELECT COUNT(*) FROM articles_fts_data"
+    ).fetchone()[0]
+    assert data_before == data_after, \
+        "migrated trigger still re-indexes on count-bump UPDATE"
+    raw.close()
+
+
+def test_dunder_init_query_matches_indexed_content(db: sqlite3.Connection) -> None:
+    """End-to-end of the underscore tokenizer change: a body containing
+    `__init__.py` is indexed by FTS5 as the token "init", and a user query
+    "__init__" must produce a search expression that matches it. The
+    builder-level test asserts the expression is "init*"; this test
+    asserts the expression actually finds the content."""
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, summary, body_md)
+           VALUES ('art', 'Concept', 'Python init', 's', 'a',
+                   'See __init__.py for module setup.')""",
+    )
+    results = search_all(db, "__init__")
+    assert any(r["kind"] == "article" for r in results), \
+        "dunder identifier query did not match indexed content"
