@@ -113,20 +113,9 @@ class Compiler(Agent):
         )
 
         resp, provider = await intelligence.run_intelligence(prompt)
-        text = resp.get("text") or ""
-        # Claude usually honours the ```json fence; Codex and Ollama often
-        # emit naked {...}. Fall back to a brace-bracketed parse when the
-        # fenced extractor returns nothing — without this, the Codex/Ollama
-        # tiers silently produce no article when Claude is unreachable.
-        data = claude_bridge.extract_json_block(text)
-        if not data:
-            start = text.find("{")
-            end = text.rfind("}")
-            if start >= 0 and end > start:
-                try:
-                    data = json.loads(text[start : end + 1])
-                except json.JSONDecodeError:
-                    data = None
+        # extract_json_block tolerates both fenced and naked-braces JSON,
+        # so this works whether Claude / Codex / Ollama served.
+        data = claude_bridge.extract_json_block(resp.get("text") or "")
         if not data:
             log.warning(
                 "compiler: no JSON block in %s response for source %s",

@@ -436,7 +436,11 @@ class Escalator(Agent):
     # ───── Claude / Codex / Ollama plumbing ─────
 
     async def _call_claude(self, prompt: str) -> dict:
-        """Run Claude and extract the JSON block. ParseFailure → ClaudeError."""
+        """Run Claude and extract the JSON block. ParseFailure → ClaudeError.
+
+        ``extract_json_block`` tolerates both fenced and naked-braces JSON,
+        so this works whether Claude honours the fence or emits ``{...}``.
+        """
         result = await claude_bridge.run_claude(prompt)
         text = result.get("text", "") if isinstance(result, dict) else str(result)
         parsed = claude_bridge.extract_json_block(text)
@@ -447,23 +451,11 @@ class Escalator(Agent):
         return parsed
 
     async def _call_codex(self, prompt: str) -> dict:
-        """Run Codex (cloud-class fallback) and extract JSON.
-
-        Codex sits between Claude and Ollama in the fallback chain. Same JSON
-        extraction tolerance as ``_call_ollama`` — fenced block first, then
-        naked-braces parse for models that skip the fence.
-        """
+        """Run Codex (cloud-class fallback) and extract JSON. Codex sits
+        between Claude and Ollama in the fallback chain."""
         result = await codex_bridge.run_codex(prompt)
         text = result.get("text", "") if isinstance(result, dict) else str(result)
         parsed = claude_bridge.extract_json_block(text)
-        if parsed is None:
-            start = text.find("{")
-            end = text.rfind("}")
-            if start >= 0 and end > start:
-                try:
-                    parsed = json.loads(text[start : end + 1])
-                except json.JSONDecodeError:
-                    parsed = None
         if parsed is None:
             raise RuntimeError(
                 f"escalator: could not extract JSON from codex response: {text[:200]!r}"
@@ -471,21 +463,10 @@ class Escalator(Agent):
         return parsed
 
     async def _call_ollama(self, prompt: str, *, model: str) -> dict:
-        """Run Ollama (fallback engine) and extract JSON. Tolerant of models
-        that emit the block without code fences.
-        """
+        """Run Ollama (final fallback) and extract JSON."""
         result = await ollama_bridge.run_ollama(prompt, model)
         text = result.get("text", "") if isinstance(result, dict) else str(result)
         parsed = claude_bridge.extract_json_block(text)
-        if parsed is None:
-            # Fall back to naked-braces parse for models that skip the fence.
-            start = text.find("{")
-            end = text.rfind("}")
-            if start >= 0 and end > start:
-                try:
-                    parsed = json.loads(text[start : end + 1])
-                except json.JSONDecodeError:
-                    parsed = None
         if parsed is None:
             raise RuntimeError(
                 f"escalator: could not extract JSON from ollama response: {text[:200]!r}"

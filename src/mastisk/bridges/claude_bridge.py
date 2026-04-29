@@ -125,19 +125,35 @@ async def run_claude(
 
 
 def extract_json_block(text: str) -> dict | None:
-    """Pull the first ```json ... ``` block out of a Claude response."""
+    """Pull a JSON object out of an LLM response.
+
+    Tolerates two shapes: (1) fenced ``` ```json {...} ``` ``` block (Claude's
+    documented contract) and (2) naked ``{...}`` (Claude Code's recent
+    versions emit this often despite a fence-enforcing prompt; Codex and
+    Ollama emit it routinely). Without the naked-braces fallback every
+    caller had to wrap this with the same retry → which was the literal
+    source of "every escalation fails / every Codex call fails" bugs.
+    """
     start = text.find("```json")
     if start == -1:
         start = text.find("```")
-        if start == -1:
-            return None
-        start = text.find("\n", start) + 1
+        if start != -1:
+            start = text.find("\n", start) + 1
     else:
         start = text.find("\n", start) + 1
-    end = text.find("```", start)
-    if end == -1:
-        return None
-    try:
-        return json.loads(text[start:end].strip())
-    except json.JSONDecodeError:
-        return None
+    if start != -1:
+        end = text.find("```", start)
+        if end != -1:
+            try:
+                return json.loads(text[start:end].strip())
+            except json.JSONDecodeError:
+                pass  # fall through to naked-braces parse
+    # Naked-braces fallback: take the outermost {...} span.
+    open_idx = text.find("{")
+    close_idx = text.rfind("}")
+    if open_idx >= 0 and close_idx > open_idx:
+        try:
+            return json.loads(text[open_idx : close_idx + 1])
+        except json.JSONDecodeError:
+            return None
+    return None
