@@ -31,9 +31,15 @@ async def run_codex(
     if model:
         cmd += ["-c", f'model="{model}"']
     cmd.append(prompt)
+    # stdin=DEVNULL is load-bearing: when the daemon runs under launchd, the
+    # subprocess inherits a piped stdin. ``codex exec PROMPT`` then sees stdin
+    # as piped, falls into "read additional input from stdin" mode, and hangs
+    # / errors out instead of using the positional prompt arg. Detaching stdin
+    # lets it use the arg path the docs advertise.
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

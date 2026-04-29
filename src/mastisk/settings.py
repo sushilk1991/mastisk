@@ -45,7 +45,11 @@ class NotesSettings(BaseSettings):
     # (which the Settings UI actually exposes). The old "llama3.1:8b" hardcode
     # silently broke classify for anyone who hadn't pulled that specific model.
     notetaker_model: str | None = None
-    escalator_model: str = "claude-sonnet-4-6"
+    # Escalator's Ollama-tier fallback model. None → top-level
+    # summarize_model_heavy. The old default ``"claude-sonnet-4-6"`` was a bug
+    # — that's a Claude model name being passed as an Ollama model, which made
+    # every Claude+Codex-exhausted escalation 404 against /api/chat.
+    escalator_model: str | None = None
     notetaker_concurrency: int = 4
 
 

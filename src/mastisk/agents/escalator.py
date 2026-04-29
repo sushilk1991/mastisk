@@ -563,8 +563,14 @@ class Escalator(Agent):
             )
             return
 
+        # Resolve the Ollama-tier model: explicit notes.escalator_model
+        # override if set, else top-level summarize_model_heavy. The old
+        # default ``"claude-sonnet-4-6"`` was a Claude model name being
+        # passed as an Ollama model — every fallback through this path 404'd.
+        top_settings = get_settings()
+        ollama_model = settings.escalator_model or top_settings.summarize_model_heavy
         try:
-            parsed = await self._call_ollama(prompt, model=settings.escalator_model)
+            parsed = await self._call_ollama(prompt, model=ollama_model)
         except Exception as oll_err:
             log.warning(
                 "escalator: note %s ollama fallback also failed: %s", note_id, oll_err

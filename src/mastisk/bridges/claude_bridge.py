@@ -77,9 +77,14 @@ async def run_claude(
             "--add-dir", str(workdir),
         ]
         log.info("claude %s (workdir=%s)", prompt[:80].replace("\n", " "), workdir)
+        # stdin=DEVNULL: when the daemon runs under launchd it inherits a
+        # piped stdin, which ``claude -p`` will then try to consume — same
+        # symptom as codex. Detaching stdin makes the subprocess use the
+        # ``-p PROMPT`` arg unambiguously.
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=workdir,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
