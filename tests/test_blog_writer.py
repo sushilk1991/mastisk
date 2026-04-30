@@ -1023,9 +1023,14 @@ def _candidate(
     return c
 
 
-def test_rerank_filters_below_relevance_threshold():
+def test_rerank_filters_below_relevance_threshold(db):
     """Candidates whose boosted score falls below min_relevance_score get
-    dropped from the final ranking."""
+    dropped from the final ranking.
+
+    The ``db`` fixture isolates this from the user's real Mastisk DB; _rank
+    now opens a connection to read recent-post source refs (the anti-repeat
+    penalty). With an empty test DB the penalty is a no-op.
+    """
     from mastisk.agents.blog_writer import BlogWriter
 
     # Two articles → multiplier 1.0, so raw score == boosted score.
@@ -1044,9 +1049,13 @@ def test_rerank_filters_below_relevance_threshold():
     assert refs == [1]
 
 
-def test_personal_evidence_boost_reorders():
+def test_personal_evidence_boost_reorders(db):
     """A note with raw 0.5 (boosted 0.8) outranks an article with raw 0.7
-    (boosted 0.7)."""
+    (boosted 0.7).
+
+    The ``db`` fixture is required because _rank now reads recent-post source
+    refs to apply an anti-repeat penalty; an empty test DB makes that a no-op.
+    """
     from mastisk.agents.blog_writer import BlogWriter
 
     note = _candidate(kind="note", ref=1, summary="my note")
@@ -1065,7 +1074,7 @@ def test_personal_evidence_boost_reorders():
     assert refs == [1, 2]
 
 
-def test_repo_ideator_origin_is_boosted():
+def test_repo_ideator_origin_is_boosted(db):
     """A repo_ideator-tagged note gets the SAME 1.6x multiplier as a plain
     note — both are personal evidence — so origin doesn't subtly tilt the
     score either direction.
@@ -1074,7 +1083,11 @@ def test_repo_ideator_origin_is_boosted():
     higher raw score that would beat the unboosted notes but loses to the
     boosted ones. Both notes must land above the article, AND their relative
     order must follow ts DESC tiebreak (proving the boost is identical, not
-    subtly different by origin)."""
+    subtly different by origin).
+
+    The ``db`` fixture isolates this from the user's real Mastisk DB; _rank
+    now opens a connection to read recent-post source refs (anti-repeat).
+    """
     from mastisk.agents.blog_writer import BlogWriter
 
     plain_note = _candidate(
@@ -1178,10 +1191,14 @@ def test_rerank_failure_falls_back_unboosted():
         assert "score" not in c
 
 
-def test_rerank_all_low_scores_falls_back_to_pre_ranked():
+def test_rerank_all_low_scores_falls_back_to_pre_ranked(db):
     """When every reranked entry's boosted score is below min_relevance_score,
     survivors is empty and _rank must fall back to the keyword pre-rank rather
-    than return [] (which would draft from no sources)."""
+    than return [] (which would draft from no sources).
+
+    The ``db`` fixture isolates this from the user's real Mastisk DB; _rank
+    now opens a connection to read recent-post source refs (anti-repeat).
+    """
     from mastisk.agents.blog_writer import BlogWriter
 
     a = _candidate(kind="article", ref=1, summary="theme one",
@@ -1312,13 +1329,16 @@ def test_rerank_skips_duplicate_indices():
     assert score == 0.8
 
 
-def test_threshold_boundary_inclusive():
+def test_threshold_boundary_inclusive(db):
     """A note with raw 0.25 → boosted 0.4 (1.6×) exactly equals the default
     threshold and must be KEPT. The comparison is `>=`; pin this so a future
     drift to `>` would surface here.
 
     Worth noting: 0.25 * 1.6 == 0.4 in IEEE 754 (0.25 has an exact binary
     representation). If either constant changes, recompute the product.
+
+    The ``db`` fixture isolates this from the user's real Mastisk DB; _rank
+    now opens a connection to read recent-post source refs (anti-repeat).
     """
     from mastisk.agents.blog_writer import BlogWriter
 
@@ -1333,3 +1353,238 @@ def test_threshold_boundary_inclusive():
 
     refs = [c["ref"] for c in ranked]
     assert refs == [1]
+
+
+# ───── prompt: internal-artifacts rule ─────
+
+
+def test_assemble_has_internal_artifacts_rule():
+    """The Constraints block must spell out that internal artifacts (commit
+    hashes, repo paths, etc.) are context-only and must not be quoted verbatim.
+    Pins the prompt fix that stops Claude from leaking commit hashes from
+    repo_ideator-derived notes into the blog body.
+    """
+    from mastisk.agents.blog_writer import BlogWriter
+
+    out = BlogWriter()._assemble(
+        identity_preamble="(no identity captured yet)",
+        theme="some theme",
+        sources_block="## Sources\n\n(empty)\n",
+        voice_skill="",
+    )
+    assert "Internal artifacts" in out
+    assert "context only" in out
+
+
+# ───── rank: anti-repeat penalty against recent posts ─────
+
+
+def test_rank_penalizes_sources_used_in_recent_posts(db, vault_tmp):
+    """The recent-post penalty re-orders survivors; it does NOT eliminate
+    sources the rerank already declared relevant.
+
+    Both candidates pre-rank at 0.7 (article kind, multiplier 1.0 → boosted
+    0.7), comfortably above the 0.4 threshold. After the threshold check,
+    the penalty drops ``used`` to 0.7 * 0.4 = 0.28 — strictly lower than
+    ``fresh`` at 0.7 — so the survivors re-sort to ``[fresh, used]``.
+    """
+    from mastisk.agents.blog_writer import BlogWriter
+    from mastisk.db.queries import (
+        create_blog_post,
+        insert_blog_post_source,
+        update_blog_post_done,
+    )
+
+    # Two articles: identical kinds (multiplier 1.0) so the only differential
+    # is the recent-post penalty. Same ts so the recency tiebreak is neutral.
+    used = _candidate(
+        kind="article", ref=1, summary="theme one",
+        ts="2026-04-22T00:00:00",
+    )
+    fresh = _candidate(
+        kind="article", ref=2, summary="theme one",
+        ts="2026-04-22T00:00:00",
+    )
+    candidates = [used, fresh]
+
+    # Seed a recent blog post that cites article ref=1.
+    prior_id = create_blog_post(db, theme="prior", window_days=14)
+    update_blog_post_done(
+        db, bp_id=prior_id, slug="2026-04-25-prior", path="blog/drafts/2026-04-25-prior.md",
+        title="Prior", tags_json="[]", model="claude", word_count=900,
+        body_preview="prior body…",
+    )
+    insert_blog_post_source(
+        db, blog_post_id=prior_id, kind="article", ref="1", rank=1, used=True,
+    )
+
+    async def equal_rerank(self, cands, *, theme):
+        return [(used, 0.7), (fresh, 0.7)]
+
+    with patch.object(BlogWriter, "_llm_rerank", new=equal_rerank):
+        ranked = asyncio.run(BlogWriter()._rank(candidates, theme="theme"))
+
+    refs = [c["ref"] for c in ranked]
+    # Both survive (penalty re-orders, doesn't eliminate); fresh first.
+    assert len(ranked) == 2
+    assert refs == [2, 1]
+
+
+def test_rank_all_candidates_previously_cited_survive(db, vault_tmp):
+    """When EVERY candidate was cited in a recent post — the dominant failure
+    mode for narrow themes — the penalty must not eliminate the entire pool.
+
+    All three candidates clear the 0.4 threshold on their pre-penalty boosted
+    score, so all three survive. The penalty applies uniformly to recent-cited
+    refs, leaving the kind-boost ordering intact (note 0.32 > art_b 0.28 ts=22
+    > art_c 0.28 ts=21). Pinning this prevents a constants regression from
+    re-introducing the silent fallback to ``pre_ranked``.
+    """
+    from mastisk.agents.blog_writer import BlogWriter
+    from mastisk.db.queries import (
+        create_blog_post,
+        insert_blog_post_source,
+        update_blog_post_done,
+    )
+
+    # Mix kinds so the boost actually matters in the final ordering. ts
+    # values are chosen so the post-fix order (boost + tiebreak) differs from
+    # the pre_ranked-fallback order — that's what proves the boost+penalty
+    # path actually ran rather than the silent fallback discarding them.
+    note = _candidate(kind="note", ref=1, summary="theme",
+                      ts="2026-04-20T00:00:00")  # oldest
+    art_b = _candidate(kind="article", ref=2, summary="theme",
+                       ts="2026-04-22T00:00:00")  # newest
+    art_c = _candidate(kind="article", ref=3, summary="theme",
+                       ts="2026-04-21T00:00:00")
+    candidates = [note, art_b, art_c]
+
+    prior_id = create_blog_post(db, theme="prior", window_days=14)
+    update_blog_post_done(
+        db, bp_id=prior_id, slug="2026-04-25-prior",
+        path="blog/drafts/2026-04-25-prior.md", title="Prior", tags_json="[]",
+        model="claude", word_count=900, body_preview="…",
+    )
+    insert_blog_post_source(
+        db, blog_post_id=prior_id, kind="note", ref="1", rank=1, used=True,
+    )
+    insert_blog_post_source(
+        db, blog_post_id=prior_id, kind="article", ref="2", rank=2, used=True,
+    )
+    insert_blog_post_source(
+        db, blog_post_id=prior_id, kind="article", ref="3", rank=3, used=True,
+    )
+
+    async def fake_rerank(self, cands, *, theme):
+        # note raw 0.5 → boosted 0.5 * 1.6 = 0.8
+        # articles raw 0.7 → boosted 0.7 * 1.0 = 0.7
+        # All three exceed the 0.4 threshold pre-penalty.
+        return [(note, 0.5), (art_b, 0.7), (art_c, 0.7)]
+
+    with patch.object(BlogWriter, "_llm_rerank", new=fake_rerank):
+        ranked = asyncio.run(BlogWriter()._rank(candidates, theme="theme"))
+
+    # No fallback to pre_ranked: all three survive, ordered by post-penalty
+    # boosted score DESC, ts DESC tiebreak. note (0.8 * 0.4 = 0.32) > art_b
+    # (0.7 * 0.4 = 0.28, ts=22) > art_c (same score, ts=21).
+    assert len(ranked) == 3
+    assert [r["ref"] for r in ranked] == [1, 2, 3]
+
+
+# ───── query helper: get_recent_blog_post_source_refs ─────
+
+
+def test_get_recent_blog_post_source_refs_returns_last_n(db):
+    """Insert N+1 non-deleted blog posts each with one distinct source ref;
+    requesting lookback=N returns refs from the N most-recent posts.
+    """
+    from mastisk.db.queries import (
+        create_blog_post,
+        get_recent_blog_post_source_refs,
+        insert_blog_post_source,
+        update_blog_post_done,
+    )
+
+    # Create 4 posts with distinct created_at — sqlite CURRENT_TIMESTAMP is
+    # second-resolution, so we explicitly stamp created_at to keep the order
+    # unambiguous.
+    refs_inserted: list[tuple[str, str]] = []
+    for i in range(4):
+        bp = create_blog_post(db, theme=f"t{i}", window_days=14)
+        # Stamp ascending created_at so post 0 is oldest, post 3 is newest.
+        db.execute(
+            "UPDATE blog_posts SET created_at = ? WHERE id = ?",
+            (f"2026-04-{20 + i:02d} 00:00:00", bp),
+        )
+        update_blog_post_done(
+            db, bp_id=bp, slug=f"s{i}", path=f"blog/drafts/s{i}.md",
+            title=f"T{i}", tags_json="[]", model="claude",
+            word_count=900, body_preview="…",
+        )
+        kind = "note"
+        ref = str(100 + i)  # 100, 101, 102, 103
+        insert_blog_post_source(
+            db, blog_post_id=bp, kind=kind, ref=ref, rank=1, used=True,
+        )
+        refs_inserted.append((kind, ref))
+
+    # lookback=3 → exactly the last 3 (refs 103, 102, 101). The oldest
+    # (ref=100) is excluded.
+    got = get_recent_blog_post_source_refs(db, 3)
+    assert got == {("note", "103"), ("note", "102"), ("note", "101")}
+    assert ("note", "100") not in got
+
+
+def test_get_recent_blog_post_source_refs_lookback_zero_is_empty(db):
+    """lookback=0 returns empty set even when posts exist — no-op."""
+    from mastisk.db.queries import (
+        create_blog_post,
+        get_recent_blog_post_source_refs,
+        insert_blog_post_source,
+        update_blog_post_done,
+    )
+
+    bp = create_blog_post(db, theme="t", window_days=14)
+    update_blog_post_done(
+        db, bp_id=bp, slug="s", path="p", title="T", tags_json="[]",
+        model="claude", word_count=900, body_preview="…",
+    )
+    insert_blog_post_source(
+        db, blog_post_id=bp, kind="note", ref="1", rank=1, used=True,
+    )
+
+    assert get_recent_blog_post_source_refs(db, 0) == set()
+
+
+def test_get_recent_blog_post_source_refs_excludes_deleted(db):
+    """A soft-deleted blog post's sources must not appear in the recent set."""
+    from mastisk.db.queries import (
+        create_blog_post,
+        get_recent_blog_post_source_refs,
+        insert_blog_post_source,
+        soft_delete_blog_post,
+        update_blog_post_done,
+    )
+
+    bp_alive = create_blog_post(db, theme="alive", window_days=14)
+    update_blog_post_done(
+        db, bp_id=bp_alive, slug="a", path="ap", title="A", tags_json="[]",
+        model="claude", word_count=900, body_preview="…",
+    )
+    insert_blog_post_source(
+        db, blog_post_id=bp_alive, kind="note", ref="alive", rank=1, used=True,
+    )
+
+    bp_dead = create_blog_post(db, theme="dead", window_days=14)
+    update_blog_post_done(
+        db, bp_id=bp_dead, slug="d", path="dp", title="D", tags_json="[]",
+        model="claude", word_count=900, body_preview="…",
+    )
+    insert_blog_post_source(
+        db, blog_post_id=bp_dead, kind="note", ref="dead", rank=1, used=True,
+    )
+    soft_delete_blog_post(db, bp_dead)
+
+    got = get_recent_blog_post_source_refs(db, 5)
+    assert ("note", "alive") in got
+    assert ("note", "dead") not in got

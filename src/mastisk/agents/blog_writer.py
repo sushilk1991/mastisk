@@ -447,6 +447,21 @@ class BlogWriter(Agent):
                 "falling back to keyword order",
             )
             return pre_ranked
+
+        # Anti-repeat penalty: demote candidates cited in recent posts so the
+        # source pool diversifies. Applied after threshold so it only re-orders,
+        # never eliminates.
+        with connect() as conn:
+            recent_refs = q.get_recent_blog_post_source_refs(
+                conn, settings.recent_post_lookback,
+            )
+        if recent_refs:
+            penalty = settings.recent_post_penalty
+            survivors = [
+                (c, s * penalty) if (c["kind"], str(c["ref"])) in recent_refs else (c, s)
+                for c, s in survivors
+            ]
+
         # Sort by boosted score DESC, ts DESC for tiebreak.
         survivors.sort(
             key=lambda cs: (cs[1], cs[0].get("ts") or ""), reverse=True,
@@ -722,6 +737,11 @@ class BlogWriter(Agent):
             "- When the user's own notes, commits (in repo-ideator notes), or roundtables "
             "are available, anchor claims to those over external articles. Personal "
             "evidence makes the post specific.\n"
+            "- Internal artifacts (commit hashes, repo paths, branch names, file paths, "
+            "ticket IDs, internal slugs) are context only — never quote them verbatim in "
+            "the body. Translate to plain language: write \"I shipped a workspace memory "
+            "feature\" instead of \"I shipped commit 64d4e49 that writes durable insights.\" "
+            "The reader has no access to your repos.\n"
             "- End with one forward-looking question or open thread — something the author "
             "is still thinking about. Do not wrap with a pat conclusion.\n\n"
             "## Output contract\n"

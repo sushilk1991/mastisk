@@ -1806,6 +1806,31 @@ def delete_blog_post_sources(
     return cur.rowcount or 0
 
 
+def get_recent_blog_post_source_refs(
+    conn: sqlite3.Connection, lookback: int
+) -> set[tuple[str, str]]:
+    """Union of ``(kind, ref)`` from blog_post_sources joined to the most
+    recent ``lookback`` non-deleted blog_posts (ordered by created_at DESC).
+
+    ``ref`` is stringified so candidates with int refs (notes) and string refs
+    (article slugs) compare uniformly against the schema's TEXT column.
+    """
+    if lookback <= 0:
+        return set()
+    rows = conn.execute(
+        """SELECT s.kind AS kind, s.ref AS ref
+           FROM blog_post_sources s
+           JOIN (
+             SELECT id FROM blog_posts
+             WHERE deleted_at IS NULL
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?
+           ) p ON p.id = s.blog_post_id""",
+        (lookback,),
+    ).fetchall()
+    return {(r["kind"], str(r["ref"])) for r in rows}
+
+
 def reclaim_running_blog_posts(
     conn: sqlite3.Connection, *, stale_minutes: int = 60
 ) -> int:

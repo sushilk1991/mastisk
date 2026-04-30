@@ -107,6 +107,12 @@ class BlogSettings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
     min_relevance_score: float = 0.4
 
+    # Anti-repeat: candidates whose (kind, ref) was cited in any of the last
+    # ``recent_post_lookback`` non-deleted blog posts have their rerank score
+    # multiplied by ``recent_post_penalty``. lookback=0 disables the penalty.
+    recent_post_lookback: int = 5
+    recent_post_penalty: float = 0.4
+
     # ── topic_suggester ──
     # 48-hour windows over notes (user signal) and articles (world signal).
     # Caps bound the pairwise crossing cost: max_user * max_world pair scores
