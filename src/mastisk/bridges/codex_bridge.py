@@ -56,6 +56,12 @@ async def run_codex(
         await proc.wait()
         raise CodexError(f"codex timed out after {timeout}s")
     if proc.returncode != 0:
-        raise CodexError(stderr.decode("utf-8", errors="replace")[:500] or f"exit {proc.returncode}")
+        # Codex prints a long startup banner (workdir, model, sandbox, the
+        # echoed prompt) BEFORE the actual error message, so a head-truncated
+        # stderr hides the real error behind boilerplate. Take the tail.
+        msg = stderr.decode("utf-8", errors="replace").strip()
+        if len(msg) > 500:
+            msg = "…" + msg[-500:]
+        raise CodexError(msg or f"exit {proc.returncode}")
     text = stdout.decode("utf-8", errors="replace")
     return {"text": text, "raw": text}

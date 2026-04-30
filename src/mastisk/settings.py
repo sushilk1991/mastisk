@@ -59,11 +59,13 @@ class RoundtableSettings(BaseSettings):
     backends: list[str] = Field(default_factory=lambda: ["claude", "codex", "gemini", "ollama"])
     timeout_seconds: int = 120
     synthesis_model: str = "claude"
-    perspective_models: dict[str, str] = Field(default_factory=lambda: {
-        "claude": "claude-sonnet-4-6",
-        "codex": "gpt-5-codex",
-        "gemini": "gemini-2.5-pro",
-    })
+    # No per-backend model pins by default — each CLI uses its own current
+    # default (which auto-updates as the CLI updates). Pinning here was the
+    # source of the codex "gpt-5-codex not supported with ChatGPT account"
+    # failure and locked gemini to 2.5-pro long after newer flashes shipped.
+    # Override per-backend in config.toml under [roundtable.perspective_models]
+    # if you want a specific model.
+    perspective_models: dict[str, str] = Field(default_factory=dict)
     context_max_chars: int = 4000
 
 
