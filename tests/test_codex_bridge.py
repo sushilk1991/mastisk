@@ -65,6 +65,31 @@ async def test_run_codex_passes_model_via_config_override():
 
 
 @pytest.mark.asyncio
+async def test_run_codex_passes_skip_git_repo_check():
+    """The bridge always passes ``--skip-git-repo-check`` because the daemon
+    runs from launchd's cwd (not a trusted codex directory). Without the flag
+    codex refuses with ``Not inside a trusted directory``. Pin this so a
+    refactor doesn't silently drop it and break the roundtable on launchd.
+    """
+    from mastisk.bridges.codex_bridge import run_codex
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b"ok", b"")
+    captured_args: list = []
+
+    async def fake_exec(*args, **kwargs):
+        captured_args.extend(args)
+        return mock_proc
+
+    with patch("mastisk.bridges.codex_bridge.shutil.which", return_value="/usr/bin/codex"), \
+         patch("mastisk.bridges.codex_bridge.asyncio.create_subprocess_exec", side_effect=fake_exec):
+        await run_codex("prompt")
+
+    assert "--skip-git-repo-check" in captured_args
+
+
+@pytest.mark.asyncio
 async def test_run_codex_timeout_kills_proc():
     from mastisk.bridges.codex_bridge import CodexError, run_codex
     # Use MagicMock for the process so sync methods (.kill) don't become

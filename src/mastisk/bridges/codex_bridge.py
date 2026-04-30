@@ -27,7 +27,11 @@ async def run_codex(
     """
     if shutil.which("codex") is None:
         raise CodexError("codex binary not on PATH")
-    cmd = ["codex", "exec"]
+    # ``--skip-git-repo-check``: the daemon's launchd cwd is not a trusted
+    # codex directory, so without this flag codex refuses to run with
+    # ``Not inside a trusted directory``. We use codex purely as a stateless
+    # LLM (no code edits, no repo writes), so the trust check adds no value.
+    cmd = ["codex", "exec", "--skip-git-repo-check"]
     if model:
         cmd += ["-c", f'model="{model}"']
     cmd.append(prompt)
