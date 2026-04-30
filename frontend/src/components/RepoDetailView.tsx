@@ -128,8 +128,10 @@ function IdeasSection({
     );
   }
 
-  // Surface the most recent failed ideation run — otherwise errors are silent.
-  const lastFailed = ideas.runs.find((r) => r.error);
+  // Only surface the banner when the *actual* last run errored. ``find`` would
+  // keep showing a stale failure forever if any of the last 5 runs had errored
+  // — even after later runs succeeded — which made "last run errored" lie.
+  const lastFailed = ideas.runs[0]?.error ? ideas.runs[0] : null;
 
   return (
     <section style={{ marginTop: 24 }}>
