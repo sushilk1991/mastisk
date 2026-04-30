@@ -194,7 +194,7 @@ class GithubIdeator(Agent):
                     slug, e2,
                 )
                 try:
-                    result = await ollama_bridge.run_ollama(prompt, "llama3.1:8b")
+                    result = await ollama_bridge.run_ollama(prompt, get_settings().summarize_model_heavy)
                     text = result.get("text", "")
                     ideas = _extract_json_array(text)
                     model_used = "ollama"

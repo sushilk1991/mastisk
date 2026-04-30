@@ -513,7 +513,8 @@ class BlogWriter(Agent):
             source_list="\n".join(lines),
         )
         try:
-            result = await ollama_bridge.run_ollama(prompt, settings.ollama_model)
+            model = settings.ollama_model or get_settings().summarize_model_heavy
+            result = await ollama_bridge.run_ollama(prompt, model)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             parsed = json.loads(text.strip())
         except Exception as e:
@@ -818,7 +819,7 @@ class BlogWriter(Agent):
         except Exception as e:
             log.warning("blog_writer: Codex call failed (%s); falling back to Ollama", e)
 
-        # Re-render with the Ollama-tighter budget. llama3.1:8b degrades past
+        # Re-render with the Ollama-tighter budget. Small models degrade past
         # roughly 16-32k context, so we cap the full prompt at 20k by default.
         try:
             ollama_prompt = self._render_prompt(
@@ -828,7 +829,8 @@ class BlogWriter(Agent):
                     settings.per_source_char_limit, 800,
                 ),
             )
-            result = await ollama_bridge.run_ollama(ollama_prompt, settings.ollama_model)
+            model = settings.ollama_model or get_settings().summarize_model_heavy
+            result = await ollama_bridge.run_ollama(ollama_prompt, model)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             parsed = _try_parse_draft(text)
             if parsed is not None:

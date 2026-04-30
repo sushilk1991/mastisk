@@ -75,7 +75,7 @@ async def run_ollama(
     Mirrors the ``claude_bridge.run_claude`` contract so callers can swap engines
     with the same shape. Unlike ``chat()``, which uses the globally-configured
     heavy/cheap models, this lets an agent pick a model per-call (e.g. the
-    Notetaker's ``llama3.1:8b``). Tries cloud first then local — same endpoint
+    Notetaker's classify model). Tries cloud first then local — same endpoint
     fallback as ``chat()``.
     """
     messages: list[dict] = []

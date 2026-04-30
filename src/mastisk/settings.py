@@ -63,7 +63,6 @@ class RoundtableSettings(BaseSettings):
         "claude": "claude-sonnet-4-6",
         "codex": "gpt-5-codex",
         "gemini": "gemini-2.5-pro",
-        "ollama": "llama3.1:8b",
     })
     context_max_chars: int = 4000
 
@@ -104,7 +103,8 @@ class BlogSettings(BaseSettings):
     draft_word_count_min: int = 800
     draft_word_count_max: int = 2000
     claude_timeout_seconds: int = 240
-    ollama_model: str = "llama3.1:8b"
+    # When unset, falls back to top-level summarize_model_heavy.
+    ollama_model: str | None = None
     min_relevance_score: float = 0.4
 
     # Anti-repeat: candidates whose (kind, ref) was cited in any of the last

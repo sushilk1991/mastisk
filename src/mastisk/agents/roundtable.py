@@ -65,10 +65,8 @@ Keep it under 250 words. Plain prose.
 """
 
 
-# Fallback model for Ollama if the user hasn't configured one. Matches the
-# default in RoundtableSettings.perspective_models so the fallback path never
-# passes ``None`` to the httpx layer (where it becomes a 400).
-_OLLAMA_DEFAULT_MODEL = "llama3.1:8b"
+def _ollama_fallback_model() -> str:
+    return get_settings().summarize_model_heavy
 
 
 class Roundtable(Agent):
@@ -240,7 +238,7 @@ class Roundtable(Agent):
                 # default rather than passing None (which would 400 at the
                 # httpx layer).
                 result = await ollama_bridge.run_ollama(
-                    prompt, model or _OLLAMA_DEFAULT_MODEL,
+                    prompt, model or _ollama_fallback_model(),
                 )
                 content = result.get("text") if isinstance(result, dict) else str(result)
             else:
@@ -300,7 +298,7 @@ class Roundtable(Agent):
             )
         try:
             model = (
-                settings.perspective_models.get("ollama") or _OLLAMA_DEFAULT_MODEL
+                settings.perspective_models.get("ollama") or _ollama_fallback_model()
             )
             result = await ollama_bridge.run_ollama(prompt, model)
             text = (
