@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { api, ApiError } from '../api';
 import type { Roundtable, View } from '../types';
 
@@ -122,12 +123,12 @@ export function RoundtableView({ roundtableId, onNavigate }: Props) {
           <h3 style={{ fontSize: 13, color: 'var(--fg-faint)', marginBottom: 8, fontFamily: 'var(--mono)' }}>
             Synthesis · {rt.synthesis_model ?? 'unknown'}
           </h3>
-          <div style={{
-            whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.5,
+          <div className="md" style={{
+            fontSize: 14, lineHeight: 1.5,
             border: '1px solid var(--border)', borderRadius: 6, padding: 12,
             background: 'var(--bg-soft, transparent)',
           }}>
-            {rt.synthesis}
+            <ReactMarkdown>{rt.synthesis}</ReactMarkdown>
           </div>
         </section>
       )}
@@ -155,7 +156,9 @@ export function RoundtableView({ roundtableId, onNavigate }: Props) {
                 {p.error ? (
                   <div style={{ fontSize: 12, color: 'var(--danger, crimson)' }}>{p.error}</div>
                 ) : (
-                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{p.content}</div>
+                  <div className="md" style={{ fontSize: 13 }}>
+                    <ReactMarkdown>{p.content ?? ''}</ReactMarkdown>
+                  </div>
                 )}
               </div>
             ))}
