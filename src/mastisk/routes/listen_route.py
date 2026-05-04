@@ -27,11 +27,16 @@ async def listen(body: ListenIn) -> dict:
     # anything else, queue the job and let the agent do a more definitive
     # classification. Rejecting on "unknown" from the route would wrongly 400
     # on transient network failures during classify.
+    #
+    # classify_and_resolve also auto-discovers RSS feeds inside HTML pages
+    # (e.g. https://www.founderspodcast.com/episodes → its Megaphone feed),
+    # so the user can paste a podcast show page and it Just Works. We pass
+    # the *resolved* URL into the job so the Listener doesn't repeat discovery.
     try:
-        cls = await podcasts.classify(url)
+        cls, resolved_url = await podcasts.classify_and_resolve(url)
     except Exception as e:
         log.info("classify failed for %s: %s", url, e)
-        cls = "unknown"
+        cls, resolved_url = "unknown", url
 
     if cls == "spotify":
         raise HTTPException(
@@ -40,10 +45,14 @@ async def listen(body: ListenIn) -> dict:
             "Try the podcast's RSS feed URL or Apple Podcasts link.",
         )
 
-    job_id = enqueue("listener", "transcribe", {"url": url})
+    job_id = enqueue("listener", "transcribe", {"url": resolved_url})
     kind_label = cls if cls != "unknown" else "source"
+    discovered_note = (
+        f" (auto-discovered feed: {resolved_url})"
+        if resolved_url != url else ""
+    )
     return {
         "job_id": job_id,
         "kind": "transcribe",
-        "message": f"queued {kind_label} for transcription (job {job_id})",
+        "message": f"queued {kind_label} for transcription (job {job_id}){discovered_note}",
     }

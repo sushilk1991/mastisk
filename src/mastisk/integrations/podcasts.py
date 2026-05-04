@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 
@@ -62,6 +63,79 @@ async def _sniff_xml_for_rss(url: str) -> str:
     if "<rss" in head or "<feed" in head:
         return "rss"
     return "unknown"
+
+
+# Matches <link rel="alternate" type="application/rss+xml" href="..."> and
+# attribute-order variants. Captures the href. Intentionally permissive: real
+# podcast site HTML uses single quotes, attribute reordering, and self-closing
+# slashes interchangeably. Regex is fine here — we only need the href, not a
+# full DOM, and we only run it on documents that already failed every cheaper
+# classifier check.
+_RSS_LINK_RE = re.compile(
+    r"""<link\b[^>]*?\brel=["']alternate["'][^>]*?\btype=["']application/(?:rss|atom)\+xml["'][^>]*?\bhref=["']([^"']+)["']"""
+    r"""|<link\b[^>]*?\btype=["']application/(?:rss|atom)\+xml["'][^>]*?\brel=["']alternate["'][^>]*?\bhref=["']([^"']+)["']"""
+    r"""|<link\b[^>]*?\bhref=["']([^"']+)["'][^>]*?\btype=["']application/(?:rss|atom)\+xml["']""",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+async def _discover_rss_link(url: str) -> str | None:
+    """Look for an advertised RSS feed inside an HTML page's <head>.
+
+    Most modern podcast sites (Megaphone, Substack, Apple-mirrored sites,
+    Founders Podcast on Vercel/Next.js, etc.) embed
+    ``<link rel="alternate" type="application/rss+xml" href="...">`` so feed
+    readers can auto-discover. We do the same: GET the first ~32KB of the page,
+    scan for that link, return the href (resolved against the page URL so
+    relative paths work). Returns None if no link found or the fetch fails.
+
+    Bounded to 32KB because the relevant <link> always lives in <head>; pulling
+    the whole bundle on a SPA podcast site would be wasteful.
+    """
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as c:
+            # Range request first; some servers reject ranges with 416, in
+            # which case fall back to a regular GET.
+            resp = await c.get(url, headers={
+                "Range": "bytes=0-32767",
+                "User-Agent": "Mastisk/0.1 (+rss-discovery)",
+            })
+            if resp.status_code == 416:
+                resp = await c.get(url, headers={"User-Agent": "Mastisk/0.1 (+rss-discovery)"})
+    except Exception as e:
+        log.info("podcasts.discover_rss: fetch failed for %s: %s", url, e)
+        return None
+    if resp.status_code >= 400:
+        return None
+    body = resp.text or ""
+    m = _RSS_LINK_RE.search(body[:32768])
+    if not m:
+        return None
+    href = next((g for g in m.groups() if g), None)
+    if not href:
+        return None
+    return urljoin(url, href.strip())
+
+
+async def classify_and_resolve(url: str) -> tuple[str, str]:
+    """Classify + auto-discover RSS feeds embedded in HTML pages.
+
+    Returns ``(kind, resolved_url)``. ``resolved_url`` differs from the input
+    when the input is a podcast show page (HTML) that advertises its feed via
+    ``<link rel="alternate">`` — in that case we surface ``("rss", feed_url)``
+    so callers can fetch the feed without orchestrating discovery themselves.
+
+    For every kind ``classify()`` already recognises (youtube, rss, direct_audio,
+    spotify), this is a thin pass-through with the original url.
+    """
+    kind = await classify(url)
+    if kind != "unknown":
+        return kind, url
+    discovered = await _discover_rss_link(url)
+    if discovered:
+        log.info("podcasts.classify_and_resolve: discovered feed %s in %s", discovered, url)
+        return "rss", discovered
+    return "unknown", url
 
 
 async def resolve_rss_episode(feed_url: str, max_episodes: int = 1) -> list[dict]:

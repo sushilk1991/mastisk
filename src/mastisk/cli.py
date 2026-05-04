@@ -507,7 +507,7 @@ def add_podcast(url: str):
 
     _ensure_db()
     try:
-        cls = asyncio.run(podcasts.classify(url))
+        cls, resolved_url = asyncio.run(podcasts.classify_and_resolve(url))
     except Exception as e:
         console.print(f"[red]classify failed:[/red] {e}")
         raise typer.Exit(1)
@@ -519,10 +519,15 @@ def add_podcast(url: str):
         )
         raise typer.Exit(1)
     if cls == "unknown":
-        console.print(f"[red]can't ingest {url}[/red] — unknown type (supported: YouTube, podcast RSS, direct audio)")
+        console.print(
+            f"[red]can't ingest {url}[/red] — unknown type "
+            "(supported: YouTube, podcast RSS, direct audio, podcast show pages with feed link discovery)"
+        )
         raise typer.Exit(1)
 
-    job_id = enqueue("listener", "transcribe", {"url": url})
+    if resolved_url != url:
+        console.print(f"[dim]auto-discovered feed:[/dim] {resolved_url}")
+    job_id = enqueue("listener", "transcribe", {"url": resolved_url})
     console.print(
         f"[green]queued[/green] job {job_id}  "
         f"([dim]{cls}[/dim]) — Listener will pick it up on next tick"

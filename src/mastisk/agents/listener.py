@@ -53,7 +53,13 @@ class Listener(Agent):
     # ───── transcribe (YouTube / direct audio / rss) ─────
 
     async def _handle_transcribe(self, url: str) -> None:
-        cls = await podcasts.classify(url)
+        # classify_and_resolve auto-discovers RSS feeds inside HTML pages, so
+        # a "podcast show page" URL like https://www.founderspodcast.com/episodes
+        # gets resolved to its Megaphone feed before we make routing decisions.
+        # The route layer also calls this and stores the resolved URL in the job
+        # payload — we re-run here to handle the rare case where a job was queued
+        # by some path that didn't pre-resolve (CLI, direct DB insert, retries).
+        cls, url = await podcasts.classify_and_resolve(url)
         log.info("listener: classified %s as %s", url, cls)
 
         if cls == "spotify":
