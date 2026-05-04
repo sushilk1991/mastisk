@@ -30,6 +30,7 @@ const VIEW_PATHS: Record<string, View> = {
   '/roundtables': 'roundtables',
   '/repos': 'repos',
   '/blog': 'blog',
+  '/podcasts': 'podcasts',
 };
 
 const PATH_FOR_VIEW: Record<View, string> = {
@@ -53,6 +54,8 @@ const PATH_FOR_VIEW: Record<View, string> = {
   repo: '/repos/',
   blog: '/blog',
   blog_post: '/blog/',
+  podcasts: '/podcasts',
+  podcast: '/p/',
 };
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -115,6 +118,10 @@ export function parseRoute(pathname: string): Route {
     }
     return emptyRoute('blog');
   }
+  if (pathname.startsWith('/p/')) {
+    const raw = pathname.slice(3).split('/')[0];
+    if (raw) return { ...emptyRoute('podcast'), articleId: decodeURIComponent(raw) };
+  }
   const view = VIEW_PATHS[pathname];
   if (view) return emptyRoute(view);
   return emptyRoute('digest');
@@ -122,6 +129,7 @@ export function parseRoute(pathname: string): Route {
 
 export function routeToPath(view: View, arg?: string | null): string {
   if (view === 'article' && arg) return `/a/${encodeURIComponent(arg)}`;
+  if (view === 'podcast' && arg) return `/p/${encodeURIComponent(arg)}`;
   if (view === 'digest' && arg && ISO_DATE.test(arg)) return `/digest/${arg}`;
   if (view === 'digest_audit' && arg && ISO_DATE.test(arg)) return `/digest/audit/${arg}`;
   if (view === 'note' && arg) return `/notes/${arg}`;
@@ -143,6 +151,7 @@ export function useRoute() {
   const buildRoute = (view: View, arg?: string): Route => {
     const next = emptyRoute(view);
     if (view === 'article' && arg) next.articleId = arg;
+    else if (view === 'podcast' && arg) next.articleId = arg;
     else if (view === 'digest' && arg && ISO_DATE.test(arg)) next.date = arg;
     else if (view === 'digest_audit' && arg && ISO_DATE.test(arg)) next.date = arg;
     else if (view === 'note' && arg) next.noteId = Number(arg);

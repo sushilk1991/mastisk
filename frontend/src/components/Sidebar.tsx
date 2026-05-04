@@ -85,6 +85,13 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
         <span className="glyph">◎</span>
         <span className="label">Roundtables</span>
       </div>
+      <div
+        className={`side-row ${currentView === 'podcasts' || currentView === 'podcast' ? 'active' : ''}`}
+        onClick={() => onNavigate('podcasts')}
+      >
+        <span className="glyph">⏵</span>
+        <span className="label">Podcasts</span>
+      </div>
       <div className="side-row-group" style={{ display: 'flex', alignItems: 'center' }}>
         <div
           className={`side-row ${currentView === 'repos' || currentView === 'repo' ? 'active' : ''}`}

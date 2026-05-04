@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useModalA11y } from '../hooks/useModalA11y';
+import type { TranscriptAnchor } from '../types';
 
 export interface CaptureContext {
   article_id: string;
@@ -13,6 +14,12 @@ interface Props {
   onClose: () => void;
   onCaptured?: (noteId: number) => void;
   context?: CaptureContext;
+  /**
+   * Optional anchor pinning this capture to a transcript segment of a podcast/youtube
+   * source. Persisted as notes.transcript_anchor_json so the PodcastView can render
+   * the note inline under its segment on subsequent loads.
+   */
+  transcriptAnchor?: TranscriptAnchor | null;
 }
 
 function stripHtml(html: string): string {
@@ -21,7 +28,7 @@ function stripHtml(html: string): string {
   return div.textContent?.trim() ?? '';
 }
 
-export function NoteCaptureModal({ open, onClose, onCaptured, context }: Props) {
+export function NoteCaptureModal({ open, onClose, onCaptured, context, transcriptAnchor }: Props) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +53,7 @@ export function NoteCaptureModal({ open, onClose, onCaptured, context }: Props) 
     setBusy(true);
     setError(null);
     try {
-      const res = await api.notes.create(trimmed, context);
+      const res = await api.notes.create(trimmed, context, transcriptAnchor ?? null);
       onCaptured?.(res.id);
       onClose();
     } catch (e) {
@@ -54,7 +61,7 @@ export function NoteCaptureModal({ open, onClose, onCaptured, context }: Props) 
     } finally {
       setBusy(false);
     }
-  }, [text, onCaptured, onClose, context]);
+  }, [text, onCaptured, onClose, context, transcriptAnchor]);
 
   // ⌘↵ to submit. Escape is handled by the a11y hook globally.
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {

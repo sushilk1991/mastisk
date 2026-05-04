@@ -59,9 +59,25 @@ CREATE TABLE IF NOT EXISTS sources (
   raw_path      TEXT,                          -- ./data/raw/<hash>.{txt,html,vtt}
   author        TEXT,
   hero_image_url TEXT,                         -- optional thumbnail / cover art captured at ingest
-  media_json    TEXT                           -- inline media captured at ingest (JSON array of {src, alt, caption})
+  media_json    TEXT,                          -- inline media captured at ingest (JSON array of {src, alt, caption})
+  duration_sec  INTEGER,                       -- audio/video runtime, used by the podcast view
+  feed_url      TEXT                           -- for podcast episodes: the show's RSS URL (so we can group episodes by show)
 );
 CREATE INDEX IF NOT EXISTS idx_sources_kind ON sources(kind);
+
+-- Whisper segments for time-anchored transcript reading. Populated by the
+-- Listener after a successful whisper.transcribe() call when segments are
+-- available (mlx-whisper returns segments alongside the joined text).
+-- Cascade-deletes when the source is deleted.
+CREATE TABLE IF NOT EXISTS source_transcript_segments (
+  source_id  TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  idx        INTEGER NOT NULL,                 -- 0-based ordinal in playback order
+  start_sec  REAL NOT NULL,
+  end_sec    REAL NOT NULL,
+  text       TEXT NOT NULL,
+  PRIMARY KEY (source_id, idx)
+);
+CREATE INDEX IF NOT EXISTS idx_segments_source ON source_transcript_segments(source_id);
 
 CREATE TABLE IF NOT EXISTS article_sources (
   article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
@@ -256,7 +272,11 @@ CREATE TABLE IF NOT EXISTS notes (
   escalation_article_id      TEXT REFERENCES articles(id) ON DELETE SET NULL,
   escalation_retry_count     INTEGER NOT NULL DEFAULT 0,
   escalation_next_attempt_at DATETIME,
-  deleted_at                 DATETIME
+  deleted_at                 DATETIME,
+  -- Optional anchor when a note was captured against a specific transcript
+  -- segment. JSON shape: {"source_id": str, "segment_idx": int, "start_sec": float}.
+  -- Null for notes that aren't tied to a podcast/youtube transcript moment.
+  transcript_anchor_json     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_notes_created_at         ON notes(created_at);

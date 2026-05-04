@@ -104,6 +104,9 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "articles", "hero_image_url", "TEXT")
     _add_column_if_missing(conn, "sources", "hero_image_url", "TEXT")
     _add_column_if_missing(conn, "sources", "media_json", "TEXT")
+    _add_column_if_missing(conn, "sources", "duration_sec", "INTEGER")
+    _add_column_if_missing(conn, "sources", "feed_url", "TEXT")
+    _add_column_if_missing(conn, "notes", "transcript_anchor_json", "TEXT")
     _add_column_if_missing(
         conn, "articles", "source_note_id",
         "INTEGER REFERENCES notes(id) ON DELETE SET NULL",
@@ -325,6 +328,143 @@ def set_related(conn: sqlite3.Connection, article_id: str, links: Iterable[dict]
             "INSERT OR IGNORE INTO links (from_article, to_article, weight, snippet) VALUES (?, ?, ?, ?)",
             (article_id, target, r.get("weight", 0.5), r.get("snippet")),
         )
+
+
+# ─────────────────────────────── Podcasts (article view of audio sources) ───────────────────────────────
+
+def list_podcast_articles(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 100,
+) -> list[dict]:
+    """List articles whose attached source is a podcast or YouTube video.
+
+    Returns one row per (article, source) pair — typically 1:1 since the
+    Listener writes a single source per ingest. Ordered by source.published_at
+    DESC (when present) then articles.updated_at DESC. Used by the
+    /api/podcasts list view.
+    """
+    rows = conn.execute(
+        """SELECT
+             a.id              AS article_id,
+             a.title           AS article_title,
+             a.summary         AS article_summary,
+             a.kind            AS article_kind,
+             a.confidence      AS article_confidence,
+             a.updated_at      AS article_updated_at,
+             a.hero_image_url  AS article_hero,
+             s.id              AS source_id,
+             s.kind            AS source_kind,
+             s.title           AS source_title,
+             s.url             AS source_url,
+             s.author          AS source_author,
+             s.published_at    AS source_published_at,
+             s.duration_sec    AS source_duration_sec,
+             s.feed_url        AS source_feed_url,
+             s.hero_image_url  AS source_hero
+           FROM article_sources a_s
+           JOIN sources  s ON s.id = a_s.source_id
+           JOIN articles a ON a.id = a_s.article_id
+           WHERE s.kind IN ('podcast', 'youtube')
+           ORDER BY COALESCE(s.published_at, a.updated_at) DESC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_podcast_view(
+    conn: sqlite3.Connection, article_id: str
+) -> dict | None:
+    """Return the joined article + source + transcript payload for the
+    podcast detail page. Returns None if the article doesn't exist or has
+    no podcast/youtube source attached.
+
+    The transcript text is read from sources.raw_path. When
+    source_transcript_segments has rows for this source, they are returned
+    too (Phase 2 — the segment-by-segment renderer). When absent, the caller
+    falls back to displaying the raw text as a single block.
+    """
+    article = get_article(conn, article_id)
+    if not article:
+        return None
+    src = conn.execute(
+        """SELECT s.* FROM article_sources a_s
+           JOIN sources s ON s.id = a_s.source_id
+           WHERE a_s.article_id = ? AND s.kind IN ('podcast', 'youtube')
+           ORDER BY s.fetched_at DESC LIMIT 1""",
+        (article_id,),
+    ).fetchone()
+    if not src:
+        return None
+    src_d = dict(src)
+
+    # Read transcript text from raw_path. The Listener writes a structured
+    # markdown blob there (header + AI extraction + transcript at the bottom);
+    # we strip the metadata header so the UI shows just the transcript proper.
+    transcript_text = ""
+    raw_path = src_d.get("raw_path")
+    if raw_path:
+        from pathlib import Path
+        try:
+            full = Path(raw_path).read_text(encoding="utf-8")
+            # The Listener sentinel is "## Transcript\n" — everything after
+            # is the verbatim whisper output. Falls back to the whole file
+            # if the sentinel isn't present (older raw files predate the
+            # current header format).
+            marker = "## Transcript\n"
+            idx = full.find(marker)
+            transcript_text = full[idx + len(marker):].strip() if idx >= 0 else full.strip()
+        except OSError:
+            transcript_text = ""
+
+    segments = [
+        dict(r) for r in conn.execute(
+            """SELECT idx, start_sec, end_sec, text
+               FROM source_transcript_segments
+               WHERE source_id = ? ORDER BY idx""",
+            (src_d["id"],),
+        )
+    ]
+
+    # Notes anchored to segments of this source (Phase 2). Joined to the
+    # transcript_anchor_json column on notes; only returns notes whose anchor
+    # points at this source.
+    anchored_notes = [
+        dict(r) for r in conn.execute(
+            """SELECT id, body, classification, summary, created_at,
+                      transcript_anchor_json
+               FROM notes
+               WHERE deleted_at IS NULL
+                 AND transcript_anchor_json IS NOT NULL
+                 AND json_extract(transcript_anchor_json, '$.source_id') = ?
+               ORDER BY created_at DESC""",
+            (src_d["id"],),
+        )
+    ]
+    for n in anchored_notes:
+        try:
+            n["transcript_anchor"] = json.loads(n.pop("transcript_anchor_json") or "{}")
+        except (TypeError, ValueError):
+            n["transcript_anchor"] = {}
+
+    return {
+        "article": article,
+        "source": {
+            "id": src_d["id"],
+            "kind": src_d["kind"],
+            "title": src_d.get("title") or "",
+            "url": src_d.get("url") or "",
+            "author": src_d.get("author") or "",
+            "published_at": src_d.get("published_at"),
+            "duration_sec": src_d.get("duration_sec"),
+            "feed_url": src_d.get("feed_url"),
+            "hero_image_url": src_d.get("hero_image_url"),
+        },
+        "transcript_text": transcript_text,
+        "segments": segments,
+        "anchored_notes": anchored_notes,
+    }
 
 
 # ─────────────────────────────── Vault / sidebar ───────────────────────────────

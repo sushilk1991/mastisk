@@ -2265,3 +2265,365 @@ a { color: inherit; }
 }
 .md pre code { padding: 0; background: transparent; }
 .md a { color: var(--accent, #2563eb); text-decoration: underline; }
+
+/* ───────────────────────────── podcast list ───────────────────────────── */
+
+.podcasts-list {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px 72px;
+}
+.podcasts-list-header {
+  display: flex; align-items: baseline; gap: 12px;
+  margin-bottom: 28px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 18px;
+}
+.podcasts-list-title {
+  font-family: var(--sans);
+  font-size: 28px; font-weight: 600; letter-spacing: -0.01em;
+  margin: 0; color: var(--fg);
+}
+.podcasts-list-count {
+  font-family: var(--mono); font-size: 12px; color: var(--fg-mute);
+}
+.podcasts-list-loading,
+.podcasts-list-empty,
+.podcasts-list-error {
+  max-width: 720px;
+  margin: 64px auto;
+  padding: 0 24px;
+  font-family: var(--sans); color: var(--fg-mute);
+  line-height: 1.6;
+}
+.podcasts-list-empty h1 { margin-top: 0; }
+.podcasts-list-empty code {
+  font-family: var(--mono); font-size: 12px;
+  padding: 2px 6px; border-radius: 4px;
+  background: var(--bg-sunken, rgba(0,0,0,0.04));
+}
+
+.podcasts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 18px;
+}
+.podcast-card {
+  display: flex; flex-direction: column;
+  background: var(--bg, #fff);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  font: inherit; color: inherit;
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+.podcast-card:hover {
+  border-color: var(--fg-mute);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+}
+.podcast-card:focus-visible {
+  outline: 2px solid var(--accent, #2563eb); outline-offset: 2px;
+}
+.podcast-card-cover {
+  aspect-ratio: 1 / 1;
+  background: var(--bg-sunken, #f5f3ee);
+  position: relative;
+  overflow: hidden;
+}
+.podcast-card-cover img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.podcast-card-fallback {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--fg-mute);
+  font-size: 32px;
+}
+.podcast-card-fallback svg { width: 48px; height: 48px; }
+.podcast-card-body {
+  padding: 14px 16px 16px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.podcast-card-tag {
+  font-family: var(--mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--fg-mute);
+}
+.podcast-card-title {
+  font-family: var(--sans); font-size: 15px; font-weight: 600;
+  line-height: 1.35; color: var(--fg);
+  margin: 0;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.podcast-card-show {
+  font-family: var(--sans); font-size: 12px; color: var(--fg-mute);
+}
+.podcast-card-meta {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--fg-mute);
+  display: flex; gap: 6px; align-items: center;
+}
+.podcast-card-meta-dot { opacity: 0.6; }
+.podcast-card-summary {
+  font-family: var(--serif); font-size: 13px; line-height: 1.5;
+  color: var(--fg-mute);
+  margin: 4px 0 0;
+}
+
+/* ───────────────────────────── podcast view ───────────────────────────── */
+
+.podcast-view {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 32px 24px 96px;
+  font-family: var(--sans);
+  color: var(--fg);
+}
+.podcast-loading, .podcast-error {
+  max-width: 720px; margin: 64px auto;
+  font-family: var(--sans); color: var(--fg-mute);
+  padding: 0 24px;
+}
+.podcast-error { color: var(--danger, #d4493a); }
+
+.pod-header {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+@media (max-width: 640px) {
+  .pod-header { grid-template-columns: 1fr; }
+}
+.pod-cover {
+  aspect-ratio: 1 / 1;
+  background: var(--bg-sunken, #f5f3ee);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+.pod-cover img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.pod-cover-fallback {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--fg-mute);
+}
+.pod-cover-fallback svg { width: 64px; height: 64px; }
+.pod-meta { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+.pod-kind-tag {
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--accent, #2563eb);
+}
+.pod-title {
+  font-family: var(--sans); font-size: 28px; font-weight: 600;
+  letter-spacing: -0.01em; line-height: 1.2;
+  margin: 0; color: var(--fg);
+}
+.pod-show {
+  font-family: var(--sans); font-size: 14px; font-weight: 500;
+  color: var(--fg-mute);
+  margin-top: 2px;
+}
+.pod-meta-row {
+  font-family: var(--mono); font-size: 12px;
+  color: var(--fg-mute);
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+.pod-meta-dot { opacity: 0.6; }
+.pod-source-link {
+  color: var(--accent, #2563eb); text-decoration: none;
+}
+.pod-source-link:hover { text-decoration: underline; }
+.pod-summary {
+  font-family: var(--serif); font-size: 16px; line-height: 1.55;
+  color: var(--fg);
+  margin: 12px 0 0;
+}
+
+/* Player — restyle the react-h5-audio-player default for a cleaner look. */
+.pod-player {
+  margin-bottom: 36px;
+  padding: 12px 16px;
+  background: var(--bg-sunken, rgba(0,0,0,0.03));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.pod-player .rhap_container {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  font-family: var(--sans);
+}
+.pod-player .rhap_progress-filled,
+.pod-player .rhap_progress-indicator {
+  background: var(--accent, #2563eb);
+}
+.pod-player .rhap_progress-indicator { box-shadow: none; }
+.pod-player .rhap_main-controls-button,
+.pod-player .rhap_volume-button,
+.pod-player .rhap_repeat-button {
+  color: var(--fg);
+}
+.pod-player .rhap_time { color: var(--fg-mute); font-family: var(--mono); font-size: 12px; }
+
+.pod-takeaways {
+  margin-bottom: 40px;
+}
+.pod-section-h {
+  font-family: var(--sans); font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--fg-mute);
+  margin: 0 0 16px;
+}
+.pod-empty {
+  font-family: var(--sans); font-size: 14px;
+  color: var(--fg-mute);
+  font-style: italic;
+}
+.pod-takeaway {
+  margin-bottom: 24px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+}
+.pod-takeaway h3 {
+  font-family: var(--sans); font-size: 16px; font-weight: 600;
+  margin: 0 0 8px; color: var(--fg);
+}
+.pod-takeaway-callout {
+  border-left-color: var(--accent, #2563eb);
+  background: var(--bg-sunken, rgba(37,99,235,0.04));
+  padding: 12px 14px;
+  border-radius: 0 8px 8px 0;
+}
+.pod-takeaway-open {
+  border-left-color: var(--warn, #d4a82c);
+}
+.pod-takeaway-open h3::before {
+  content: '? ';
+  color: var(--warn, #d4a82c);
+  font-weight: 700;
+}
+.pod-takeaway > div {
+  font-family: var(--serif); font-size: 16px; line-height: 1.65;
+  color: var(--fg);
+}
+
+/* Transcript */
+.pod-transcript-section { margin-top: 32px; }
+.pod-transcript-toggle {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 12px 0;
+  background: transparent; border: none; cursor: pointer;
+  font-family: var(--sans); font-size: 13px; font-weight: 600;
+  color: var(--fg);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.pod-transcript-toggle:hover { color: var(--accent, #2563eb); }
+.pod-transcript-meta {
+  margin-left: auto;
+  font-family: var(--mono); font-size: 11px; font-weight: 400;
+  color: var(--fg-mute);
+  text-transform: none; letter-spacing: 0;
+}
+.pod-transcript-text {
+  font-family: var(--serif); font-size: 15px; line-height: 1.7;
+  color: var(--fg);
+  white-space: pre-wrap;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.pod-transcript-segments {
+  list-style: none;
+  margin: 16px 0 0; padding: 0;
+}
+.pod-segment {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-faint, rgba(0,0,0,0.04));
+  transition: background 120ms ease;
+}
+.pod-segment:last-child { border-bottom: none; }
+.pod-segment-active {
+  background: var(--bg-sunken, rgba(37,99,235,0.06));
+  border-left: 3px solid var(--accent, #2563eb);
+  padding-left: 8px;
+  margin-left: -8px;
+  border-radius: 0 6px 6px 0;
+}
+.pod-segment-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 28px;
+  gap: 12px;
+  align-items: start;
+}
+.pod-segment-time {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--fg-mute);
+  background: transparent; border: none; cursor: pointer;
+  padding: 2px 0;
+  text-align: left;
+  align-self: start;
+  margin-top: 3px;
+}
+.pod-segment-time:hover {
+  color: var(--accent, #2563eb);
+  text-decoration: underline;
+}
+.pod-segment-text {
+  font-family: var(--serif); font-size: 15px; line-height: 1.6;
+  color: var(--fg);
+  cursor: pointer;
+}
+.pod-segment-note-btn {
+  background: transparent; border: 1px solid transparent;
+  color: var(--fg-mute);
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 16px; line-height: 1;
+  align-self: start;
+  opacity: 0;
+  transition: opacity 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.pod-segment:hover .pod-segment-note-btn { opacity: 1; }
+.pod-segment-note-btn:hover {
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+}
+.pod-segment-notes {
+  margin: 8px 0 0 68px;
+  padding: 8px 12px;
+  background: var(--bg-sunken, rgba(212,168,44,0.06));
+  border-left: 2px solid var(--warn, #d4a82c);
+  border-radius: 0 6px 6px 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.pod-segment-note {
+  font-family: var(--sans); font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.pod-note-meta {
+  display: flex; gap: 8px; align-items: center;
+  margin-bottom: 2px;
+  font-family: var(--mono); font-size: 10px;
+  color: var(--fg-mute);
+}
+.pod-note-class {
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.pod-note-time { opacity: 0.7; }
+.pod-note-body {
+  font-family: var(--serif); font-size: 14px; line-height: 1.55;
+  color: var(--fg);
+}
+

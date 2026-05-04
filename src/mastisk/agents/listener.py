@@ -113,6 +113,7 @@ class Listener(Agent):
         work_dir.mkdir(parents=True, exist_ok=True)
         try:
             transcript = ""
+            segments: list[whisper.TranscriptSegment] = []
             sub_path = await youtube.fetch_subtitles(url, work_dir)
             if sub_path:
                 transcript = Path(sub_path).read_text(encoding="utf-8", errors="replace")
@@ -124,7 +125,9 @@ class Listener(Agent):
                         "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
                     )
                 audio_path = await youtube.download_audio(url, work_dir)
-                transcript = await whisper.transcribe(audio_path)
+                result = await whisper.transcribe(audio_path)
+                transcript = result.text
+                segments = result.segments
 
             src_context = {
                 "title": meta["title"],
@@ -139,6 +142,7 @@ class Listener(Agent):
                 transcript=transcript,
                 source_context=src_context,
                 source_kind="youtube",
+                segments=segments,
             )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -163,7 +167,7 @@ class Listener(Agent):
                     "mlx-whisper is not installed. "
                     "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
                 )
-            transcript = await whisper.transcribe(audio_path)
+            result = await whisper.transcribe(audio_path)
             title = Path(url).stem or url
             src_context = {
                 "title": title,
@@ -174,9 +178,10 @@ class Listener(Agent):
                 "duration_sec": None,
             }
             await self._finalize_ingest(
-                transcript=transcript,
+                transcript=result.text,
                 source_context=src_context,
                 source_kind="podcast",
+                segments=result.segments,
             )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -211,7 +216,7 @@ class Listener(Agent):
                     "mlx-whisper is not installed. "
                     "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
                 )
-            transcript = await whisper.transcribe(audio_path)
+            result = await whisper.transcribe(audio_path)
 
             src_context = {
                 "title": title,
@@ -224,9 +229,10 @@ class Listener(Agent):
                 "hero_image_url": episode_image,
             }
             await self._finalize_ingest(
-                transcript=transcript,
+                transcript=result.text,
                 source_context=src_context,
                 source_kind="podcast",
+                segments=result.segments,
             )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -239,6 +245,7 @@ class Listener(Agent):
         transcript: str,
         source_context: dict,
         source_kind: str,
+        segments: list[whisper.TranscriptSegment] | None = None,
     ) -> None:
         extracted = await extract.extract_entities(transcript, source_context)
 
@@ -295,8 +302,9 @@ class Listener(Agent):
         with connect() as conn, q.txn(conn):
             cur = conn.execute(
                 """INSERT OR IGNORE INTO sources
-                   (id, kind, url, title, published_at, raw_path, author, hero_image_url)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (id, kind, url, title, published_at, raw_path, author, hero_image_url,
+                    duration_sec, feed_url)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     src_id,
                     source_kind,
@@ -306,6 +314,8 @@ class Listener(Agent):
                     str(raw_dir() / f"{src_id}.txt"),
                     source_context.get("author") or None,
                     source_context.get("hero_image_url") or None,
+                    source_context.get("duration_sec"),
+                    source_context.get("feed_url") or None,
                 ),
             )
             inserted = (cur.rowcount or 0) > 0
@@ -317,6 +327,21 @@ class Listener(Agent):
                     "INSERT INTO jobs (agent, kind, payload_json) VALUES (?, ?, ?)",
                     ("compiler", "compile", json.dumps({"source_id": src_id})),
                 )
+                # Persist whisper-derived segments so the PodcastView can render
+                # the transcript clickable, time-anchored, and notable. Only
+                # written for fresh inserts — same idempotency story as the raw
+                # file below; the backfill command rewrites these for existing
+                # sources separately.
+                if segments:
+                    conn.executemany(
+                        """INSERT INTO source_transcript_segments
+                             (source_id, idx, start_sec, end_sec, text)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        [
+                            (src_id, s.idx, s.start_sec, s.end_sec, s.text)
+                            for s in segments
+                        ],
+                    )
 
         # Only write the raw file for fresh inserts. If the URL was already
         # ingested, the existing raw file is still valid — don't clobber it

@@ -2,8 +2,9 @@ import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
   BlogPostSummary, Digest, DigestAudit, Feed,
   FeedTick, AgentInfo, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
-  PinnedItem, RepoDetail, RepoIdeasResponse, RepoSummary, Roundtable, RoundtableSummary, SearchResult,
-  SettingsBundle, SettingsPatch,
+  PinnedItem, PodcastListItem, PodcastView, RepoDetail, RepoIdeasResponse, RepoSummary,
+  Roundtable, RoundtableSummary, SearchResult,
+  SettingsBundle, SettingsPatch, TranscriptAnchor,
   SynthesisRunResponse, TopicSuggestion, UserInfo, VaultItem,
 } from './types';
 
@@ -108,6 +109,12 @@ export const api = {
   article: (id: string) => j<Article>(`${BASE}/articles/${id}`),
 
   articlePreview: (id: string) => j<ArticlePreview>(`${BASE}/articles/${id}/preview`),
+
+  podcasts: (limit: number = 100) =>
+    j<{ items: PodcastListItem[] }>(`${BASE}/podcasts?limit=${limit}`),
+
+  podcast: (article_id: string) =>
+    j<PodcastView>(`${BASE}/podcasts/${encodeURIComponent(article_id)}`),
 
   digest: (date?: string) =>
     j<Digest>(date ? `${BASE}/digest?date=${encodeURIComponent(date)}` : `${BASE}/digest`),
@@ -232,11 +239,16 @@ export const api = {
     create: (
       text: string,
       context?: { article_id: string; section_heading?: string; question_html?: string },
+      transcript_anchor?: TranscriptAnchor | null,
     ): Promise<{ id: number; slug: string; path: string; linked_article_id: string | null }> =>
       fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, source: 'pwa', ...(context ? { context } : {}) }),
+        body: JSON.stringify({
+          text, source: 'pwa',
+          ...(context ? { context } : {}),
+          ...(transcript_anchor ? { transcript_anchor } : {}),
+        }),
       }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); }),
 
     list: (limit = 50): Promise<Note[]> =>

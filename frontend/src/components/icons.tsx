@@ -10,4 +10,6 @@ export const Icon = {
   link: <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M7 9a3 3 0 004 0l2-2a3 3 0 00-4-4l-1 1M9 7a3 3 0 00-4 0l-2 2a3 3 0 004 4l1-1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>,
   arrow: <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>,
   close: <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>,
+  podcast: <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="6" r="3" stroke="currentColor" strokeWidth="1.4"/><path d="M8 9v6M5 13h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><path d="M3.5 6a4.5 4.5 0 019 0M5 6a3 3 0 016 0" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>,
+  video: <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="3.5" width="10" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.4"/><path d="M11.5 7l3-1.5v5L11.5 9V7z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/></svg>,
 };

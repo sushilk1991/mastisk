@@ -324,7 +324,67 @@ export type View =
   | 'notes' | 'note'
   | 'roundtables' | 'roundtable'
   | 'repos' | 'repo'
-  | 'blog' | 'blog_post';
+  | 'blog' | 'blog_post'
+  | 'podcasts' | 'podcast';
+
+export interface PodcastListItem {
+  article_id: string;
+  article_title: string;
+  article_summary: string;
+  article_kind: ArticleKind;
+  article_confidence: number;
+  article_updated_at: string;
+  article_hero: string | null;
+  source_id: string;
+  source_kind: 'podcast' | 'youtube';
+  source_title: string;
+  source_url: string;
+  source_author: string | null;
+  source_published_at: string | null;
+  source_duration_sec: number | null;
+  source_feed_url: string | null;
+  source_hero: string | null;
+}
+
+export interface TranscriptSegment {
+  idx: number;
+  start_sec: number;
+  end_sec: number;
+  text: string;
+}
+
+export interface TranscriptAnchor {
+  source_id: string;
+  segment_idx: number;
+  start_sec: number;
+}
+
+export interface AnchoredNote {
+  id: number;
+  body: string;
+  classification: string | null;
+  summary: string | null;
+  created_at: string;
+  transcript_anchor: TranscriptAnchor;
+}
+
+export interface PodcastView {
+  article: Article;
+  source: {
+    id: string;
+    kind: 'podcast' | 'youtube';
+    title: string;
+    url: string;
+    author: string;
+    published_at: string | null;
+    duration_sec: number | null;
+    feed_url: string | null;
+    hero_image_url: string | null;
+  };
+  transcript_text: string;
+  segments: TranscriptSegment[];
+  anchored_notes: AnchoredNote[];
+}
 
 export type BlogSourceKind = 'note' | 'article' | 'roundtable';
 

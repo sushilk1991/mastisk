@@ -35,10 +35,23 @@ class CaptureContext(BaseModel):
     question_html: str | None = None
 
 
+class TranscriptAnchor(BaseModel):
+    """Anchor a note to a moment inside a podcast/youtube transcript.
+
+    The PodcastView's "+" button opens NoteCaptureModal pre-filled with this
+    pointing at the segment the user clicked, so on a subsequent load the
+    note shows up inline beneath that segment.
+    """
+    source_id: str
+    segment_idx: int
+    start_sec: float
+
+
 class CaptureRequest(BaseModel):
     text: str = Field(min_length=1)
     source: Literal["pwa", "cli"] = "pwa"
     context: CaptureContext | None = None
+    transcript_anchor: TranscriptAnchor | None = None
 
     @field_validator("text")
     @classmethod
@@ -144,6 +157,17 @@ async def capture_note(req: CaptureRequest) -> dict:
                 note_id=note_id,
                 article_id=req.context.article_id,
                 rank=0,
+            )
+
+    # Persist the transcript anchor so the PodcastView can render this note
+    # inline beneath its segment on next load. JSON-encoded for forward
+    # compat — additions like end_sec/highlight_text won't need a migration.
+    if req.transcript_anchor is not None:
+        import json as _json
+        with connect() as conn:
+            conn.execute(
+                "UPDATE notes SET transcript_anchor_json = ? WHERE id = ?",
+                (_json.dumps(req.transcript_anchor.model_dump()), note_id),
             )
 
     return {

@@ -529,6 +529,116 @@ def add_podcast(url: str):
     )
 
 
+@app.command(name="backfill-segments")
+def backfill_segments(
+    only_kind: str | None = typer.Option(
+        None, "--kind", help="Limit to one source kind (podcast | youtube). Default: both."
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List sources that would be re-transcribed; do nothing."),
+    limit: int | None = typer.Option(None, "--limit", help="Cap how many sources to process this run."),
+) -> None:
+    """Re-run mlx-whisper on existing podcast/youtube sources to populate segments.
+
+    The original Listener used to discard whisper's segment data and only kept
+    joined text. This command re-transcribes sources that have an audio URL
+    but no rows in source_transcript_segments, populating them so the
+    PodcastView can render a clickable, time-anchored transcript.
+
+    Skips sources that already have segments (idempotent — safe to re-run).
+    Skips sources whose URL we can't re-download (private/expired audio).
+    """
+    import asyncio
+    from pathlib import Path
+    from mastisk.agents.listener import _download_to, _hash16
+    from mastisk.db.queries import connect
+    from mastisk.integrations import whisper
+    from mastisk.paths import tmp_dir
+
+    _ensure_db()
+    if not whisper.is_available():
+        console.print(
+            "[red]mlx-whisper is not installed.[/red] "
+            "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
+        )
+        raise typer.Exit(1)
+
+    kinds = (only_kind,) if only_kind else ("podcast", "youtube")
+    placeholders = ",".join("?" * len(kinds))
+    with connect() as conn:
+        rows = conn.execute(
+            f"""SELECT s.id, s.kind, s.url, s.title
+                FROM sources s
+                WHERE s.kind IN ({placeholders})
+                  AND s.url IS NOT NULL AND s.url != ''
+                  AND NOT EXISTS (
+                    SELECT 1 FROM source_transcript_segments seg
+                    WHERE seg.source_id = s.id
+                  )
+                ORDER BY s.fetched_at DESC""",
+            kinds,
+        ).fetchall()
+
+    if limit is not None:
+        rows = rows[:limit]
+
+    if not rows:
+        console.print("[dim]Nothing to backfill — every podcast/youtube source already has segments.[/dim]")
+        return
+
+    console.print(f"[yellow]{len(rows)} source(s) to backfill[/yellow] (kinds: {', '.join(kinds)})")
+    if dry_run:
+        for r in rows:
+            console.print(f"  - [{r['kind']}] {r['title'][:60]}  ({r['url'][:60]})")
+        console.print("[dim]dry-run: nothing written.[/dim]")
+        return
+
+    done = 0
+    failed: list[tuple[str, str]] = []
+    for r in rows:
+        title = r["title"] or r["url"]
+        console.print(f"  [cyan]→[/cyan] {title[:80]}  ([dim]{r['kind']}[/dim])")
+        work_dir = tmp_dir() / f"backfill-{_hash16(r['url'])}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            audio_path: Path
+            if r["kind"] == "youtube":
+                # YouTube: re-download via yt-dlp because s.url is the page URL,
+                # not a direct audio URL.
+                from mastisk.integrations import youtube
+                audio_path = asyncio.run(youtube.download_audio(r["url"], work_dir))
+            else:
+                # Podcast/direct audio: s.url is the audio URL itself.
+                audio_path = asyncio.run(_download_to(r["url"], work_dir))
+
+            result = asyncio.run(whisper.transcribe(audio_path))
+            if not result.segments:
+                console.print(f"    [yellow]skip[/yellow] — whisper returned no segments")
+                continue
+            with connect() as conn:
+                conn.executemany(
+                    """INSERT INTO source_transcript_segments
+                         (source_id, idx, start_sec, end_sec, text)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    [
+                        (r["id"], s.idx, s.start_sec, s.end_sec, s.text)
+                        for s in result.segments
+                    ],
+                )
+            console.print(f"    [green]✓[/green] {len(result.segments)} segments")
+            done += 1
+        except Exception as e:
+            console.print(f"    [red]✗[/red] {e}")
+            failed.append((title, str(e)))
+        finally:
+            import shutil
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    console.print(
+        f"\n[green]Backfilled {done}[/green] / {len(rows)} sources."
+        + (f"  [red]{len(failed)} failed.[/red]" if failed else "")
+    )
+
+
 @app.command()
 def note(
     text: str | None = typer.Argument(None, help="Note body. If omitted, $EDITOR opens."),

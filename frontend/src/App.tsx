@@ -34,6 +34,8 @@ import { AddRepoModal } from './components/AddRepoModal';
 import { BlogListView } from './components/BlogListView';
 import { BlogView } from './components/BlogView';
 import { BlogCreationModal } from './components/BlogCreationModal';
+import { PodcastsListView } from './components/PodcastsListView';
+import { PodcastView } from './components/PodcastView';
 
 export function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -250,6 +252,10 @@ export function App() {
             onNavigate={navigate}
             onLoaded={setBlogPostDetail}
           />
+        )}
+        {view === 'podcasts' && <PodcastsListView onNavigate={navigate}/>}
+        {view === 'podcast' && currentArticle && (
+          <PodcastView articleId={currentArticle} onAsk={openAsk} onNavigate={navigate}/>
         )}
         {view === 'mobile' && (
           <div className="view">
