@@ -84,6 +84,10 @@ class Compiler(Agent):
                 self._mark_failed(job["id"], str(e))
 
     async def _handle(self, job: dict) -> None:
+        if job["kind"] == "enrich_stub":
+            await self._handle_enrich_stub(job)
+            return
+
         payload = json.loads(job["payload_json"] or "{}")
         source_id = payload.get("source_id")
         if not source_id:
@@ -147,6 +151,80 @@ class Compiler(Agent):
             payload={"article_id": data["id"], "source_id": source_id},
         )
 
+    async def _handle_enrich_stub(self, job: dict) -> None:
+        """Turn an escalator stub into a fully-rendered wiki article.
+
+        The escalator creates a placeholder row (updated_by='escalator (stub)',
+        confidence=0, no sections/related/links resolved) when it promotes a
+        note. This handler runs the standard Compiler pipeline against the
+        note body and forces the article id back to the stub's existing id
+        so the upsert overwrites the placeholder in place — preserving the
+        source_note_id back-reference and the URL the user already has.
+        """
+        payload = json.loads(job["payload_json"] or "{}")
+        article_id = payload.get("article_id")
+        note_id = payload.get("note_id")
+        if not article_id or not note_id:
+            log.warning(
+                "compiler: enrich_stub missing article_id/note_id in job %s", job["id"],
+            )
+            return
+
+        with connect() as conn:
+            stub = conn.execute(
+                "SELECT id, title, kind FROM articles WHERE id=?", (article_id,),
+            ).fetchone()
+            note = conn.execute(
+                "SELECT id, body FROM notes WHERE id=?", (note_id,),
+            ).fetchone()
+        if not stub:
+            log.warning("compiler: enrich_stub article %s not found", article_id)
+            return
+        if not note:
+            log.warning("compiler: enrich_stub note %s not found", note_id)
+            return
+
+        identity = self.load_identity()
+        registry = self._known_articles_block()
+        note_body = (note["body"] or "")[:8000]
+
+        prompt = (
+            f"You are Mastisk's Compiler. Enrich the escalated note below into a full wiki article.\n\n"
+            f"{identity}\n\n"
+            f"{registry}\n\n"
+            f"# The escalated note\n"
+            f"Working title: {stub['title']}\nProvisional kind: {stub['kind']}\n\n"
+            f"{note_body}\n\n"
+            f"Use the existing article id `{article_id}` exactly — do not coin a new slug, "
+            f"this enrichment overwrites the stub in place.\n\n"
+            f"{SCHEMA_MD}"
+        )
+
+        resp, provider = await intelligence.run_intelligence(prompt)
+        data = claude_bridge.extract_json_block(resp.get("text") or "")
+        if not data:
+            log.warning(
+                "compiler: enrich_stub no JSON block in %s response for article %s",
+                provider, article_id,
+            )
+            return
+
+        # Force the id so the upsert lands on the existing stub. Skip flag is
+        # ignored — the user already escalated this note; refusing to enrich
+        # would leave the stub forever.
+        data["id"] = article_id
+        if data.get("kind") == "Synthesis":
+            data["kind"] = "Concept"
+
+        self._persist_article(data, source_id=None)
+        self.emit_feed(
+            verb="enriched",
+            obj=data.get("title", article_id)[:80],
+            kind=data.get("kind", "concept").lower(),
+            touched=1,
+            payload={"article_id": article_id, "note_id": note_id, "provider": provider},
+        )
+
     def _is_new(self, article_id: str) -> bool:
         with connect() as conn:
             return conn.execute("SELECT 1 FROM articles WHERE id=?", (article_id,)).fetchone() is None
@@ -178,7 +256,7 @@ class Compiler(Agent):
             f"{body}"
         )
 
-    def _persist_article(self, data: dict, *, source_id: str) -> None:
+    def _persist_article(self, data: dict, *, source_id: str | None) -> None:
         article_id = data["id"]
         slug = slugify(data["title"])[:80] or article_id
         vault_path = self._vault_path_for(data["kind"], slug)
@@ -212,10 +290,11 @@ class Compiler(Agent):
                     continue
                 q.ensure_stub_article(conn, id=target_id, title=display_label, kind="Entity")
             q.set_related(conn, article_id, data.get("related", []))
-            conn.execute(
-                "INSERT OR IGNORE INTO article_sources (article_id, source_id) VALUES (?, ?)",
-                (article_id, source_id),
-            )
+            if source_id is not None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO article_sources (article_id, source_id) VALUES (?, ?)",
+                    (article_id, source_id),
+                )
 
         # Mirror to vault
         vault_path.parent.mkdir(parents=True, exist_ok=True)

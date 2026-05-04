@@ -409,6 +409,12 @@ class Escalator(Agent):
                 (note_id, now_iso, trigger, stub_id, model),
             )
 
+        # Hand the stub off to the Compiler for enrichment. Without this the
+        # article sits at updated_by='escalator (stub)' with no sections,
+        # sources, related links or resolved <span data-target> placeholders.
+        # Enqueue outside any nested tx — base.enqueue opens its own connection.
+        enqueue("compiler", "enrich_stub", {"article_id": stub_id, "note_id": note_id})
+
         # Rewrite the note's frontmatter with the new escalation metadata.
         # Best-effort: the DB update + feed row already landed; a frontmatter
         # write failure mustn't roll those back. The file-and-DB can also drift

@@ -189,6 +189,15 @@ def test_evaluate_rule_pass_creates_stub(escalator, db, vault_tmp):
     assert len(feed) == 1
     assert feed[0]["obj"] == str(note_id)
 
+    # Compiler enrich_stub job enqueued so the placeholder gets turned into a
+    # real wiki article (sections, sources, resolved links, confidence > 0).
+    enrich_jobs = db.execute(
+        "SELECT * FROM jobs WHERE agent='compiler' AND kind='enrich_stub'"
+    ).fetchall()
+    assert len(enrich_jobs) == 1
+    payload = json.loads(enrich_jobs[0]["payload_json"])
+    assert payload == {"article_id": stub_id, "note_id": note_id}
+
 
 # ─────────────────────────────── rule failures ───────────────────────────────
 
