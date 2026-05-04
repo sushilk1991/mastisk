@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, View } from '../types';
 import { Icon } from './icons';
 import { api } from '../api';
@@ -18,6 +18,23 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
   const [pop, setPop] = useState<Pop | null>(null);
   const [captureCtx, setCaptureCtx] = useState<CaptureContext | null>(null);
   const readStartRef = useRef<number>(Date.now());
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+
+  const mediaLen = article.media?.length ?? 0;
+  const closeLightbox = useCallback(() => setLightboxIdx(null), []);
+  const prevMedia = useCallback(() => setLightboxIdx(i => i !== null ? (i - 1 + mediaLen) % mediaLen : null), [mediaLen]);
+  const nextMedia = useCallback(() => setLightboxIdx(i => i !== null ? (i + 1) % mediaLen : null), [mediaLen]);
+
+  useEffect(() => {
+    if (lightboxIdx === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeLightbox();
+      else if (e.key === 'ArrowLeft') prevMedia();
+      else if (e.key === 'ArrowRight') nextMedia();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxIdx, closeLightbox, prevMedia, nextMedia]);
 
   // Emit "opened" signal on mount; "time_read" on unmount.
   useEffect(() => {
@@ -182,7 +199,7 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
           <h3>From the source</h3>
           <div className="art-media-grid">
             {article.media.map((m, i) => (
-              <figure key={`${m.src}-${i}`} className="art-media-item">
+              <figure key={`${m.src}-${i}`} className="art-media-item" onClick={() => setLightboxIdx(i)} style={{ cursor: 'pointer' }}>
                 <img
                   src={m.src}
                   alt={m.alt || ''}
@@ -197,6 +214,24 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
               </figure>
             ))}
           </div>
+        </div>
+      )}
+
+      {lightboxIdx !== null && article.media && (
+        <div className="lightbox-overlay" onClick={closeLightbox}>
+          <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
+            <img src={article.media[lightboxIdx].src} alt={article.media[lightboxIdx].alt || ''} />
+            {(article.media[lightboxIdx].caption || article.media[lightboxIdx].alt) && (
+              <p className="lightbox-caption">{article.media[lightboxIdx].caption || article.media[lightboxIdx].alt}</p>
+            )}
+          </div>
+          {mediaLen > 1 && (
+            <>
+              <button className="lightbox-nav lightbox-prev" onClick={(e) => { e.stopPropagation(); prevMedia(); }} aria-label="Previous">&#8249;</button>
+              <button className="lightbox-nav lightbox-next" onClick={(e) => { e.stopPropagation(); nextMedia(); }} aria-label="Next">&#8250;</button>
+            </>
+          )}
+          <button className="lightbox-close" onClick={closeLightbox} aria-label="Close">&times;</button>
         </div>
       )}
 

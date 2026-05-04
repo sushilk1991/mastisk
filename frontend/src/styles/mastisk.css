@@ -380,6 +380,43 @@ a { color: inherit; }
   padding: 8px 10px;
   line-height: 1.35;
 }
+.art-media-item:hover { border-color: var(--fg-mute); }
+
+/* lightbox */
+.lightbox-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex; align-items: center; justify-content: center;
+  animation: lb-fade-in 0.15s ease-out;
+}
+@keyframes lb-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.lightbox-content {
+  max-width: 90vw; max-height: 85vh;
+  display: flex; flex-direction: column; align-items: center;
+}
+.lightbox-content img {
+  max-width: 90vw; max-height: 80vh;
+  object-fit: contain; border-radius: 6px;
+}
+.lightbox-caption {
+  font-family: var(--sans); font-size: 13px; color: #ccc;
+  margin: 12px 0 0; text-align: center; max-width: 600px;
+}
+.lightbox-close {
+  position: fixed; top: 16px; right: 20px;
+  background: none; border: none; color: #aaa;
+  font-size: 32px; cursor: pointer; line-height: 1;
+  padding: 4px 8px;
+}
+.lightbox-close:hover { color: #fff; }
+.lightbox-nav {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: #aaa;
+  font-size: 48px; cursor: pointer; padding: 8px 16px; line-height: 1;
+}
+.lightbox-nav:hover { color: #fff; }
+.lightbox-prev { left: 12px; }
+.lightbox-next { right: 12px; }
 
 /* article body */
 .art-body { font-family: var(--serif); font-size: 17px; line-height: 1.65; color: var(--fg); }
