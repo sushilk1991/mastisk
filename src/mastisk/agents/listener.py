@@ -27,6 +27,7 @@ from slugify import slugify
 from mastisk.agents.base import Agent, enqueue
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
+from mastisk.integrations import article as article_extractor
 from mastisk.integrations import extract, openlibrary, podcasts, whisper, youtube
 from mastisk.integrations.podcasts import UnsupportedPlatformError
 from mastisk.paths import raw_dir, tmp_dir, vault_dir
@@ -69,6 +70,10 @@ class Listener(Agent):
             )
         if cls == "unknown":
             raise RuntimeError(f"can't ingest {url} — unknown type")
+
+        if cls in ("article", "twitter"):
+            await self._ingest_article(url, source_kind="blog" if cls == "article" else "twitter")
+            return
 
         if cls == "rss":
             # Enqueue a per-episode job for the latest episode. Caller is free
@@ -242,6 +247,95 @@ class Listener(Agent):
             )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
+
+    # ───── article (HTML page) ingestion ─────
+
+    async def _ingest_article(self, url: str, *, source_kind: str = "blog") -> None:
+        """Universal HTML page → wiki-article path.
+
+        Uses trafilatura to pull main text + hero/inline images; persists a
+        ``sources`` row with ``kind=source_kind`` (defaults to 'blog' for
+        generic web pages, 'twitter' for x.com URLs); enqueues the Compiler
+        which turns the source into a structured wiki article in the same way
+        it handles RSS clippings from Scout.
+
+        Twitter/X caveat: x.com renders tweets via JavaScript, so trafilatura
+        will only see the meta-tag preview text on most tweets. For text-only
+        tweets we capture title + description from OpenGraph metadata; for
+        video tweets the user is better off pasting the underlying YouTube/
+        direct-media URL if available. We don't fail loudly — partial
+        extraction still produces a usable wiki stub the user can edit.
+        """
+        # Dedup by canonical URL hash. The article extractor follows redirects
+        # and returns the canonical URL, so the hash lines up across paste
+        # variants (with/without query string, http/https, www/no-www only when
+        # the server actually canonicalises).
+        try:
+            data = await article_extractor.fetch_and_extract(url)
+        except Exception as e:
+            log.info("listener: article fetch failed for %s: %s", url, e)
+            raise RuntimeError(f"article fetch failed: {e}") from e
+
+        canonical_url = data.url
+        src_id = _hash16(canonical_url)
+        if self._source_exists(src_id):
+            log.info("listener: article %s already ingested, skipping", canonical_url)
+            self.emit_feed(
+                verb="duplicate",
+                obj=(data.title or canonical_url)[:80],
+                kind=source_kind,
+                payload={"source_id": src_id, "url": canonical_url},
+            )
+            return
+
+        raw_path = raw_dir() / f"{src_id}.txt"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        # Mirror Scout's raw-file shape so the Compiler sees a familiar layout:
+        # the title is the first line, then the URL, then the extracted body.
+        # Compiler doesn't depend on this exact format, but consistency makes
+        # debugging easier when comparing Scout-clipped vs Listener-pasted
+        # sources side-by-side.
+        raw_path.write_text(
+            f"# {data.title}\n\n{canonical_url}\n\n{data.text}",
+            encoding="utf-8",
+        )
+
+        with connect() as conn, q.txn(conn):
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO sources
+                     (id, kind, url, title, published_at, raw_path, author,
+                      hero_image_url, media_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    src_id,
+                    source_kind,
+                    canonical_url,
+                    data.title,
+                    data.published_at,
+                    str(raw_path),
+                    data.author,
+                    data.hero_image_url,
+                    json.dumps(data.inline_media) if data.inline_media else None,
+                ),
+            )
+            inserted = (cur.rowcount or 0) > 0
+            if inserted:
+                conn.execute(
+                    "INSERT INTO jobs (agent, kind, payload_json) VALUES (?, ?, ?)",
+                    ("compiler", "compile", json.dumps({"source_id": src_id})),
+                )
+
+        self.emit_feed(
+            verb="clipped",
+            obj=(data.title or canonical_url)[:80],
+            kind=source_kind,
+            payload={
+                "source_id": src_id,
+                "url": canonical_url,
+                "chars": len(data.text),
+                "via": "listener",
+            },
+        )
 
     # ───── shared finish path ─────
 

@@ -84,15 +84,20 @@ async def test_classify_and_resolve_handles_relative_feed_href():
 
 
 @pytest.mark.asyncio
-async def test_classify_and_resolve_returns_unknown_for_html_with_no_feed():
-    """Plain HTML page without a feed link stays 'unknown' and the URL is
-    returned unchanged."""
+async def test_classify_and_resolve_falls_back_to_article_for_html_with_no_feed():
+    """Phase 2 behavior: HTML page without a feed link is now an 'article'
+    candidate (handled by trafilatura in the Listener), not 'unknown'.
+
+    Pre-Phase-2 this used to return 'unknown' and the Listener would
+    surface "can't ingest — unknown type". Now the same URL routes to the
+    universal article extractor, which is exactly the broader-ingestion UX
+    the user asked for."""
     from mastisk.integrations import podcasts
 
     page_url = "https://example.com/just-a-page"
     with _patch_async_client(_mock_httpx_response(HTML_NO_FEED)):
         kind, resolved = await podcasts.classify_and_resolve(page_url)
-    assert kind == "unknown"
+    assert kind == "article"
     assert resolved == page_url
 
 

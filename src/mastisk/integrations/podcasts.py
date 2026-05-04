@@ -19,7 +19,13 @@ class UnsupportedPlatformError(Exception):
 
 
 async def classify(url: str) -> str:
-    """Return 'youtube' | 'rss' | 'direct_audio' | 'spotify' | 'unknown'."""
+    """Return 'youtube' | 'rss' | 'direct_audio' | 'spotify' | 'twitter' |
+    'article' | 'unknown'.
+
+    'article' = generic HTML page where main text is extractable. 'twitter' =
+    x.com / twitter.com URLs (handled via the article path with limitations
+    documented in Listener._ingest_article — JS-only timelines won't yield
+    much, single-tweet pages are best-effort)."""
     if not url:
         return "unknown"
     u = url.strip()
@@ -31,6 +37,8 @@ async def classify(url: str) -> str:
         return "youtube"
     if host.endswith("spotify.com"):
         return "spotify"
+    if host.endswith("twitter.com") or host == "x.com" or host.endswith(".x.com"):
+        return "twitter"
     if any(path_lower.endswith(ext) for ext in _AUDIO_EXTS):
         return "direct_audio"
 
@@ -46,8 +54,13 @@ async def classify(url: str) -> str:
         return "rss"
     if "text/xml" in ctype or "application/xml" in ctype:
         return await _sniff_xml_for_rss(u)
+    # HTML and JSON pages aren't feeds — but HTML with a body is an "article"
+    # candidate. Caller's classify_and_resolve will try RSS auto-discovery
+    # FIRST; the 'article' fallback only fires when no feed link is advertised.
+    if "text/html" in ctype:
+        return "article"
     # Some feeds return text/html from HEAD; do a small GET sniff as a last chance.
-    if "text/html" not in ctype and "application/json" not in ctype:
+    if "application/json" not in ctype:
         return await _sniff_xml_for_rss(u)
     return "unknown"
 
@@ -125,12 +138,29 @@ async def classify_and_resolve(url: str) -> tuple[str, str]:
     ``<link rel="alternate">`` — in that case we surface ``("rss", feed_url)``
     so callers can fetch the feed without orchestrating discovery themselves.
 
-    For every kind ``classify()`` already recognises (youtube, rss, direct_audio,
-    spotify), this is a thin pass-through with the original url.
+    Resolution priority for HTML pages:
+      1. If the page advertises an RSS/Atom feed → surface as 'rss' with the
+         feed URL. (A podcast show page with a feed gets routed to whisper,
+         not the article extractor — audio is more useful than the page text.)
+      2. Otherwise → surface as the original 'article' kind so the caller
+         routes to the trafilatura article extractor.
+
+    For non-HTML kinds (youtube, rss, direct_audio, spotify, twitter), this is
+    a thin pass-through with the original url.
     """
     kind = await classify(url)
+    if kind == "article":
+        # Try feed discovery first — if a podcast page also functions as a blog
+        # we prefer the feed (audio-bearing) over the article text.
+        discovered = await _discover_rss_link(url)
+        if discovered:
+            log.info("podcasts.classify_and_resolve: discovered feed %s in %s", discovered, url)
+            return "rss", discovered
+        return "article", url
     if kind != "unknown":
         return kind, url
+    # Last-ditch: even with no useful content-type, the page might be an RSS
+    # feed served as text/html. Falls back to article on miss.
     discovered = await _discover_rss_link(url)
     if discovered:
         log.info("podcasts.classify_and_resolve: discovered feed %s in %s", discovered, url)

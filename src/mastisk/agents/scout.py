@@ -19,6 +19,10 @@ import trafilatura
 from mastisk.agents.base import Agent, enqueue
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
+from mastisk.integrations.article import (
+    extract_inline_images as _extract_inline_images,
+    first_img_in_html as _first_img_in_html,
+)
 from mastisk.paths import raw_dir, self_dir
 
 log = logging.getLogger("mastisk.scout")
@@ -257,12 +261,6 @@ class Scout(Agent):
 
 # ───── image-extraction helpers ─────
 
-_IMG_RE = re.compile(
-    r'<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s>]+))[^>]*>',
-    re.IGNORECASE,
-)
-_IMG_ALT_RE = re.compile(r'\balt\s*=\s*(?:"([^"]*)"|\'([^\']*)\')', re.IGNORECASE)
-
 
 def _pick_entry_thumbnail(entry: dict) -> str | None:
     """RSS entry-level thumbnail. Most feeds use ``media_thumbnail`` (mRSS)
@@ -288,44 +286,6 @@ def _pick_entry_thumbnail(entry: dict) -> str | None:
     return None
 
 
-def _first_img_in_html(html: str | None) -> str | None:
-    """Return the first ``<img src>`` value in an HTML fragment, or None."""
-    if not html:
-        return None
-    m = _IMG_RE.search(html)
-    if not m:
-        return None
-    return m.group(1) or m.group(2) or m.group(3) or None
-
-
-def _extract_inline_images(html: str | None, base_url: str, *, limit: int) -> list[dict]:
-    """Collect up to ``limit`` distinct ``<img>`` URLs from ``html``.
-
-    Resolves relative URLs against ``base_url`` and skips obvious tracking
-    pixels (1x1, data URIs). Order follows document order. Returned dicts
-    match the frontend ``Article.media`` shape: ``{src, alt, caption?}``.
-    """
-    if not html:
-        return []
-    from urllib.parse import urljoin
-
-    seen: set[str] = set()
-    out: list[dict] = []
-    for m in _IMG_RE.finditer(html):
-        src = m.group(1) or m.group(2) or m.group(3)
-        if not src:
-            continue
-        if src.startswith("data:"):
-            continue
-        absolute = urljoin(base_url, src)
-        if absolute in seen:
-            continue
-        seen.add(absolute)
-        # Pull an alt attribute out of the same tag if present. Cheap — we're
-        # already iterating over the matched substring.
-        alt_match = _IMG_ALT_RE.search(m.group(0))
-        alt = (alt_match.group(1) or alt_match.group(2)) if alt_match else ""
-        out.append({"src": absolute, "alt": alt})
-        if len(out) >= limit:
-            break
-    return out
+# Image extraction helpers (_first_img_in_html, _extract_inline_images) live
+# in mastisk.integrations.article — Listener and Scout share them so a generic
+# URL paste and an RSS-clipped item get identical hero/inline-media handling.
