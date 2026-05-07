@@ -117,17 +117,23 @@ class TestRankAndPersist:
     def test_top_n_selected_and_persisted(self, conn):
         today = date.today().isoformat()
         # 8 articles all touched today, varying kinds + sources.
+        # Each needs distinct content so the diversity filter doesn't merge them.
+        topics = [
+            "agent orchestration workflow", "kernel scheduling preemption",
+            "database migration safety", "browser rendering pipeline",
+            "network protocol design", "compiler optimization passes",
+            "memory allocation patterns", "distributed consensus theory",
+        ]
         for i, (kind, src) in enumerate(
             [("Synthesis", 4), ("Concept", 3), ("Concept", 2), ("Entity", 2),
              ("Source", 1), ("Source", 1), ("Entity", 1), ("Concept", 0)]
         ):
             _insert_article(
-                conn, id=f"A{i}", title=f"Title {i}", kind=kind,
+                conn, id=f"A{i}", title=f"{topics[i].title()} overview",
+                kind=kind, body=f"{topics[i]} " * 400,
                 sources=src, backlinks=src, forwardlinks=src,
                 updated_at=f"{today} 10:00:00",
             )
-        # set counts via triggers — but we already inserted counts directly.
-        # Force sources_count mismatch doesn't matter since we used direct inserts.
 
         top = digest_ranker.rank_for_digest(conn, today, top_n=5)
         assert len(top) == 5

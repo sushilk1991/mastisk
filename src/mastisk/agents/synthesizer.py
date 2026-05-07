@@ -279,6 +279,12 @@ class Synthesizer(Agent):
             all_ids = [
                 r["id"] for r in conn.execute("SELECT id FROM articles")
             ]
+            synthesis_ids = frozenset(
+                r["id"]
+                for r in conn.execute(
+                    "SELECT id FROM articles WHERE kind = 'Synthesis'"
+                )
+            )
 
         if not seeds:
             return None
@@ -287,9 +293,17 @@ class Synthesizer(Agent):
         adjacency = self._build_adjacency(all_ids, edges)
         scores = self._ppr(adjacency, seeds=seed_ids)
 
-        # Filter to non-zero scores and sort. A zero score means the walk
-        # never reached the node; including it adds nothing to the cluster.
-        nonzero = [(nid, s) for nid, s in scores.items() if s > 0]
+        # Exclude Synthesis articles from cluster membership. Seeds are
+        # already filtered (queries.recent_seed_articles), but the PPR walk
+        # reaches prior syntheses through related links — each synthesis
+        # has 8 outgoing edges, making it a high-degree attractor. Without
+        # this filter, later ticks synthesize their own output, producing
+        # near-duplicate meta-syntheses that dominate the digest.
+        nonzero = [
+            (nid, s)
+            for nid, s in scores.items()
+            if s > 0 and nid not in synthesis_ids
+        ]
         nonzero.sort(key=lambda x: x[1], reverse=True)
 
         k = min(_MAX_CLUSTER_SIZE, len(nonzero))

@@ -22,6 +22,7 @@ Candidate selection:
 from __future__ import annotations
 
 import math
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -151,6 +152,42 @@ def score_candidates(
     return out
 
 
+_DIVERSITY_THRESHOLD = 0.4
+
+
+def _word_bag(text: str) -> set[str]:
+    return {w.lower() for w in re.findall(r"[A-Za-z]{3,}", text)}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _diversified_top_n(
+    candidates: list[ScoredCandidate],
+    top_n: int,
+    threshold: float = _DIVERSITY_THRESHOLD,
+) -> list[int]:
+    """Greedy MMR-style selection: walk the score-sorted list and skip any
+    candidate whose title+summary+body-prefix has Jaccard overlap >= threshold
+    with an already-selected candidate."""
+    selected_idx: list[int] = []
+    selected_bags: list[set[str]] = []
+    for idx, c in enumerate(candidates):
+        if len(selected_idx) >= top_n:
+            break
+        if c.quality < 0.1:
+            continue
+        bag = _word_bag(f"{c.title} {c.summary} {c.body_md[:500]}")
+        if any(_jaccard(bag, sb) >= threshold for sb in selected_bags):
+            continue
+        selected_idx.append(idx)
+        selected_bags.append(bag)
+    return selected_idx
+
+
 def persist_candidates(
     conn: sqlite3.Connection,
     digest_date: str,
@@ -163,10 +200,12 @@ def persist_candidates(
     Re-running for the same date overwrites prior scores (the ranker may have
     changed, or new signals may shift the interest axis).
     """
-    for idx, c in enumerate(candidates):
-        if idx < top_n and c.quality >= 0.1:  # don't promote garbage even if it's "top 5"
-            c.selected = True
-            c.rank = idx + 1
+    picks = set(_diversified_top_n(candidates, top_n))
+    rank = 1
+    for idx in sorted(picks):
+        candidates[idx].selected = True
+        candidates[idx].rank = rank
+        rank += 1
 
     conn.executemany(
         """INSERT INTO digest_candidates
