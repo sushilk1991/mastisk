@@ -920,8 +920,10 @@ def test_render_prompt_halves_cap_before_dropping_items(agent):
         for i in range(3)
     ]
     w = BlogWriter()
-    # Tiny budget that forces halving but still fits all 3 at the floor.
-    small_budget = 3000
+    # Budget that forces halving from 10000 to the floor but still fits all 3
+    # sources once truncated. The prompt chrome (identity + voice + constraints)
+    # is ~14k chars; 3 sources at the 300-char floor add ~1k each.
+    small_budget = 18000
     out = w._render_prompt(
         theme="", ranked=ranked,
         char_budget=small_budget, per_source_cap=10000,
@@ -946,8 +948,9 @@ def test_render_prompt_drops_tail_when_floor_still_oversized(agent):
         for i in range(10)
     ]
     w = BlogWriter()
-    # Budget too tight for 10 items even at the floor.
-    tight_budget = floor * 5
+    # Budget too tight for 10 items even at the floor. Prompt chrome is ~14k;
+    # 10 sources × floor(300) = 3k; total ~17k. Set budget below that.
+    tight_budget = 15500
     out = w._render_prompt(
         theme="", ranked=ranked,
         char_budget=tight_budget, per_source_cap=10000,
