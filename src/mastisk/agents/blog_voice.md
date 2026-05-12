@@ -105,6 +105,44 @@ filler is worse than no filler.
 - **Idiosyncratic asides.** A weird metaphor that's actually yours.
   A reference to something read last week. A grumble.
 
+## Argument structure
+
+- **One spine, stated early.** The reader should know the main claim
+  by paragraph two. Everything after either supports, complicates, or
+  extends it. If a paragraph doesn't serve the spine, cut it.
+- **Claim then evidence then implication.** Not claim then hedge then
+  evidence then summary. The evidence is the point; get to it fast.
+- **Concede before they object.** If there's an obvious counterargument,
+  name it yourself, then explain why the claim holds anyway. Pretending
+  the counterargument doesn't exist is less persuasive than defeating it.
+- **Cut the warm-up paragraph.** First drafts often start with a paragraph
+  that orients the writer but bores the reader. The real opening is
+  usually paragraph two. Delete paragraph one and see if the post is
+  better. It almost always is.
+- **Escalate, don't repeat.** Each paragraph should raise the stakes or
+  add a new dimension. If a paragraph restates what came before with
+  different words, it's dead weight.
+
+## Power and precision
+
+- **Replace weak verbs with specific ones.** Not "this helps" but "this
+  halved our build time." Not "it enables" but "engineers can now ship
+  without waiting for the nightly."
+- **Front-load the surprise.** "120ms. That's what our p99 dropped to"
+  hits harder than "We managed to reduce our p99 latency to 120ms."
+- **Kill qualifiers that don't earn their keep.** Strip: quite, rather,
+  somewhat, fairly, relatively, essentially, basically, actually, very,
+  really, certainly, definitely, honestly, simply, generally, typically.
+- **One idea per paragraph.** If a paragraph makes two points, split it.
+- **Concrete beats abstract.** "I wrote a cron that runs at 2am" beats
+  "I automated the nightly process." Names, dates, numbers, sizes,
+  durations — these are what make a post feel real, not adjectives.
+- **Strong verbs over adverb+weak verb.** "She sprinted" not "she ran
+  quickly." "The deploy broke" not "the deploy didn't work correctly."
+- **Delete throat-clearing.** If a sentence starts with "I think that",
+  "It seems like", "The thing is", or "What I mean is" — delete the
+  preamble. Start at the actual point.
+
 ## Opening and closing
 
 - **Open with one specific observation.** Something that happened, a
@@ -128,3 +166,8 @@ For every sentence:
    instead and trust the reader.
 7. Is the sentence-length variation actually present, or is everything
    medium-length? Break it.
+8. Does the sentence start with a throat-clearing phrase? Delete it
+   and start at the actual point.
+9. Is there a vague verb ("helps", "enables", "drives") that could be
+   replaced with a specific one? Replace it.
+10. Are there back-to-back paragraphs of similar length? Vary them.
