@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import {
   forceSimulation,
   forceLink,
@@ -44,6 +44,17 @@ const MINI_H = 120;
 // CSS-pixel tolerance for "near enough" edge hit-testing. With 1px strokes the
 // SVG version was effectively unhittable; explicit tolerance is friendlier.
 const EDGE_HIT_TOLERANCE = 5;
+const EDGE_TOOLTIP_MIN_ZOOM = 0.65;
+const MAX_FIT_LABELS = 36;
+const MAX_MID_LABELS = 72;
+const MAX_CLOSE_LABELS = 140;
+
+interface LayoutBounds {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 function hash(s: string): number {
   let h = 2166136261;
@@ -53,6 +64,72 @@ function hash(s: string): number {
 
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+function prewarmTicks(nodeCount: number, edgeCount: number): number {
+  if (nodeCount > 1500 || edgeCount > 6000) return 120;
+  if (nodeCount > 800 || edgeCount > 2500) return 180;
+  return 300;
+}
+
+function layoutBounds(nodes: SimNode[]): LayoutBounds {
+  if (!nodes.length) return { x: 0, y: 0, w: WORLD_W, h: WORLD_H };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    const x = n.x ?? 0, y = n.y ?? 0;
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  if (!isFinite(minX)) return { x: 0, y: 0, w: WORLD_W, h: WORLD_H };
+  const pad = 60;
+  return {
+    x: minX - pad,
+    y: minY - pad,
+    w: maxX - minX + pad * 2,
+    h: maxY - minY + pad * 2,
+  };
+}
+
+function ellipsizeLabel(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (ctx.measureText(`${text.slice(0, mid)}...`).width <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return `${text.slice(0, Math.max(1, lo))}...`;
+}
+
+function intersectsAny(
+  rect: { x: number; y: number; w: number; h: number },
+  rects: Array<{ x: number; y: number; w: number; h: number }>,
+): boolean {
+  return rects.some(
+    (r) =>
+      rect.x < r.x + r.w &&
+      rect.x + rect.w > r.x &&
+      rect.y < r.y + r.h &&
+      rect.y + rect.h > r.y,
+  );
+}
+
+function roundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.rect(x, y, w, h);
+  }
 }
 
 // Resolve a CSS custom property to its computed string. Falls back if the doc
@@ -83,6 +160,7 @@ export function GraphView({ onNavigate }: Props) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
   const [viewport, setViewport] = useState({ w: 800, h: 600 });
 
   const [zoom, setZoom] = useState(1);
@@ -95,16 +173,12 @@ export function GraphView({ onNavigate }: Props) {
 
   const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
   const nodesRef = useRef<SimNode[]>([]);
+  const rankedNodesRef = useRef<SimNode[]>([]);
   const linksRef = useRef<SimLink[]>([]);
+  const layoutBoundsRef = useRef<LayoutBounds>({ x: 0, y: 0, w: WORLD_W, h: WORLD_H });
+  const minimapCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
   const [prewarmed, setPrewarmed] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
-
-  // Tick counter — incremented from the d3-force tick handler so the HTML
-  // label overlay (which reads node positions from refs but lives in React)
-  // re-renders in step with the canvas. Without this, labels freeze while the
-  // simulation re-cools after a node drag.
-  const [, setTickKey] = useState(0);
-  const bumpTick = useCallback(() => setTickKey((t) => (t + 1) % 1_000_000), []);
 
   const rafRef = useRef<number | null>(null);
 
@@ -112,10 +186,11 @@ export function GraphView({ onNavigate }: Props) {
     api.graph().then(setData).catch((e) => setError(String(e)));
   }, []);
 
-  // Build the simulation and run it to full cooling synchronously, off-screen.
-  // 300 iterations matches d3-force's default schedule (alphaMin=0.001, alphaDecay≈0.0228)
-  // so nodes arrive at their settled positions before the first paint — the user never
-  // sees the simulation cool down in front of them.
+  // Build the simulation and pre-warm it off-screen. Full d3 cooling is 300
+  // ticks, but that blocks the main thread for multiple seconds at Mastisk's
+  // current graph size. Large graphs use a shorter deterministic settle pass:
+  // enough to reveal clusters without making first paint wait on perfect force
+  // convergence.
   useLayoutEffect(() => {
     if (!data) return;
     const nodes: SimNode[] = data.nodes.map((n) => {
@@ -155,15 +230,23 @@ export function GraphView({ onNavigate }: Props) {
         forceY<SimNode>((d) => (CLUSTER_CENTERS[d.kind] ?? [0.5, 0.5])[1] * WORLD_H).strength(0.06),
       )
       .stop();
-    for (let i = 0; i < 300; i++) sim.tick();
+    const ticks = prewarmTicks(nodes.length, links.length);
+    for (let i = 0; i < ticks; i++) sim.tick();
 
     nodesRef.current = nodes;
+    rankedNodesRef.current = [...nodes].sort((a, b) => b.degree - a.degree);
     linksRef.current = links;
+    layoutBoundsRef.current = layoutBounds(nodes);
+    minimapCacheRef.current = null;
     simRef.current = sim;
     setPrewarmed(true);
     return () => {
       sim.stop();
       simRef.current = null;
+      nodesRef.current = [];
+      rankedNodesRef.current = [];
+      linksRef.current = [];
+      minimapCacheRef.current = null;
       setPrewarmed(false);
       setLayoutReady(false);
     };
@@ -264,6 +347,11 @@ export function GraphView({ onNavigate }: Props) {
     const lineColor = resolveCssColor(readCssVar('--line', '#999'));
     const accentColor = resolveCssColor(readCssVar('--accent', '#0066ff'));
     const bgCardColor = resolveCssColor(readCssVar('--bg-card', '#fff'));
+    const bgElevColor = resolveCssColor(readCssVar('--bg-elev', '#fff'));
+    const fgColor = resolveCssColor(readCssVar('--fg', '#111'));
+    const fgMuteColor = resolveCssColor(readCssVar('--fg-mute', '#666'));
+    const lineSoftColor = resolveCssColor(readCssVar('--line-soft', '#ddd'));
+    const monoFont = readCssVar('--mono', 'ui-monospace, SFMono-Regular, Menlo, monospace');
     // Node `color` arrives from the API as `"var(--kind-X)"` — Canvas 2D
     // doesn't resolve var(), so resolve to the underlying oklch value once per
     // distinct kind per frame.
@@ -276,6 +364,147 @@ export function GraphView({ onNavigate }: Props) {
       return resolved;
     };
     const hasFocus = !!hoverNode || !!searchLC;
+
+    const isVisible = (n: SimNode, pad = 80): boolean => {
+      const sx = (n.x ?? 0) * zoom + pan.x;
+      const sy = (n.y ?? 0) * zoom + pan.y;
+      return sx >= -pad && sx <= viewport.w + pad && sy >= -pad && sy <= viewport.h + pad;
+    };
+
+    const drawLabel = (
+      node: SimNode,
+      active: boolean,
+      matches: boolean,
+      occupied: Array<{ x: number; y: number; w: number; h: number }>,
+    ): boolean => {
+      const sx = (node.x ?? 0) * zoom + pan.x;
+      const sy = (node.y ?? 0) * zoom + pan.y + (node.size / 2) * zoom + 6;
+      if (sx < -80 || sx > viewport.w + 80 || sy < -30 || sy > viewport.h + 80) return false;
+      ctx.font = `10px ${monoFont}`;
+      ctx.textBaseline = 'top';
+      const text = ellipsizeLabel(ctx, node.title, active || matches ? 260 : 210);
+      const metrics = ctx.measureText(text);
+      const tw = metrics.width;
+      const th = 14;
+      const rect = { x: sx - tw / 2 - 6, y: sy - 2, w: tw + 12, h: th + 4 };
+      if (!active && intersectsAny(rect, occupied)) return false;
+      occupied.push(rect);
+
+      if (active || matches) {
+        ctx.fillStyle = matches ? accentColor : bgElevColor;
+        ctx.globalAlpha = matches ? 0.14 : 0.96;
+        ctx.beginPath();
+        roundedRectPath(ctx, rect.x, rect.y, rect.w, rect.h, 4);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = matches ? accentColor : lineSoftColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      ctx.fillStyle = active || matches ? fgColor : fgMuteColor;
+      ctx.fillText(text, sx - tw / 2, sy);
+      return true;
+    };
+
+    const drawLabels = () => {
+      const occupied: Array<{ x: number; y: number; w: number; h: number }> = [];
+      const budget = searchLC ? MAX_CLOSE_LABELS : zoom < 0.35 ? MAX_FIT_LABELS : zoom < 0.75 ? MAX_MID_LABELS : MAX_CLOSE_LABELS;
+      let drawn = 0;
+
+      if (hoverNode) {
+        const activeNode = nodes.find((n) => n.id === hoverNode);
+        if (activeNode && !hiddenKinds.has(activeNode.kind) && drawLabel(activeNode, true, false, occupied)) {
+          drawn += 1;
+        }
+      }
+
+      for (const n of rankedNodesRef.current) {
+        if (drawn >= budget) break;
+        if (hiddenKinds.has(n.kind) || !isVisible(n)) continue;
+        const matches = !!searchLC && n.title.toLowerCase().includes(searchLC);
+        if (!matches && n.id === hoverNode) continue;
+        const importantAtFit = zoom < 0.35 && n.degree >= 28;
+        const importantMid = zoom >= 0.35 && zoom < 0.75 && n.degree >= 16;
+        const importantClose = zoom >= 0.75 && (n.degree >= 8 || n.size * zoom >= 18);
+        if (!(matches || importantAtFit || importantMid || importantClose)) continue;
+        if (drawLabel(n, false, matches, occupied)) drawn += 1;
+      }
+    };
+
+    const drawMinimap = () => {
+      const mini = minimapCanvasRef.current;
+      if (!mini || !layoutReady) return;
+      const mdpr = window.devicePixelRatio || 1;
+      const mw = Math.round(MINI_W * mdpr);
+      const mh = Math.round(MINI_H * mdpr);
+      if (mini.width !== mw) mini.width = mw;
+      if (mini.height !== mh) mini.height = mh;
+
+      const mctx = mini.getContext('2d');
+      if (!mctx) return;
+      const bounds = layoutBoundsRef.current;
+      const scale = Math.min(MINI_W / bounds.w, MINI_H / bounds.h);
+      const ox = (MINI_W - bounds.w * scale) / 2 - bounds.x * scale;
+      const oy = (MINI_H - bounds.h * scale) / 2 - bounds.y * scale;
+      const hiddenKey = [...hiddenKinds].sort().join('|');
+      const cacheKey = `${mdpr}:${hiddenKey}:${lineColor}:${accentColor}:${bgCardColor}`;
+      let cache = minimapCacheRef.current;
+      if (!cache || cache.key !== cacheKey) {
+        const off = document.createElement('canvas');
+        off.width = mw;
+        off.height = mh;
+        const offCtx = off.getContext('2d');
+        if (offCtx) {
+          offCtx.setTransform(mdpr, 0, 0, mdpr, 0, 0);
+          offCtx.clearRect(0, 0, MINI_W, MINI_H);
+          offCtx.strokeStyle = lineColor;
+          offCtx.globalAlpha = 0.42;
+          offCtx.lineWidth = 0.5;
+          offCtx.beginPath();
+          for (const e of links) {
+            const a = e.source as SimNode;
+            const b = e.target as SimNode;
+            if (!a || !b || typeof a !== 'object' || typeof b !== 'object') continue;
+            if (hiddenKinds.has(a.kind) || hiddenKinds.has(b.kind)) continue;
+            offCtx.moveTo((a.x ?? 0) * scale + ox, (a.y ?? 0) * scale + oy);
+            offCtx.lineTo((b.x ?? 0) * scale + ox, (b.y ?? 0) * scale + oy);
+          }
+          offCtx.stroke();
+          offCtx.globalAlpha = 0.9;
+          for (const n of nodes) {
+            if (hiddenKinds.has(n.kind)) continue;
+            offCtx.fillStyle = kindColor(n.color);
+            offCtx.beginPath();
+            offCtx.arc((n.x ?? 0) * scale + ox, (n.y ?? 0) * scale + oy, Math.max(1.2, n.size * scale / 2), 0, Math.PI * 2);
+            offCtx.fill();
+          }
+          offCtx.globalAlpha = 1;
+        }
+        cache = { key: cacheKey, canvas: off };
+        minimapCacheRef.current = cache;
+      }
+
+      mctx.setTransform(1, 0, 0, 1, 0, 0);
+      mctx.clearRect(0, 0, mw, mh);
+      mctx.drawImage(cache.canvas, 0, 0);
+      mctx.setTransform(mdpr, 0, 0, mdpr, 0, 0);
+
+      const x1 = (-pan.x) / zoom;
+      const y1 = (-pan.y) / zoom;
+      const w = viewport.w / zoom;
+      const h = viewport.h / zoom;
+      const rx = x1 * scale + ox;
+      const ry = y1 * scale + oy;
+      const rw = w * scale;
+      const rh = h * scale;
+      mctx.fillStyle = accentColor;
+      mctx.globalAlpha = 0.12;
+      mctx.fillRect(rx, ry, rw, rh);
+      mctx.globalAlpha = 1;
+      mctx.strokeStyle = accentColor;
+      mctx.lineWidth = 1;
+      mctx.strokeRect(rx, ry, rw, rh);
+    };
 
     // Compute neighbour set once per frame for the hover incident check.
     let neighbors: Set<string> | null = null;
@@ -369,6 +598,8 @@ export function GraphView({ onNavigate }: Props) {
     ctx.globalAlpha = 1;
 
     ctx.restore();
+    drawLabels();
+    drawMinimap();
   }, []);
 
   const scheduleDraw = useCallback(() => {
@@ -399,22 +630,19 @@ export function GraphView({ onNavigate }: Props) {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
   }, []);
 
-  // Wire simulation tick → canvas draw + React bump. Only after pre-warm so
-  // the synchronous 300 pre-warm iterations don't fire either path.
-  // The bump re-renders the HTML overlays (labels, edge-tip, minimap viewport
-  // rect) so they track moving nodes; the canvas redraws via rAF dedupe.
+  // Wire simulation tick → canvas draw. Only after pre-warm so the synchronous
+  // settle pass does not paint intermediate states.
   useEffect(() => {
     const sim = simRef.current;
     if (!sim || !prewarmed) return;
     const onTick = () => {
       scheduleDraw();
-      bumpTick();
     };
     sim.on('tick', onTick);
     return () => {
       sim.on('tick', null);
     };
-  }, [prewarmed, scheduleDraw, bumpTick]);
+  }, [prewarmed, scheduleDraw]);
 
   const zoomAt = useCallback(
     (factor: number, cx: number, cy: number) => {
@@ -596,6 +824,10 @@ export function GraphView({ onNavigate }: Props) {
       return;
     }
     if (hoverNode !== null) setHoverNode(null);
+    if (zoom < EDGE_TOOLTIP_MIN_ZOOM) {
+      if (hoverEdge !== null) setHoverEdge(null);
+      return;
+    }
     const edgeI = hitTestEdge(w.x, w.y);
     if (edgeI !== hoverEdge) setHoverEdge(edgeI);
   };
@@ -622,75 +854,24 @@ export function GraphView({ onNavigate }: Props) {
     if (hoverEdge !== null) setHoverEdge(null);
   };
 
-  // Bounding box snapshot used by the minimap. Computed once per data load
-  // (and on layoutReady transition) — we deliberately do NOT recompute on every
-  // simulation tick or hover so the minimap stays anchored.
-  const bboxRef = useMemo(() => {
-    const nodes = nodesRef.current;
-    if (!nodes.length) return { x: 0, y: 0, w: WORLD_W, h: WORLD_H };
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const n of nodes) {
-      const x = n.x ?? 0, y = n.y ?? 0;
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-    if (!isFinite(minX)) return { x: 0, y: 0, w: WORLD_W, h: WORLD_H };
-    const pad = 60;
+  const miniTransform = () => {
+    const bounds = layoutBoundsRef.current;
+    const scale = Math.min(MINI_W / bounds.w, MINI_H / bounds.h);
     return {
-      x: minX - pad,
-      y: minY - pad,
-      w: maxX - minX + pad * 2,
-      h: maxY - minY + pad * 2,
+      scale,
+      ox: (MINI_W - bounds.w * scale) / 2 - bounds.x * scale,
+      oy: (MINI_H - bounds.h * scale) / 2 - bounds.y * scale,
     };
-  }, [data, layoutReady]);
-
-  const miniScale = Math.min(MINI_W / bboxRef.w, MINI_H / bboxRef.h);
-  const miniOx = (MINI_W - bboxRef.w * miniScale) / 2 - bboxRef.x * miniScale;
-  const miniOy = (MINI_H - bboxRef.h * miniScale) / 2 - bboxRef.y * miniScale;
-  const worldToMini = (x: number, y: number) => ({
-    x: x * miniScale + miniOx,
-    y: y * miniScale + miniOy,
-  });
-
-  // Minimap edges + nodes are stable once the layout settles. Memoising avoids
-  // re-creating ~2k <line> elements on every parent re-render (every hover or
-  // pan would otherwise pay that cost). The viewport rect stays inline because
-  // it's the only piece that changes with pan/zoom.
-  // NOTE: this hook must sit above the conditional early-returns below.
-  const miniStatic = useMemo(() => {
-    if (!layoutReady) return null;
-    const ns = nodesRef.current;
-    const ls = linksRef.current;
-    return (
-      <>
-        {ls.map((e, i) => {
-          const a = e.source as SimNode;
-          const b = e.target as SimNode;
-          if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return null;
-          if (hiddenKinds.has(a.kind) || hiddenKinds.has(b.kind)) return null;
-          const pA = worldToMini(a.x ?? 0, a.y ?? 0);
-          const pB = worldToMini(b.x ?? 0, b.y ?? 0);
-          return <line key={i} x1={pA.x} y1={pA.y} x2={pB.x} y2={pB.y} className="graph-minimap-edge" />;
-        })}
-        {ns.map((n) => {
-          if (hiddenKinds.has(n.kind)) return null;
-          const p = worldToMini(n.x ?? 0, n.y ?? 0);
-          return <circle key={n.id} cx={p.x} cy={p.y} r={Math.max(1.2, n.size * miniScale / 2)} fill={n.color} />;
-        })}
-      </>
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, layoutReady, hiddenKinds, miniScale, miniOx, miniOy]);
+  };
 
   function panToMinimap(e: React.PointerEvent) {
     const tgt = e.currentTarget as Element;
     const r = tgt.getBoundingClientRect();
     const mx = e.clientX - r.left;
     const my = e.clientY - r.top;
-    const worldX = (mx - miniOx) / miniScale;
-    const worldY = (my - miniOy) / miniScale;
+    const { scale, ox, oy } = miniTransform();
+    const worldX = (mx - ox) / scale;
+    const worldY = (my - oy) / scale;
     setPan({ x: viewport.w / 2 - worldX * zoom, y: viewport.h / 2 - worldY * zoom });
   }
 
@@ -706,9 +887,6 @@ export function GraphView({ onNavigate }: Props) {
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     panToMinimap(e);
   };
-
-  // Search lowercase used for label matching highlight.
-  const searchLC = search.trim().toLowerCase();
 
   const toggleKind = (k: string) => {
     setHiddenKinds((prev) => {
@@ -749,7 +927,6 @@ export function GraphView({ onNavigate }: Props) {
     );
   }
 
-  const nodes = nodesRef.current;
   const links = linksRef.current;
   const hoverEdgeData = hoverEdge != null ? links[hoverEdge] : null;
 
@@ -812,29 +989,6 @@ export function GraphView({ onNavigate }: Props) {
           style={{ width: '100%', height: '100%' }}
         />
 
-        <div className="graph-labels">
-          {layoutReady && nodes.map((n) => {
-            if (hiddenKinds.has(n.kind)) return null;
-            const active = hoverNode === n.id;
-            const matches = !!searchLC && n.title.toLowerCase().includes(searchLC);
-            const majorHub = n.size >= 34;
-            // On-screen diameter threshold: a node needs ~16px visual size to earn a label.
-            const bigEnough = n.size * zoom >= 16;
-            if (!(active || matches || majorHub || bigEnough)) return null;
-            const x = (n.x ?? 0) * zoom + pan.x;
-            const y = (n.y ?? 0) * zoom + pan.y + (n.size / 2) * zoom + 6;
-            return (
-              <div
-                key={`l-${n.id}`}
-                className={`graph-label${active ? ' is-active' : ''}${matches ? ' is-match' : ''}`}
-                style={{ left: x, top: y }}
-              >
-                {n.title}
-              </div>
-            );
-          })}
-        </div>
-
         {hoverEdgeData &&
           (() => {
             const a = hoverEdgeData.source as SimNode;
@@ -881,34 +1035,16 @@ export function GraphView({ onNavigate }: Props) {
           <div className="graph-zoom-pct">{Math.round(zoom * 100)}%</div>
         </div>
 
-        <svg
+        <canvas
+          ref={minimapCanvasRef}
           className="graph-minimap"
           width={MINI_W}
           height={MINI_H}
+          style={{ width: MINI_W, height: MINI_H }}
           onPointerDown={onMinimapPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
-        >
-          <rect x={0} y={0} width={MINI_W} height={MINI_H} className="graph-minimap-bg" />
-          {miniStatic}
-          {layoutReady && (() => {
-            const x1 = (-pan.x) / zoom;
-            const y1 = (-pan.y) / zoom;
-            const w = viewport.w / zoom;
-            const h = viewport.h / zoom;
-            const p1 = worldToMini(x1, y1);
-            const p2 = worldToMini(x1 + w, y1 + h);
-            return (
-              <rect
-                x={p1.x}
-                y={p1.y}
-                width={p2.x - p1.x}
-                height={p2.y - p1.y}
-                className="graph-minimap-view"
-              />
-            );
-          })()}
-        </svg>
+        />
 
         <div className="graph-hint" aria-hidden>
           scroll = zoom · drag bg = pan · drag node = move · + − 0 = zoom/fit
