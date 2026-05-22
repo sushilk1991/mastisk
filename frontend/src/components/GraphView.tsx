@@ -1,15 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
-import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCollide,
-  forceX,
-  forceY,
-  type Simulation,
-  type SimulationNodeDatum,
-  type SimulationLinkDatum,
-} from 'd3-force';
 import { api } from '../api';
 import type { GraphData, View } from '../types';
 
@@ -17,16 +6,20 @@ interface Props {
   onNavigate: (view: View, id?: string) => void;
 }
 
-interface SimNode extends SimulationNodeDatum {
+interface SimNode {
   id: string;
   title: string;
   kind: string;
   color: string;
   size: number;
   degree: number;
+  x: number;
+  y: number;
+  fx?: number | null;
+  fy?: number | null;
 }
 
-type SimLink = SimulationLinkDatum<SimNode> & { weight: number };
+type SimLink = { source: SimNode; target: SimNode; weight: number };
 
 const CLUSTER_CENTERS: Record<string, [number, number]> = {
   Concept:   [0.32, 0.40],
@@ -35,8 +28,8 @@ const CLUSTER_CENTERS: Record<string, [number, number]> = {
   Source:    [0.30, 0.76],
 };
 
-const WORLD_W = 1400;
-const WORLD_H = 900;
+const WORLD_W = 2400;
+const WORLD_H = 1600;
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 5;
 const MINI_W = 180;
@@ -48,12 +41,39 @@ const EDGE_TOOLTIP_MIN_ZOOM = 0.65;
 const MAX_FIT_LABELS = 36;
 const MAX_MID_LABELS = 72;
 const MAX_CLOSE_LABELS = 140;
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const GRAPH_CACHE_KEY = 'mastisk:graph:v1';
+const GRAPH_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
 interface LayoutBounds {
   x: number;
   y: number;
   w: number;
   h: number;
+}
+
+interface GraphPerf {
+  fetchMs?: number;
+  layoutMs?: number;
+  readyMs?: number;
+  lastDrawMs?: number;
+  maxDrawMs?: number;
+  draws?: number[];
+  nodes?: number;
+  edges?: number;
+  cacheHit?: boolean;
+  cacheAgeMs?: number;
+  fitZoom?: number;
+  fitPan?: { x: number; y: number };
+  fitViewport?: { w: number; h: number };
+  fitBounds?: LayoutBounds;
+}
+
+function graphPerf(): GraphPerf | null {
+  if (typeof window === 'undefined') return null;
+  const w = window as Window & { __mastiskGraphPerf?: GraphPerf };
+  w.__mastiskGraphPerf ??= {};
+  return w.__mastiskGraphPerf;
 }
 
 function hash(s: string): number {
@@ -66,10 +86,34 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
-function prewarmTicks(nodeCount: number, edgeCount: number): number {
-  if (nodeCount > 1500 || edgeCount > 6000) return 120;
-  if (nodeCount > 800 || edgeCount > 2500) return 180;
-  return 300;
+function canFitViewport(viewport: { w: number; h: number }): boolean {
+  if (!viewport.w || !viewport.h) return false;
+  const minWidth = typeof window !== 'undefined' && window.innerWidth >= 900 ? 480 : 240;
+  return viewport.w >= minWidth && viewport.h >= 320;
+}
+
+function readCachedGraph(): { data: GraphData; ageMs: number } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(GRAPH_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt?: number; data?: GraphData };
+    if (!parsed.savedAt || !parsed.data || !Array.isArray(parsed.data.nodes)) return null;
+    const ageMs = Date.now() - parsed.savedAt;
+    if (ageMs < 0 || ageMs > GRAPH_CACHE_MAX_AGE_MS) return null;
+    return { data: parsed.data, ageMs };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedGraph(data: GraphData) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(GRAPH_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch {
+    // LocalStorage can be disabled or full. The graph still works from network.
+  }
 }
 
 function layoutBounds(nodes: SimNode[]): LayoutBounds {
@@ -90,6 +134,60 @@ function layoutBounds(nodes: SimNode[]): LayoutBounds {
     w: maxX - minX + pad * 2,
     h: maxY - minY + pad * 2,
   };
+}
+
+function clusteredLayout(data: GraphData): { nodes: SimNode[]; links: SimLink[] } {
+  const byKind = new Map<string, SimNode[]>();
+  const nodes: SimNode[] = data.nodes.map((n) => {
+    const node = {
+      id: n.id,
+      title: n.title,
+      kind: n.kind,
+      color: n.color,
+      size: n.size,
+      degree: n.degree,
+      x: 0,
+      y: 0,
+    };
+    const arr = byKind.get(n.kind) ?? [];
+    arr.push(node);
+    byKind.set(n.kind, arr);
+    return node;
+  });
+
+  for (const [kind, arr] of byKind) {
+    const c = CLUSTER_CENTERS[kind] ?? [0.5, 0.5];
+    const cx = c[0] * WORLD_W;
+    const cy = c[1] * WORLD_H;
+    const sorted = arr.sort((a, b) => {
+      if (b.degree !== a.degree) return b.degree - a.degree;
+      return a.title.localeCompare(b.title);
+    });
+    const maxRadius = kind === 'Source' || kind === 'Entity' ? 520 : 360;
+    const step = Math.max(11, maxRadius / Math.sqrt(Math.max(1, sorted.length)));
+    const phase = (hash(kind) % 628) / 100;
+    sorted.forEach((node, i) => {
+      if (i === 0) {
+        node.x = cx;
+        node.y = cy;
+        return;
+      }
+      const radius = Math.min(maxRadius, step * Math.sqrt(i));
+      const angle = phase + i * GOLDEN_ANGLE;
+      const jitter = ((hash(node.id) % 100) - 50) / 50;
+      node.x = cx + Math.cos(angle) * (radius + jitter * 4);
+      node.y = cy + Math.sin(angle) * (radius + jitter * 4);
+    });
+  }
+
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const links: SimLink[] = [];
+  for (const e of data.edges) {
+    const source = nodeById.get(e.from_article);
+    const target = nodeById.get(e.to_article);
+    if (source && target) links.push({ source, target, weight: e.weight });
+  }
+  return { nodes, links };
 }
 
 function ellipsizeLabel(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
@@ -157,6 +255,7 @@ function resolveCssColor(value: string): string {
 export function GraphView({ onNavigate }: Props) {
   const [data, setData] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const mountTsRef = useRef(typeof performance !== 'undefined' ? performance.now() : 0);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -171,7 +270,6 @@ export function GraphView({ onNavigate }: Props) {
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
 
-  const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
   const nodesRef = useRef<SimNode[]>([]);
   const rankedNodesRef = useRef<SimNode[]>([]);
   const linksRef = useRef<SimLink[]>([]);
@@ -183,66 +281,56 @@ export function GraphView({ onNavigate }: Props) {
   const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
-    api.graph().then(setData).catch((e) => setError(String(e)));
+    const cached = readCachedGraph();
+    const usedCache = cached !== null;
+    if (cached) {
+      const perf = graphPerf();
+      if (perf) {
+        perf.cacheHit = true;
+        perf.cacheAgeMs = cached.ageMs;
+        perf.nodes = cached.data.nodes.length;
+        perf.edges = cached.data.edges.length;
+      }
+      setData(cached.data);
+    }
+
+    const start = performance.now();
+    api.graph()
+      .then((graph) => {
+        writeCachedGraph(graph);
+        const perf = graphPerf();
+        if (perf) {
+          perf.fetchMs = performance.now() - start;
+          perf.nodes = graph.nodes.length;
+          perf.edges = graph.edges.length;
+        }
+        setData((current) => {
+          if (usedCache && current) return current;
+          return graph;
+        });
+      })
+      .catch((e) => setError(String(e)));
   }, []);
 
-  // Build the simulation and pre-warm it off-screen. Full d3 cooling is 300
-  // ticks, but that blocks the main thread for multiple seconds at Mastisk's
-  // current graph size. Large graphs use a shorter deterministic settle pass:
-  // enough to reveal clusters without making first paint wait on perfect force
-  // convergence.
+  // Compute a deterministic clustered layout synchronously. The old d3-force
+  // pre-warm loop did produce attractive organic clusters, but it also blocked
+  // the main thread for more than a second on the current 3k-node graph. This
+  // keeps first paint predictable while preserving the user's expected clusters.
   useLayoutEffect(() => {
     if (!data) return;
-    const nodes: SimNode[] = data.nodes.map((n) => {
-      const c = CLUSTER_CENTERS[n.kind] ?? [0.5, 0.5];
-      const ang = (hash(n.id) % 360) * (Math.PI / 180);
-      const r = 60 + (hash(n.id + '#r') % 40);
-      return {
-        id: n.id,
-        title: n.title,
-        kind: n.kind,
-        color: n.color,
-        size: n.size,
-        degree: n.degree,
-        x: c[0] * WORLD_W + Math.cos(ang) * r,
-        y: c[1] * WORLD_H + Math.sin(ang) * r,
-      };
-    });
-    const links: SimLink[] = data.edges.map((e) => ({
-      source: e.from_article,
-      target: e.to_article,
-      weight: e.weight,
-    }));
-
-    const sim = forceSimulation<SimNode>(nodes)
-      .force(
-        'link',
-        forceLink<SimNode, SimLink>(links).id((d) => d.id).distance(90).strength(0.25),
-      )
-      .force('charge', forceManyBody<SimNode>().strength(-220))
-      .force('collide', forceCollide<SimNode>((d) => d.size / 2 + 6))
-      .force(
-        'x',
-        forceX<SimNode>((d) => (CLUSTER_CENTERS[d.kind] ?? [0.5, 0.5])[0] * WORLD_W).strength(0.06),
-      )
-      .force(
-        'y',
-        forceY<SimNode>((d) => (CLUSTER_CENTERS[d.kind] ?? [0.5, 0.5])[1] * WORLD_H).strength(0.06),
-      )
-      .stop();
-    const ticks = prewarmTicks(nodes.length, links.length);
-    for (let i = 0; i < ticks; i++) sim.tick();
+    const start = performance.now();
+    const { nodes, links } = clusteredLayout(data);
+    const layoutMs = performance.now() - start;
+    const perf = graphPerf();
+    if (perf) perf.layoutMs = layoutMs;
 
     nodesRef.current = nodes;
     rankedNodesRef.current = [...nodes].sort((a, b) => b.degree - a.degree);
     linksRef.current = links;
     layoutBoundsRef.current = layoutBounds(nodes);
     minimapCacheRef.current = null;
-    simRef.current = sim;
     setPrewarmed(true);
     return () => {
-      sim.stop();
-      simRef.current = null;
       nodesRef.current = [];
       rankedNodesRef.current = [];
       linksRef.current = [];
@@ -259,7 +347,13 @@ export function GraphView({ onNavigate }: Props) {
     if (!el) return;
     const measure = () => {
       const r = el.getBoundingClientRect();
-      setViewport({ w: r.width, h: r.height });
+      setViewport((prev) => {
+        const next = { w: r.width, h: r.height };
+        if (Math.round(prev.w) === Math.round(next.w) && Math.round(prev.h) === Math.round(next.h)) {
+          return prev;
+        }
+        return next;
+      });
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -286,8 +380,16 @@ export function GraphView({ onNavigate }: Props) {
     const z = clamp(Math.min(viewport.w / w, viewport.h / h), MIN_ZOOM, 1.5);
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
+    const nextPan = { x: viewport.w / 2 - cx * z, y: viewport.h / 2 - cy * z };
+    const perf = graphPerf();
+    if (perf) {
+      perf.fitZoom = z;
+      perf.fitPan = nextPan;
+      perf.fitViewport = { w: viewport.w, h: viewport.h };
+      perf.fitBounds = { x: minX, y: minY, w, h };
+    }
     setZoom(z);
-    setPan({ x: viewport.w / 2 - cx * z, y: viewport.h / 2 - cy * z });
+    setPan(nextPan);
   }, [viewport.w, viewport.h, hiddenKinds]);
 
   // One-shot synchronous fit after pre-warm + viewport measurement. No setTimeout,
@@ -296,9 +398,11 @@ export function GraphView({ onNavigate }: Props) {
   const firstFitRef = useRef(false);
   useLayoutEffect(() => {
     if (firstFitRef.current) return;
-    if (!prewarmed || !nodesRef.current.length || !viewport.w || !viewport.h) return;
+    if (!prewarmed || !nodesRef.current.length || !canFitViewport(viewport)) return;
     firstFitRef.current = true;
     fitToViewport();
+    const perf = graphPerf();
+    if (perf) perf.readyMs = performance.now() - mountTsRef.current;
     setLayoutReady(true);
   }, [prewarmed, viewport.w, viewport.h, fitToViewport]);
 
@@ -324,6 +428,18 @@ export function GraphView({ onNavigate }: Props) {
   });
 
   const draw = useCallback(() => {
+    const drawStart = performance.now();
+    const finishDraw = () => {
+      const perf = graphPerf();
+      if (!perf) return;
+      const drawMs = performance.now() - drawStart;
+      perf.lastDrawMs = drawMs;
+      perf.maxDrawMs = Math.max(perf.maxDrawMs ?? 0, drawMs);
+      const draws = perf.draws ?? [];
+      draws.push(drawMs);
+      if (draws.length > 120) draws.shift();
+      perf.draws = draws;
+    };
     const canvas = canvasRef.current;
     if (!canvas) return;
     const { pan, zoom, hoverNode, searchLC, hiddenKinds, layoutReady, viewport } =
@@ -338,7 +454,10 @@ export function GraphView({ onNavigate }: Props) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, viewport.w, viewport.h);
 
-    if (!layoutReady) return;
+    if (!layoutReady) {
+      finishDraw();
+      return;
+    }
 
     const nodes = nodesRef.current;
     const links = linksRef.current;
@@ -600,6 +719,7 @@ export function GraphView({ onNavigate }: Props) {
     ctx.restore();
     drawLabels();
     drawMinimap();
+    finishDraw();
   }, []);
 
   const scheduleDraw = useCallback(() => {
@@ -629,20 +749,6 @@ export function GraphView({ onNavigate }: Props) {
   useEffect(() => () => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
   }, []);
-
-  // Wire simulation tick → canvas draw. Only after pre-warm so the synchronous
-  // settle pass does not paint intermediate states.
-  useEffect(() => {
-    const sim = simRef.current;
-    if (!sim || !prewarmed) return;
-    const onTick = () => {
-      scheduleDraw();
-    };
-    sim.on('tick', onTick);
-    return () => {
-      sim.on('tick', null);
-    };
-  }, [prewarmed, scheduleDraw]);
 
   const zoomAt = useCallback(
     (factor: number, cx: number, cy: number) => {
@@ -792,12 +898,6 @@ export function GraphView({ onNavigate }: Props) {
       const dx = e.clientX - d.sx;
       const dy = e.clientY - d.sy;
       if (d.mode === 'node-pending' && Math.hypot(dx, dy) > 4 && d.nodeId) {
-        const n = nodesRef.current.find((x) => x.id === d.nodeId);
-        if (n) {
-          n.fx = n.x;
-          n.fy = n.y;
-        }
-        simRef.current?.alphaTarget(0.2).restart();
         d.mode = 'node';
       }
       if (d.mode === 'pan') {
@@ -805,8 +905,10 @@ export function GraphView({ onNavigate }: Props) {
       } else if (d.mode === 'node' && d.nodeId && d.nodeStart) {
         const n = nodesRef.current.find((x) => x.id === d.nodeId);
         if (n) {
-          n.fx = d.nodeStart.x + dx / zoom;
-          n.fy = d.nodeStart.y + dy / zoom;
+          n.x = d.nodeStart.x + dx / zoom;
+          n.y = d.nodeStart.y + dy / zoom;
+          layoutBoundsRef.current = layoutBounds(nodesRef.current);
+          minimapCacheRef.current = null;
           scheduleDraw();
         }
       } else if (d.mode === 'minimap') {
@@ -839,12 +941,8 @@ export function GraphView({ onNavigate }: Props) {
     if (d.mode === 'node-pending' && d.nodeId) {
       onNavigate('article', d.nodeId);
     } else if (d.mode === 'node' && d.nodeId) {
-      const n = nodesRef.current.find((x) => x.id === d.nodeId);
-      if (n) {
-        n.fx = null;
-        n.fy = null;
-      }
-      simRef.current?.alphaTarget(0).alpha(0.3).restart();
+      minimapCacheRef.current = null;
+      scheduleDraw();
     }
     (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
   };

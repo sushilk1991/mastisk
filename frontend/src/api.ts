@@ -36,10 +36,47 @@ async function j<T>(url: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+type CompactGraphNode = [id: string, title: string, kindIndex: number, size: number, degree: number];
+type CompactGraphEdge = [sourceIndex: number, targetIndex: number, weight: number];
+interface CompactGraphData {
+  v: 1;
+  kinds: GraphData['clusters'];
+  nodes: CompactGraphNode[];
+  edges: CompactGraphEdge[];
+  stats: GraphData['stats'];
+}
+
+function normalizeGraph(raw: GraphData | CompactGraphData): GraphData {
+  if (!('v' in raw)) return raw;
+  const nodes = raw.nodes.map(([id, title, kindIndex, size, degree]) => {
+    const cluster = raw.kinds[kindIndex];
+    return {
+      id,
+      title,
+      kind: cluster?.kind ?? 'System',
+      color: cluster?.color ?? 'var(--kind-system)',
+      size,
+      degree,
+    };
+  });
+  const edges = raw.edges.flatMap(([sourceIndex, targetIndex, weight]) => {
+    const source = nodes[sourceIndex];
+    const target = nodes[targetIndex];
+    if (!source || !target) return [];
+    return [{ from_article: source.id, to_article: target.id, weight }];
+  });
+  return {
+    nodes,
+    edges,
+    clusters: raw.kinds,
+    stats: raw.stats,
+  };
+}
+
 export const api = {
   sidebar: () => j<{ vault: VaultItem[]; pinned: PinnedItem[]; user: UserInfo }>(`${BASE}/sidebar`),
 
-  graph: () => j<GraphData>(`${BASE}/graph`),
+  graph: async () => normalizeGraph(await j<GraphData | CompactGraphData>(`${BASE}/graph/compact`)),
 
   feeds: () => j<{ feeds: Feed[] }>(`${BASE}/feeds`),
   addFeed: (url: string, title?: string) =>
