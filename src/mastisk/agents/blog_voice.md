@@ -110,6 +110,15 @@ filler is worse than no filler.
 - **One spine, stated early.** The reader should know the main claim
   by paragraph two. Everything after either supports, complicates, or
   extends it. If a paragraph doesn't serve the spine, cut it.
+- **One public anchor.** If the draft needs an example, prefer one
+  recognizable public example (OpenAI, GitHub, Slack, Salesforce,
+  Anthropic, Cursor, etc.) over three obscure adjacent examples. The
+  reader should not need the author's private wiki to feel why the
+  point matters.
+- **Do not stack examples for the same claim.** One public example,
+  one personal example, one counterexample is already plenty. If the
+  second example does not change the reader's mind in a different way,
+  delete it.
 - **Claim then evidence then implication.** Not claim then hedge then
   evidence then summary. The evidence is the point; get to it fast.
 - **Concede before they object.** If there's an obvious counterargument,

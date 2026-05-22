@@ -88,7 +88,14 @@ def agent(db, vault_tmp, data_tmp):
     from mastisk.paths import ensure_dirs
     ensure_dirs()
     from mastisk.agents.blog_writer import BlogWriter
-    return BlogWriter()
+    with patch.object(
+        BlogWriter, "_fetch_public_web_results",
+        new=AsyncMock(return_value=[]),
+    ), patch.object(
+        BlogWriter, "_fetch_public_web_excerpt",
+        new=AsyncMock(return_value=""),
+    ):
+        yield BlogWriter()
 
 
 # ─────────────────────────────── happy path ───────────────────────────────
@@ -384,8 +391,8 @@ def test_theme_rerank_success_reorders_sources(agent, db, vault_tmp):
     # specific to overlap with either body, so the keyword pre-rank produces
     # a recency-tiebreak order [a, b] (indices 0, 1). The rerank then flips
     # them by giving index 1 the higher score.
-    a_id = _seed_note(db, body="body about alpha thread", summary="alpha-summary",
-                      days_ago=0, slug="a")
+    _seed_note(db, body="body about alpha thread", summary="alpha-summary",
+               days_ago=0, slug="a")
     b_id = _seed_note(db, body="body about beta thread", summary="beta-summary",
                       days_ago=1, slug="b")
     bp_id = _seed_blog_post(db, theme="zeta-theme-keyword")
@@ -934,12 +941,122 @@ def test_render_prompt_halves_cap_before_dropping_items(agent):
     assert out.count("### Source") == 3
 
 
+def test_render_prompt_includes_public_web_context_and_example_discipline(agent):
+    """Public web context should be visible to the drafting model, but web
+    examples should be treated as reader-facing anchors rather than extra
+    local citation sources."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    ranked = [
+        {"kind": "note", "ref": 1, "slug": "s1", "title": None,
+         "summary": "local claim", "body": "local proof", "ts": "2026-04-22"}
+    ]
+    web_context = [
+        {
+            "title": "OpenAI Codex app",
+            "url": "https://openai.com/index/introducing-the-codex-app/",
+            "snippet": "Codex is a command center for multiple coding agents.",
+            "excerpt": "Developers can supervise agents across long-running tasks.",
+            "recognized_terms": ["OpenAI", "Codex"],
+        }
+    ]
+
+    out = BlogWriter()._render_prompt(
+        theme="agent control planes",
+        ranked=ranked,
+        web_context=web_context,
+        char_budget=30000,
+        per_source_cap=1000,
+    )
+
+    assert "## Public web context" in out
+    assert "OpenAI Codex app" in out
+    assert "one public anchor example" in out
+    assert "Do not cite web context with `[source N]`" in out
+    assert "hard cap is 1200" in out
+
+
+def test_public_web_context_prefers_recognizable_examples(agent):
+    """When search results include both a generic article and a famous public
+    example, the famous example should be ranked first for drafting context."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    results = [
+        {
+            "title": "A small vendor's agent dashboard",
+            "url": "https://example.com/vendor-agent-dashboard",
+            "snippet": "A niche dashboard for agent workflows.",
+        },
+        {
+            "title": "OpenAI Codex app brings parallel coding agents to developers",
+            "url": "https://openai.com/index/introducing-the-codex-app/",
+            "snippet": "OpenAI describes Codex as a command center for agents.",
+        },
+    ]
+
+    async def fake_results(query):
+        return results
+
+    async def fake_excerpt(url):
+        return "public excerpt"
+
+    with patch.object(
+        BlogWriter, "_fetch_public_web_results",
+        new=AsyncMock(side_effect=fake_results),
+    ), patch.object(
+        BlogWriter, "_fetch_public_web_excerpt",
+        new=AsyncMock(side_effect=fake_excerpt),
+    ):
+        context = asyncio.run(BlogWriter()._gather_public_web_context(
+            theme="agent control planes",
+            ranked=[],
+        ))
+
+    assert context[0]["title"].startswith("OpenAI Codex")
+    assert "OpenAI" in context[0]["recognized_terms"]
+
+
+def test_drafting_prompt_uses_public_web_context(agent, db, vault_tmp):
+    """A blog job should gather public web context before calling the drafting
+    model so the output is not limited to the local wiki."""
+    from mastisk.agents.blog_writer import BlogWriter
+
+    _seed_note(db, body="local agent-control-plane note", summary="agent control plane")
+    bp_id = _seed_blog_post(db, theme="")
+    _enqueue(bp_id)
+
+    captured: dict[str, str] = {}
+    web_context = [
+        {
+            "title": "GitHub Copilot coding agent",
+            "url": "https://github.com/newsroom/press-releases/coding-agent-for-github-copilot",
+            "snippet": "GitHub introduced an asynchronous coding agent.",
+            "excerpt": "The agent is embedded in GitHub and VS Code.",
+            "recognized_terms": ["GitHub", "Copilot"],
+        }
+    ]
+    gather = AsyncMock(return_value=web_context)
+
+    async def fake_claude(*, prompt, **kw):
+        captured["prompt"] = prompt
+        return {"text": json.dumps({"title": "t", "tags": [], "body_md": "x [source 1]"})}
+
+    with patch.object(
+        BlogWriter, "_gather_public_web_context", new=gather,
+    ), patch(
+        "mastisk.agents.blog_writer.claude_bridge.run_claude",
+        new_callable=AsyncMock, side_effect=fake_claude,
+    ):
+        asyncio.run(agent.run_once())
+
+    assert gather.await_count == 1
+    assert "GitHub Copilot coding agent" in captured["prompt"]
+
+
 def test_render_prompt_drops_tail_when_floor_still_oversized(agent):
     """Once we're at the floor and still over budget, start dropping items
     from the tail."""
     from mastisk.agents.blog_writer import BlogWriter
-    from mastisk.settings import get_settings
-    floor = get_settings().blog.min_per_source_chars
 
     big = "x" * 5000
     ranked = [

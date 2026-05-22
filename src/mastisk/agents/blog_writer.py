@@ -11,14 +11,19 @@ See docs/superpowers/specs/2026-04-22-blog-writer-design.md §§6-13.
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 import math
 import re
 from datetime import datetime
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import parse_qs, urlparse
 
+import httpx
+import trafilatura
 from slugify import slugify
 
 from mastisk.agents.base import Agent
@@ -77,6 +82,16 @@ _KIND_BOOST: dict[str, float] = {
 }
 
 
+PUBLIC_RECOGNITION_TERMS: tuple[str, ...] = (
+    "OpenAI", "ChatGPT", "Codex", "Anthropic", "Claude", "Cursor", "Devin",
+    "GitHub", "Copilot", "Microsoft", "Google", "Salesforce", "Slack",
+    "Meta", "Llama", "Apple", "NVIDIA", "Stripe", "Airbnb", "Uber",
+    "Netflix", "TikTok", "Instagram", "Tesla", "Shopify",
+)
+
+WEB_USER_AGENT = "Mastisk/0.1 (blog-writer web context; personal knowledge wiki)"
+
+
 def _try_parse_draft(text: str) -> dict | None:
     """Parse an LLM response into a draft dict or None.
 
@@ -98,6 +113,80 @@ def _try_parse_draft(text: str) -> dict | None:
     if not isinstance(body_md, str) or not body_md.strip():
         return None
     return parsed
+
+
+class _DuckDuckGoResultParser(HTMLParser):
+    """Small parser for DuckDuckGo's lightweight HTML results page.
+
+    Search is a best-effort context source, not a correctness boundary. If the
+    result markup changes, callers fail open and draft from local wiki sources.
+    """
+
+    def __init__(self, *, limit: int):
+        super().__init__(convert_charrefs=True)
+        self.limit = limit
+        self.results: list[dict[str, str]] = []
+        self._current: dict[str, str] | None = None
+        self._capture: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr = {k: v or "" for k, v in attrs}
+        classes = set((attr.get("class") or "").split())
+        if tag == "a" and "result__a" in classes:
+            self._finish_current()
+            self._current = {
+                "title": "",
+                "url": _clean_search_url(attr.get("href") or ""),
+                "snippet": "",
+            }
+            self._capture = "title"
+            return
+        if self._current is not None and "result__snippet" in classes:
+            self._capture = "snippet"
+
+    def handle_data(self, data: str) -> None:
+        if self._current is None or self._capture is None:
+            return
+        self._current[self._capture] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"a", "div"}:
+            self._capture = None
+
+    def close(self) -> None:
+        super().close()
+        self._finish_current()
+
+    def _finish_current(self) -> None:
+        if self._current is None:
+            return
+        title = _collapse_ws(self._current.get("title") or "")
+        url = (self._current.get("url") or "").strip()
+        snippet = _collapse_ws(self._current.get("snippet") or "")
+        self._current = None
+        if len(self.results) >= self.limit:
+            return
+        if not title or not url.startswith(("http://", "https://")):
+            return
+        if any(r["url"] == url for r in self.results):
+            return
+        self.results.append({"title": title, "url": url, "snippet": snippet})
+
+
+def _clean_search_url(raw: str) -> str:
+    text = html.unescape(raw or "").strip()
+    if text.startswith("//"):
+        text = "https:" + text
+    parsed = urlparse(text)
+    if parsed.netloc.endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
+        uddg = parse_qs(parsed.query).get("uddg")
+        if uddg:
+            return uddg[0]
+    return text
+
+
+def _collapse_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(text or "")).strip()
 
 
 RERANK_PROMPT_TEMPLATE = """You are ranking knowledge-base sources by relevance to a theme. Return STRICT JSON only.
@@ -175,18 +264,23 @@ class BlogWriter(Agent):
             ranked = await self._rank(candidates, theme=bp["theme"])
             settings = get_settings().blog
             ranked = ranked[: settings.max_sources]
+            web_context = await self._gather_public_web_context(
+                theme=bp["theme"], ranked=ranked,
+            )
 
             # Build the single-file prompt (identity + task + sources + schema).
             # First render at the Claude budget. If we fall back to Ollama we
             # re-render with a tighter per-source cap.
             prompt = self._render_prompt(
                 theme=bp["theme"], ranked=ranked,
+                web_context=web_context,
                 char_budget=settings.total_prompt_char_limit,
                 per_source_cap=settings.per_source_char_limit,
             )
 
             draft_json, model_used = await self._call_llm(
                 prompt=prompt, ranked=ranked, theme=bp["theme"],
+                web_context=web_context,
             )
             if draft_json is None:
                 raise RuntimeError("LLM failed (both Claude and Ollama)")
@@ -215,6 +309,7 @@ class BlogWriter(Agent):
             frontmatter = _build_frontmatter(
                 bp=bp, bp_id=bp_id, title=title, tags=tags, ranked=ranked,
                 cited_ns=cited_ns, model_used=model_used, body_md=body_md,
+                web_context=web_context,
             )
             atomic_write(file_path, frontmatter + "\n" + body_md)
 
@@ -474,6 +569,147 @@ class BlogWriter(Agent):
         toks = re.findall(r"[a-z0-9]+", text.lower())
         return {t for t in toks if t not in STOP_WORDS and len(t) > 1}
 
+    # ───── public web context ─────
+
+    async def _gather_public_web_context(
+        self, *, theme: str, ranked: list[dict],
+    ) -> list[dict]:
+        """Best-effort live web search for public anchors and recent examples.
+
+        The wiki remains the source of the author's thesis. This layer gives
+        the drafting model reader-recognizable examples so posts don't prove
+        every claim with only local/Farfield material. Fail open: no network,
+        markup drift, or blocked pages simply means no public context.
+        """
+        settings = get_settings().blog
+        if not settings.web_search_enabled:
+            return []
+        query = self._web_search_query(theme=theme, ranked=ranked)
+        if not query:
+            return []
+        try:
+            results = await self._fetch_public_web_results(query)
+        except Exception as e:
+            log.warning("blog_writer: public web search failed (%s)", e)
+            return []
+        if not results:
+            return []
+
+        scored: list[tuple[float, int, dict]] = []
+        for i, result in enumerate(results):
+            recognized = self._recognized_terms(result)
+            score = self._public_example_score(result, recognized, index=i)
+            scored.append((score, i, {**result, "recognized_terms": recognized}))
+        scored.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+
+        selected: list[dict] = []
+        fetch_limit = max(0, settings.web_search_fetch_limit)
+        for _, _, result in scored[: settings.web_search_result_limit]:
+            excerpt = ""
+            if len(selected) < fetch_limit:
+                try:
+                    excerpt = await self._fetch_public_web_excerpt(result["url"])
+                except Exception as e:
+                    log.info(
+                        "blog_writer: public web excerpt failed for %s (%s)",
+                        result["url"], e,
+                    )
+            selected.append({
+                "title": result.get("title") or "",
+                "url": result.get("url") or "",
+                "snippet": result.get("snippet") or "",
+                "excerpt": excerpt,
+                "recognized_terms": result.get("recognized_terms") or [],
+            })
+        return selected
+
+    @staticmethod
+    def _web_search_query(*, theme: str, ranked: list[dict]) -> str:
+        """Build a compact search query from the theme or top local sources."""
+        parts: list[str] = []
+        if theme and theme.strip():
+            parts.append(theme.strip())
+        for c in ranked[:3]:
+            if c.get("title"):
+                parts.append(str(c["title"]))
+            elif c.get("summary"):
+                parts.append(str(c["summary"]))
+            elif c.get("body"):
+                parts.append(str(c["body"])[:160])
+        text = _collapse_ws(" ".join(parts))
+        if not text:
+            return ""
+        return f"{text[:220]} public examples case study"
+
+    async def _fetch_public_web_results(self, query: str) -> list[dict]:
+        """Search DuckDuckGo's lightweight HTML endpoint.
+
+        No API key is required, which keeps Mastisk local-Mac friendly. The
+        parser is intentionally small and the caller treats failures as empty
+        context.
+        """
+        settings = get_settings().blog
+        timeout = httpx.Timeout(settings.web_search_timeout_seconds)
+        headers = {"User-Agent": WEB_USER_AGENT}
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.get(
+                "https://duckduckgo.com/html/",
+                params={"q": query},
+                headers=headers,
+            )
+            if resp.status_code >= 400:
+                log.warning(
+                    "blog_writer: web search returned HTTP %s", resp.status_code,
+                )
+                return []
+        parser = _DuckDuckGoResultParser(
+            limit=max(settings.web_search_result_limit * 3, settings.web_search_result_limit),
+        )
+        parser.feed(resp.text)
+        parser.close()
+        return parser.results
+
+    async def _fetch_public_web_excerpt(self, url: str) -> str:
+        """Fetch and extract a short page excerpt for public context."""
+        settings = get_settings().blog
+        timeout = httpx.Timeout(settings.web_search_timeout_seconds)
+        headers = {"User-Agent": WEB_USER_AGENT}
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code >= 400:
+                return ""
+        extracted = trafilatura.extract(
+            resp.text, include_comments=False, include_tables=False,
+        )
+        return _collapse_ws((extracted or "")[: settings.web_page_excerpt_char_limit])
+
+    @staticmethod
+    def _recognized_terms(result: dict) -> list[str]:
+        hay = " ".join(
+            str(result.get(k) or "") for k in ("title", "url", "snippet", "excerpt")
+        ).lower()
+        found = [
+            term for term in PUBLIC_RECOGNITION_TERMS
+            if term.lower() in hay
+        ]
+        return sorted(set(found), key=found.index)
+
+    @staticmethod
+    def _public_example_score(result: dict, recognized_terms: list[str], *, index: int) -> float:
+        """Rank recognizable public examples above generic adjacent links."""
+        url = str(result.get("url") or "").lower()
+        score = float(len(recognized_terms) * 10)
+        for domain in (
+            "openai.com", "github.com", "anthropic.com", "salesforce.com",
+            "microsoft.com", "google.com", "meta.com", "stripe.com",
+        ):
+            if domain in url:
+                score += 5
+                break
+        # Preserve search-engine order within equal-recognition groups.
+        score -= index * 0.1
+        return score
+
     async def _llm_rerank(
         self, candidates: list[dict], *, theme: str,
     ) -> list[tuple[dict, float]] | None:
@@ -574,6 +810,7 @@ class BlogWriter(Agent):
 
     def _render_prompt(
         self, *, theme: str, ranked: list[dict],
+        web_context: list[dict] | None = None,
         char_budget: int, per_source_cap: int,
     ) -> str:
         """Build the full Claude prompt string. See spec §8.
@@ -585,6 +822,7 @@ class BlogWriter(Agent):
         settings = get_settings().blog
         identity_preamble = self._identity_preamble()
         voice_skill = self._voice_skill()
+        web_context_block = self._render_web_context_block(web_context or [])
         # First attempt at the requested cap; halve down to the floor.
         cap = per_source_cap
         floor = settings.min_per_source_chars
@@ -595,6 +833,7 @@ class BlogWriter(Agent):
                 identity_preamble=identity_preamble,
                 theme=theme,
                 sources_block=sources_block,
+                web_context_block=web_context_block,
                 voice_skill=voice_skill,
             )
             if len(prompt) <= char_budget:
@@ -698,8 +937,53 @@ class BlogWriter(Agent):
         lines.append(body_trunc)
         return lines
 
+    @staticmethod
+    def _render_web_context_block(items: list[dict]) -> str:
+        """Render live web-search context for public, recognizable examples.
+
+        Web context is intentionally separate from numbered wiki sources. It
+        should make the post more legible to outside readers, not become a
+        second citation ledger.
+        """
+        if not items:
+            return ""
+        settings = get_settings().blog
+        lines = [
+            "## Public web context",
+            "",
+            "Use this live web-search context for reader-recognizable examples, "
+            "dates, public product names, and current framing. It is not the "
+            "author's thesis source; the local wiki sources above are.",
+            "",
+        ]
+        used_chars = len("\n".join(lines))
+        for n, item in enumerate(items, start=1):
+            title = _collapse_ws(str(item.get("title") or "untitled"))[:160]
+            url = _collapse_ws(str(item.get("url") or ""))[:300]
+            snippet = _collapse_ws(str(item.get("snippet") or ""))
+            excerpt = _collapse_ws(str(item.get("excerpt") or ""))
+            recognized = item.get("recognized_terms") or []
+            recognized_text = ", ".join(str(t) for t in recognized) or "none detected"
+            block = [
+                f"### Web {n} — {title}",
+                f"- url: {url}",
+                f"- recognized names: {recognized_text}",
+            ]
+            if snippet:
+                block.append(f"- search snippet: {snippet[:500]}")
+            if excerpt:
+                block.append(f"- page excerpt: {excerpt[:900]}")
+            block.append("")
+            block_text = "\n".join(block)
+            if used_chars + len(block_text) > settings.web_context_char_limit:
+                break
+            lines.extend(block)
+            used_chars += len(block_text)
+        return "\n".join(lines).rstrip() + "\n\n"
+
     def _assemble(
         self, *, identity_preamble: str, theme: str, sources_block: str,
+        web_context_block: str = "",
         voice_skill: str = "",
     ) -> str:
         """Glue the prompt pieces together. Matches spec §8.2 exactly."""
@@ -726,6 +1010,7 @@ class BlogWriter(Agent):
             "Before drafting, identify the single strongest claim from the sources. "
             "That claim is the spine — every paragraph either supports it, complicates "
             "it, or extends it. Cut anything that doesn't serve the spine.\n\n"
+            f"{web_context_block}"
             "Craft rules:\n"
             "- Every sentence must do work. If removing a sentence doesn't weaken the "
             "argument, it was filler — delete it.\n"
@@ -743,13 +1028,21 @@ class BlogWriter(Agent):
             "- When making a claim, immediately follow it with the most specific evidence "
             "from the sources. Claim then evidence then implication. Not claim then "
             "hedge then claim then evidence.\n"
+            "- By paragraph 3, the reader must know the surprising claim and why it "
+            "matters to someone who does not know the author or Farfield.\n"
+            "- Use one public anchor example from the web context when it strengthens "
+            "the argument. Pick the most recognizable example, not the most obscure or "
+            "locally convenient one.\n"
+            "- Use at most one personal/Farfield example and at most one counterexample. "
+            "If two examples prove the same point, keep the more viral or more widely "
+            "known example and delete the other.\n"
             "- Concede before the reader objects. If there's an obvious counterargument, "
             "name it, then explain why the claim holds anyway. This is more persuasive "
             "than pretending the counterargument doesn't exist.\n"
             "- Vary paragraph length. A single-sentence paragraph after two longer ones "
             "hits harder than three medium paragraphs in a row.\n\n"
             "## Constraints\n"
-            "- 800–2000 words. Aim for 1200.\n"
+            "- 700–1200 words. Aim for 900; the hard cap is 1200.\n"
             "- First-person voice. Use \"I\" naturally; mirror the author's cadence from "
             "the identity/style guidance above.\n"
             "- Lead with a concrete hook — a specific observation, a number that surprised "
@@ -760,6 +1053,9 @@ class BlogWriter(Agent):
             "- Cite specifically. Every non-trivial claim must end with `[source N]` "
             "pointing at the exact source that supports it. If two sources back the same "
             "claim, write `[source 2, source 5]`. Do not invent source numbers.\n"
+            "- Do not cite web context with `[source N]` or `[web N]`. Web context is "
+            "for public anchors and current framing; local wiki sources are the numbered "
+            "citation ledger.\n"
             "- Cite a source only when it directly supports the surrounding claim. If a "
             "source is only loosely related, leave it out — do not reach for it. Drop "
             "tangential examples rather than redirecting them with phrases like \"what's "
@@ -791,6 +1087,7 @@ class BlogWriter(Agent):
 
     async def _call_llm(
         self, *, prompt: str, ranked: list[dict], theme: str,
+        web_context: list[dict] | None = None,
     ) -> tuple[dict | None, str]:
         """Try Claude → Codex → Ollama (with tighter prompt). See spec §13.
 
@@ -853,6 +1150,7 @@ class BlogWriter(Agent):
         try:
             ollama_prompt = self._render_prompt(
                 theme=theme, ranked=ranked,
+                web_context=web_context or [],
                 char_budget=settings.ollama_prompt_char_limit,
                 per_source_cap=min(
                     settings.per_source_char_limit, 800,
@@ -991,6 +1289,7 @@ def _build_frontmatter(
     tags: list[str],
     ranked: list[dict],
     cited_ns: set[int],
+    web_context: list[dict] | None = None,
     model_used: str,
     body_md: str,
 ) -> str:
@@ -1024,6 +1323,21 @@ def _build_frontmatter(
         if c.get("origin"):
             entry_bits.append(f"origin: {c['origin']}")
         lines.append("  - { " + ", ".join(entry_bits) + " }")
+    if web_context:
+        lines.append("web_context:")
+        for item in web_context:
+            bits = [
+                f"title: {_yaml_quote(item.get('title') or '')}",
+                f"url: {_yaml_quote(item.get('url') or '')}",
+            ]
+            recognized = item.get("recognized_terms") or []
+            if recognized:
+                bits.append(
+                    "recognized: ["
+                    + ", ".join(_yaml_quote(t) for t in recognized)
+                    + "]"
+                )
+            lines.append("  - { " + ", ".join(bits) + " }")
     lines.append(f"model: {model_used}")
     lines.append(f"word_count: {len(body_md.split())}")
     lines.append("---")

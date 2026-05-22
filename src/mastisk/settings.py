@@ -90,24 +90,35 @@ class BlogSettings(BaseSettings):
 
     ``min_relevance_score`` is the cutoff applied to LLM-reranked sources
     after the personal-evidence boost; entries below it are dropped before
-    drafting so weak fits don't get cited. ``max_sources`` was lowered from
-    40 to 20 alongside introducing the threshold so the filter does the
-    trimming rather than a flat top-N cap.
+    drafting so weak fits don't get cited. ``max_sources`` stays intentionally
+    small because public essays need one sharp argument, not a ledger of every
+    adjacent wiki item.
     """
     default_window_days: int = 14
     allowed_window_days: list[int] = Field(default_factory=lambda: [7, 14, 30, 90])
-    max_sources: int = 20
+    max_sources: int = 10
     pre_rank_limit: int = 80
     per_source_char_limit: int = 1500
     min_per_source_chars: int = 300
     total_prompt_char_limit: int = 60000
     ollama_prompt_char_limit: int = 20000
-    draft_word_count_min: int = 800
-    draft_word_count_max: int = 2000
+    draft_word_count_min: int = 700
+    draft_word_count_max: int = 1200
     claude_timeout_seconds: int = 240
     # When unset, falls back to top-level summarize_model_heavy.
     ollama_model: str | None = None
     min_relevance_score: float = 0.4
+
+    # Draft-time public context. The wiki supplies the author's point of view;
+    # live web search supplies reader-recognizable anchors and recent examples.
+    # Search is best-effort and fail-open so blog generation still works
+    # offline on the user's Mac.
+    web_search_enabled: bool = True
+    web_search_result_limit: int = 5
+    web_search_fetch_limit: int = 3
+    web_search_timeout_seconds: float = 8.0
+    web_context_char_limit: int = 4500
+    web_page_excerpt_char_limit: int = 900
 
     # Anti-repeat: candidates whose (kind, ref) was cited in any of the last
     # ``recent_post_lookback`` non-deleted blog posts have their rerank score
