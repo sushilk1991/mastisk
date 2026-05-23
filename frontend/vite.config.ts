@@ -43,6 +43,11 @@ export default defineConfig({
             options: { cacheName: 'views', networkTimeoutSeconds: 2 },
           },
           {
+            urlPattern: /^\/api\/graph\/compact$/,
+            handler: 'StaleWhileRevalidate',
+            options: { cacheName: 'graph' },
+          },
+          {
             urlPattern: /^\/api\/ask$/,
             handler: 'NetworkOnly',
           },

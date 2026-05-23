@@ -41,9 +41,9 @@ const EDGE_TOOLTIP_MIN_ZOOM = 0.65;
 const MAX_FIT_LABELS = 36;
 const MAX_MID_LABELS = 72;
 const MAX_CLOSE_LABELS = 140;
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const GRAPH_CACHE_KEY = 'mastisk:graph:v1';
 const GRAPH_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+const ORGANIC_RELAX_TICKS = 16;
 
 interface LayoutBounds {
   x: number;
@@ -80,6 +80,10 @@ function hash(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
+}
+
+function hashUnit(s: string): number {
+  return (hash(s) % 1_000_000) / 1_000_000;
 }
 
 function clamp(v: number, lo: number, hi: number) {
@@ -136,7 +140,7 @@ function layoutBounds(nodes: SimNode[]): LayoutBounds {
   };
 }
 
-function clusteredLayout(data: GraphData): { nodes: SimNode[]; links: SimLink[] } {
+function organicLayout(data: GraphData): { nodes: SimNode[]; links: SimLink[] } {
   const byKind = new Map<string, SimNode[]>();
   const nodes: SimNode[] = data.nodes.map((n) => {
     const node = {
@@ -163,20 +167,21 @@ function clusteredLayout(data: GraphData): { nodes: SimNode[]; links: SimLink[] 
       if (b.degree !== a.degree) return b.degree - a.degree;
       return a.title.localeCompare(b.title);
     });
-    const maxRadius = kind === 'Source' || kind === 'Entity' ? 520 : 360;
-    const step = Math.max(11, maxRadius / Math.sqrt(Math.max(1, sorted.length)));
-    const phase = (hash(kind) % 628) / 100;
+    const maxRadius =
+      kind === 'Source' ? 560 :
+      kind === 'Entity' ? 470 :
+      kind === 'Synthesis' ? 360 :
+      260;
+    const count = Math.max(1, sorted.length - 1);
     sorted.forEach((node, i) => {
-      if (i === 0) {
-        node.x = cx;
-        node.y = cy;
-        return;
-      }
-      const radius = Math.min(maxRadius, step * Math.sqrt(i));
-      const angle = phase + i * GOLDEN_ANGLE;
-      const jitter = ((hash(node.id) % 100) - 50) / 50;
-      node.x = cx + Math.cos(angle) * (radius + jitter * 4);
-      node.y = cy + Math.sin(angle) * (radius + jitter * 4);
+      const rank = i / count;
+      const angle = hashUnit(`${node.id}:angle`) * Math.PI * 2;
+      const randomRadius = Math.sqrt(hashUnit(`${node.id}:radius`)) * maxRadius;
+      const degreeBias = 0.38 + 0.62 * Math.sqrt(rank);
+      const radius = randomRadius * degreeBias;
+      const aspect = 0.72 + hashUnit(`${node.id}:aspect`) * 0.24;
+      node.x = cx + Math.cos(angle) * radius;
+      node.y = cy + Math.sin(angle) * radius * aspect;
     });
   }
 
@@ -186,6 +191,33 @@ function clusteredLayout(data: GraphData): { nodes: SimNode[]; links: SimLink[] 
     const source = nodeById.get(e.from_article);
     const target = nodeById.get(e.to_article);
     if (source && target) links.push({ source, target, weight: e.weight });
+  }
+
+  const centerFor = (kind: string): [number, number] => {
+    const c = CLUSTER_CENTERS[kind] ?? [0.5, 0.5];
+    return [c[0] * WORLD_W, c[1] * WORLD_H];
+  };
+  for (let tick = 0; tick < ORGANIC_RELAX_TICKS; tick += 1) {
+    for (const e of links) {
+      const a = e.source;
+      const b = e.target;
+      const dx = (b.x ?? 0) - (a.x ?? 0);
+      const dy = (b.y ?? 0) - (a.y ?? 0);
+      const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const desired = 95 + (a.size + b.size) * 1.4;
+      const strength = (0.006 + 0.014 * e.weight) * ((dist - desired) / dist);
+      const mx = dx * strength;
+      const my = dy * strength;
+      a.x += mx;
+      a.y += my;
+      b.x -= mx;
+      b.y -= my;
+    }
+    for (const n of nodes) {
+      const [cx, cy] = centerFor(n.kind);
+      n.x += (cx - n.x) * 0.006;
+      n.y += (cy - n.y) * 0.006;
+    }
   }
   return { nodes, links };
 }
@@ -280,7 +312,7 @@ export function GraphView({ onNavigate }: Props) {
 
   const rafRef = useRef<number | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const cached = readCachedGraph();
     const usedCache = cached !== null;
     if (cached) {
@@ -312,14 +344,14 @@ export function GraphView({ onNavigate }: Props) {
       .catch((e) => setError(String(e)));
   }, []);
 
-  // Compute a deterministic clustered layout synchronously. The old d3-force
-  // pre-warm loop did produce attractive organic clusters, but it also blocked
-  // the main thread for more than a second on the current 3k-node graph. This
-  // keeps first paint predictable while preserving the user's expected clusters.
+  // Compute a deterministic organic layout synchronously. The old d3-force
+  // pre-warm loop had the right visual character but blocked the main thread
+  // for more than a second on the current 3k-node graph. This keeps the
+  // organic cloud/relationship feel without a visible simulation phase.
   useLayoutEffect(() => {
     if (!data) return;
     const start = performance.now();
-    const { nodes, links } = clusteredLayout(data);
+    const { nodes, links } = organicLayout(data);
     const layoutMs = performance.now() - start;
     const perf = graphPerf();
     if (perf) perf.layoutMs = layoutMs;
