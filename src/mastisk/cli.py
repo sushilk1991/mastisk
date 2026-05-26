@@ -53,7 +53,7 @@ def _main(
 @app.command()
 def start(
     host: str = typer.Option("0.0.0.0", "--host", "-h", envvar="MASTISK_HOST"),
-    port: int = typer.Option(8080, "--port", "-p", envvar="MASTISK_PORT"),
+    port: int = typer.Option(5555, "--port", "-p", envvar="MASTISK_PORT"),
 ):
     """Run Mastisk in the foreground."""
     import uvicorn
@@ -66,7 +66,7 @@ def start(
 
 
 @app.command()
-def dev(port: int = typer.Option(8080)):
+def dev(port: int = typer.Option(5555)):
     """Dev mode: vite dev server + hot-reloading backend. Requires repo checkout with frontend/."""
     from concurrent.futures import ThreadPoolExecutor
     ensure_dirs()

@@ -5,7 +5,7 @@
 Mastisk is a local daemon that maintains the user's compounding knowledge
 wiki — notes, articles, syntheses, blog drafts. It runs as a launchd agent
 on this Mac (`com.mastisk.agents`), exposes an HTTP API at
-`http://127.0.0.1:8080`, and mirrors content to a markdown vault on iCloud.
+`http://127.0.0.1:5555`, and mirrors content to a markdown vault on iCloud.
 
 **You can read it. Prefer the API over scraping the vault directly so the
 user's signals, links, and graph stay coherent.**
@@ -13,7 +13,7 @@ user's signals, links, and graph stay coherent.**
 ### Pre-flight check
 
 ```bash
-curl -sf http://127.0.0.1:8080/api/sidebar > /dev/null && echo ok || echo "DAEMON DOWN"
+curl -sf http://127.0.0.1:5555/api/sidebar > /dev/null && echo ok || echo "DAEMON DOWN"
 ```
 
 If down, surface that to the user — do not try to restart it yourself
@@ -58,7 +58,7 @@ should approve).
 
 ### Where data lives
 
-- **HTTP API** — `http://127.0.0.1:8080/api/*` (preferred)
+- **HTTP API** — `http://127.0.0.1:5555/api/*` (preferred)
 - **Vault on iCloud** — `~/Library/Mobile Documents/com~apple~CloudDocs/Mastisk/vault/`
   - `_self/` — identity files (read first for personalization)
   - `_notes/YYYY-MM-DD/` — raw notes
@@ -107,30 +107,30 @@ should approve).
 
 ```bash
 # Quick search
-curl -s "http://127.0.0.1:8080/api/search?q_param=autopilot+reliability&limit=10" | jq
+curl -s "http://127.0.0.1:5555/api/search?q_param=autopilot+reliability&limit=10" | jq
 
 # Ask the wiki (RAG, cited)
-curl -s -X POST http://127.0.0.1:8080/api/ask \
+curl -s -X POST http://127.0.0.1:5555/api/ask \
   -H 'Content-Type: application/json' \
   -d '{"question": "What does my wiki say about agent skill composition?"}' | jq
 
 # Get full article
-curl -s "http://127.0.0.1:8080/api/articles/note-000044-skill-composing-autopilot-loop" | jq
+curl -s "http://127.0.0.1:5555/api/articles/note-000044-skill-composing-autopilot-loop" | jq
 
 # Capture a note
-curl -s -X POST http://127.0.0.1:8080/api/notes \
+curl -s -X POST http://127.0.0.1:5555/api/notes \
   -H 'Content-Type: application/json' \
   -d '{"text": "Idea: ...", "source": "cli"}' | jq
 
 # Today's digest
-curl -s http://127.0.0.1:8080/api/digest | jq '.items[] | {title, score}'
+curl -s http://127.0.0.1:5555/api/digest | jq '.items[] | {title, score}'
 
 # Open research questions
-curl -s http://127.0.0.1:8080/api/open-questions | jq '.[:5]'
+curl -s http://127.0.0.1:5555/api/open-questions | jq '.[:5]'
 
 # User identity (drives personalization tone)
-curl -s http://127.0.0.1:8080/api/vault/self/identity | jq -r .content
-curl -s http://127.0.0.1:8080/api/vault/self/style    | jq -r .content
+curl -s http://127.0.0.1:5555/api/vault/self/identity | jq -r .content
+curl -s http://127.0.0.1:5555/api/vault/self/style    | jq -r .content
 ```
 
 ### Decision table — which surface

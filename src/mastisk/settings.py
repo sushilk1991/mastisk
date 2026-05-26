@@ -155,7 +155,7 @@ class Settings(BaseSettings):
 
     # Server
     host: str = Field(default="0.0.0.0", alias="MASTISK_HOST")
-    port: int = Field(default=8080, alias="MASTISK_PORT")
+    port: int = Field(default=5555, alias="MASTISK_PORT")
 
     # Claude
     claude_cmd: str = Field(default="claude", alias="CLAUDE_CMD")

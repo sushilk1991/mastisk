@@ -51,7 +51,7 @@ Everything is **local-first**: your wiki lives in your iCloud Drive, your DB liv
 
 ## How it works (architecture)
 
-Mastisk is a single Python process running on your Mac. It exposes a FastAPI app on `127.0.0.1:8080` (and your Tailnet hostname) and runs a scheduler that ticks each agent on its own cadence. Inputs come in from the outside world; agents process them through Claude (via the `claude` CLI) and Ollama (local + cloud-proxied); outputs land in a SQLite DB **and** a markdown vault in iCloud.
+Mastisk is a single Python process running on your Mac. It exposes a FastAPI app on `127.0.0.1:5555` (and your Tailnet hostname) and runs a scheduler that ticks each agent on its own cadence. Inputs come in from the outside world; agents process them through Claude (via the `claude` CLI) and Ollama (local + cloud-proxied); outputs land in a SQLite DB **and** a markdown vault in iCloud.
 
 ```mermaid
 flowchart LR
@@ -371,7 +371,7 @@ tail -f ~/Library/Application\ Support/Mastisk/logs/mastisk.log
 ## Phone setup
 
 1. Install the **Tailscale** app on your phone, sign in to the same tailnet as your Mac.
-2. On your Mac: `mastisk url` — copy the Tailnet line (`http://<hostname>.tailXXXXX.ts.net:8080`).
+2. On your Mac: `mastisk url` — copy the Tailnet line (`http://<hostname>.tailXXXXX.ts.net:5555`).
 3. Open that URL in Safari on your phone.
 4. Tap the Share icon → **Add to Home Screen**.
 
