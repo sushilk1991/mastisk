@@ -51,7 +51,7 @@ log = logging.getLogger("mastisk.synthesizer")
 # clusters' cached outputs. Cluster-hash dedup still applies, but a version
 # bump means we *could* decide to re-run historic clusters — we currently
 # don't, but the column is there for future replays.
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2
 
 # PPR hyperparameters. Tuned for a small-to-medium wiki (hundreds of nodes).
 # On a larger graph we'd want to trim the adjacency to high-weight edges
@@ -452,6 +452,7 @@ class Synthesizer(Agent):
         identity = self.load_identity()
         positive_block = self._render_positive_examples(positives)
         negative_block = self._render_negative_examples(negatives)
+        title_block = self._render_title_guidance(members)
         cluster_block = self._render_cluster_for_draft(members)
 
         parts = [
@@ -467,6 +468,7 @@ class Synthesizer(Agent):
             parts.extend([positive_block, ""])
         if negative_block:
             parts.extend([negative_block, ""])
+        parts.extend([title_block, ""])
         parts.extend([
             f"─── cluster ({len(members)} articles) ───",
             cluster_block,
@@ -498,13 +500,48 @@ class Synthesizer(Agent):
             return ""
         lines = [
             "─── examples the user has ACCEPTED ───",
-            "Match this register: specificity, named threads, concrete links.",
+            "Use these as feedback examples for what the user keeps: specificity,",
+            "named threads, concrete links, and real synthesis. Do not clone their",
+            "headline cadence, repeated abstractions, or sentence shape.",
             "",
         ]
         for p in positives:
             title = p.get("title") or "(untitled)"
             excerpt = ((p.get("body_md") or p.get("summary") or "")[:200]).strip()
             lines.append(f"- {title}\n  {excerpt}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_title_guidance(members: list[dict]) -> str:
+        """Prompt guardrails that keep titles specific to the current cluster.
+
+        This deliberately does not remove or down-rank feedback examples. The
+        accepted/rejected loop still teaches taste; this block tells the model
+        not to reuse those examples' surface headline forms.
+        """
+        lines = [
+            "─── title diversity guardrails ───",
+            "The title must be specific enough that it would look wrong on a",
+            "different synthesis cluster.",
+            "- Learn judgment from the accepted/rejected examples, not their title",
+            "  template.",
+            "- Prefer concrete nouns, proper names, products, laws, papers, or",
+            "  mechanisms from the current cluster.",
+            "- Avoid reusable aphorism templates such as \"The X moved...\",",
+            "  \"Where the X lives\", \"One move\", \"Find the...\", or",
+            "  \"X got cheap\" unless the source material itself uses that language.",
+            "- Avoid high-level title nouns like layer, boundary, constraint, check,",
+            "  gate, thread, pattern, or rule when a cluster-specific noun can carry",
+            "  the title.",
+            "- Prefer one clear sentence. Use a two-sentence title only when the",
+            "  second sentence names a concrete consequence unique to this cluster.",
+            "",
+            "Concrete title anchors available in this cluster:",
+        ]
+        for member in members:
+            title = str(member.get("title") or "").strip()
+            if title:
+                lines.append(f"- {title}")
         return "\n".join(lines)
 
     @staticmethod
