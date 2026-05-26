@@ -967,7 +967,7 @@ def url():
     s = get_settings()
     port = s.port
 
-    console.print(f"[bold]Desktop[/bold]  http://localhost:{port}")
+    console.print(f"[bold]Desktop[/bold]  http://127.0.0.1:{port}")
 
     lan = _lan_ip()
     if lan:
