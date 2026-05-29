@@ -161,6 +161,8 @@ class TweetSettings(BaseSettings):
     prompt_char_limit: int = 40000
     per_local_source_char_limit: int = 1200
     claude_timeout_seconds: int = 180
+    max_tweet_chars: int = 240
+    max_hook_chars: int = 180
 
 
 class Settings(BaseSettings):

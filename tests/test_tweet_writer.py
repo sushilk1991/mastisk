@@ -75,7 +75,7 @@ def test_tweet_writer_generates_thread_from_recent_note(db, vault_tmp, data_tmp)
     ).fetchone()
     assert row["status"] == "done"
     assert row["title"] == "Browser agents"
-    assert row["model"] == "claude"
+    assert row["model"] == "claude+claude-polish"
     assert json.loads(row["thread_json"])[0].startswith("The interesting")
 
     feed = db.execute(
@@ -113,7 +113,7 @@ def test_tweet_writer_fails_on_overlong_tweet(db, vault_tmp, data_tmp):
         "SELECT status, error FROM tweet_threads WHERE id=?", (thread_id,),
     ).fetchone()
     assert row["status"] == "failed"
-    assert "over 280" in row["error"]
+    assert "over 240" in row["error"]
 
 
 def test_tweet_writer_can_use_url_without_browser(db, vault_tmp, data_tmp):
@@ -215,3 +215,38 @@ def test_tweet_writer_falls_back_to_plain_fetch_when_browser_fails(db, vault_tmp
     ).fetchone()
     assert row["status"] == "done"
     assert "plain URL fetch" in json.loads(row["warnings_json"])[0]
+
+
+def test_tweet_writer_rejects_sloppy_analyst_patterns(db, vault_tmp, data_tmp):
+    from mastisk.agents.tweet_writer import TweetWriter
+
+    _seed_note(db, body="short", summary="short")
+    thread_id = _seed_thread(db, include_web=False)
+    _enqueue(thread_id)
+
+    draft = {
+        "title": "Slop",
+        "angle": "Slop",
+        "thread": [
+            "The pattern is clear: the ecosystem is shifting in a crucial way.",
+            "Read the constraint, not the number.",
+        ],
+        "sources": [],
+        "warnings": [],
+    }
+
+    async def fake_run_intelligence(*args, **kwargs):
+        return {"text": json.dumps(draft)}, "claude"
+
+    with patch(
+        "mastisk.agents.tweet_writer.run_intelligence",
+        new_callable=AsyncMock,
+        side_effect=fake_run_intelligence,
+    ):
+        asyncio.run(TweetWriter().run_once())
+
+    row = db.execute(
+        "SELECT status, error FROM tweet_threads WHERE id=?", (thread_id,),
+    ).fetchone()
+    assert row["status"] == "failed"
+    assert "anti-slop" in row["error"]
