@@ -1,10 +1,8 @@
 """FastAPI application factory."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,10 +11,27 @@ from fastapi.staticfiles import StaticFiles
 
 from mastisk.paths import pwa_dir
 from mastisk.routes import (
-    articles, artifacts_route, ask, blog_route, digest_route, feed_route,
-    graph_route, listen_route, notes, open_questions_route, podcasts_route,
-    repos_route, roundtable_route, search, settings_route, signals_route,
-    sources_route, stats_route, synthesis_route, topic_suggester_route,
+    articles,
+    artifacts_route,
+    ask,
+    blog_route,
+    digest_route,
+    feed_route,
+    graph_route,
+    listen_route,
+    notes,
+    open_questions_route,
+    podcasts_route,
+    repos_route,
+    roundtable_route,
+    search,
+    settings_route,
+    signals_route,
+    sources_route,
+    stats_route,
+    synthesis_route,
+    topic_suggester_route,
+    tweet_route,
     vault_route,
 )
 
@@ -78,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(roundtable_route.router)
     app.include_router(blog_route.router)
     app.include_router(topic_suggester_route.router)
+    app.include_router(tweet_route.router)
 
     @app.get("/api/health")
     def health():

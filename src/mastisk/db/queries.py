@@ -1946,6 +1946,127 @@ def delete_blog_post_sources(
     return cur.rowcount or 0
 
 
+# ─────────────────────────────── Tweet threads ───────────────────────────────
+
+
+def create_tweet_thread(
+    conn: sqlite3.Connection,
+    *,
+    theme: str,
+    url: str | None,
+    window_days: int,
+    include_web: bool,
+    use_browser_context: bool,
+) -> int:
+    cur = conn.execute(
+        """INSERT INTO tweet_threads
+           (theme, url, window_days, include_web, use_browser_context, status)
+           VALUES (?, ?, ?, ?, ?, 'pending')""",
+        (
+            theme,
+            url,
+            window_days,
+            1 if include_web else 0,
+            1 if use_browser_context else 0,
+        ),
+    )
+    return cur.lastrowid or 0
+
+
+def get_tweet_thread(conn: sqlite3.Connection, thread_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM tweet_threads WHERE id = ?", (thread_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_tweet_threads(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 50,
+    before_id: int | None = None,
+) -> list[dict]:
+    qry = "SELECT * FROM tweet_threads WHERE deleted_at IS NULL"
+    params: list[Any] = []
+    if before_id is not None:
+        qry += " AND id < ?"
+        params.append(before_id)
+    qry += " ORDER BY created_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+    return [dict(r) for r in conn.execute(qry, params).fetchall()]
+
+
+def update_tweet_thread_status(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: int,
+    status: str,
+    error: str | None = None,
+    finished: bool = False,
+) -> None:
+    if finished:
+        conn.execute(
+            """UPDATE tweet_threads
+               SET status = ?, error = ?, finished_at = CURRENT_TIMESTAMP
+               WHERE id = ?""",
+            (status, error, thread_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE tweet_threads SET status = ?, error = ? WHERE id = ?",
+            (status, error, thread_id),
+        )
+
+
+def update_tweet_thread_done(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: int,
+    title: str,
+    angle: str,
+    model: str,
+    thread_json: str,
+    sources_json: str,
+    warnings_json: str,
+) -> int:
+    cur = conn.execute(
+        """UPDATE tweet_threads
+           SET status = 'done', title = ?, angle = ?, model = ?,
+               thread_json = ?, sources_json = ?, warnings_json = ?,
+               error = NULL, finished_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND deleted_at IS NULL""",
+        (
+            title,
+            angle,
+            model,
+            thread_json,
+            sources_json,
+            warnings_json,
+            thread_id,
+        ),
+    )
+    return cur.rowcount or 0
+
+
+def reset_tweet_thread_for_regenerate(conn: sqlite3.Connection, thread_id: int) -> None:
+    conn.execute(
+        """UPDATE tweet_threads
+           SET status = 'pending', title = NULL, angle = NULL, model = NULL,
+               thread_json = '[]', sources_json = '[]', warnings_json = '[]',
+               error = NULL, finished_at = NULL
+           WHERE id = ?""",
+        (thread_id,),
+    )
+
+
+def soft_delete_tweet_thread(conn: sqlite3.Connection, thread_id: int) -> None:
+    conn.execute(
+        """UPDATE tweet_threads SET deleted_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND deleted_at IS NULL""",
+        (thread_id,),
+    )
+
+
 def get_recent_blog_post_source_refs(
     conn: sqlite3.Connection, lookback: int
 ) -> set[tuple[str, str]]:
@@ -1986,6 +2107,19 @@ def reclaim_running_blog_posts(
     """
     cur = conn.execute(
         f"""UPDATE blog_posts
+            SET status = 'failed', error = 'daemon restart during draft',
+                finished_at = CURRENT_TIMESTAMP
+            WHERE status = 'running'
+              AND created_at < datetime('now', '-{int(stale_minutes)} minutes')""",
+    )
+    return cur.rowcount or 0
+
+
+def reclaim_running_tweet_threads(
+    conn: sqlite3.Connection, *, stale_minutes: int = 60
+) -> int:
+    cur = conn.execute(
+        f"""UPDATE tweet_threads
             SET status = 'failed', error = 'daemon restart during draft',
                 finished_at = CURRENT_TIMESTAMP
             WHERE status = 'running'

@@ -528,6 +528,36 @@ CREATE TABLE IF NOT EXISTS blog_post_sources (
 CREATE INDEX IF NOT EXISTS idx_blog_post_sources_post ON blog_post_sources(blog_post_id);
 CREATE INDEX IF NOT EXISTS idx_blog_post_sources_ref ON blog_post_sources(kind, ref);
 
+-- ─────────────────────────────── Tweet threads ───────────────────────────────
+-- User-triggered short-form thread drafts assembled from recent local work plus
+-- optional live web/browser context. Unlike blog_posts, the full thread is small
+-- enough to live directly on the row as JSON.
+
+CREATE TABLE IF NOT EXISTS tweet_threads (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  title           TEXT,
+  angle           TEXT,
+  theme           TEXT NOT NULL DEFAULT '',
+  url             TEXT,
+  window_days     INTEGER NOT NULL,
+  include_web     INTEGER NOT NULL DEFAULT 1,
+  use_browser_context INTEGER NOT NULL DEFAULT 0,
+  status          TEXT NOT NULL DEFAULT 'pending',  -- pending | running | done | failed
+  model           TEXT,
+  thread_json     TEXT DEFAULT '[]',                -- JSON array of tweet strings
+  sources_json    TEXT DEFAULT '[]',                -- local/web/browser evidence used
+  warnings_json   TEXT DEFAULT '[]',
+  error           TEXT,
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  finished_at     DATETIME,
+  deleted_at      DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_tweet_threads_created ON tweet_threads(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tweet_threads_status ON tweet_threads(status)
+  WHERE status IN ('pending', 'running');
+CREATE INDEX IF NOT EXISTS idx_tweet_threads_not_deleted ON tweet_threads(id) WHERE deleted_at IS NULL;
+
 -- ─────────────────────────────── Topic suggestions ───────────────────────────────
 -- Topic suggestions surfaced by topic_suggester (kind='daily') and
 -- opinion_gap_miner (kind='opinion'). The agent runs on a cadence and

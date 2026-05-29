@@ -4,6 +4,7 @@ import { useRoute } from './router';
 import { useFeedStream } from './stream';
 import type {
   Article, AgentInfo, BlogPostDetail, Digest, FeedTick, PinnedItem, VaultItem, View,
+  TweetThread,
 } from './types';
 
 import { Titlebar } from './components/Titlebar';
@@ -34,6 +35,8 @@ import { AddRepoModal } from './components/AddRepoModal';
 import { BlogListView } from './components/BlogListView';
 import { BlogView } from './components/BlogView';
 import { BlogCreationModal } from './components/BlogCreationModal';
+import { TweetThreadsView } from './components/TweetThreadsView';
+import { TweetThreadView } from './components/TweetThreadView';
 import { PodcastsListView } from './components/PodcastsListView';
 import { PodcastView } from './components/PodcastView';
 
@@ -46,6 +49,7 @@ export function App() {
   const { view, articleId: currentArticle, noteId: currentNote, date: currentDate } = route;
   const currentRoundtable = route.roundtableId;
   const currentBlogPost = route.blogPostId;
+  const currentTweetThread = route.tweetThreadId;
 
   const [sideOpen, setSideOpen] = useState(window.innerWidth > 900);
   const [railOpen, setRailOpen] = useState(window.innerWidth > 900);
@@ -74,6 +78,7 @@ export function App() {
   const [sidebar, setSidebar] = useState<{ vault: VaultItem[]; pinned: PinnedItem[]; user: import('./types').UserInfo } | null>(null);
   const [article, setArticle] = useState<Article | null>(null);
   const [blogPostDetail, setBlogPostDetail] = useState<BlogPostDetail | null>(null);
+  const [tweetThreadDetail, setTweetThreadDetail] = useState<TweetThread | null>(null);
   const [digest, setDigest] = useState<Digest | null>(null);
   const [feed, setFeed] = useState<FeedTick[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -184,6 +189,8 @@ export function App() {
         articleKind={article?.kind}
         blogPostTitle={blogPostDetail?.title ?? null}
         blogPostStatus={blogPostDetail?.status ?? null}
+        tweetThreadTitle={tweetThreadDetail?.title ?? null}
+        tweetThreadStatus={tweetThreadDetail?.status ?? null}
         theme={theme}
         onTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
         onToggleSide={() => setSideOpen((s) => !s)}
@@ -251,6 +258,14 @@ export function App() {
             blogPostId={currentBlogPost}
             onNavigate={navigate}
             onLoaded={setBlogPostDetail}
+          />
+        )}
+        {view === 'tweets' && <TweetThreadsView onNavigate={navigate}/>}
+        {view === 'tweet_thread' && currentTweetThread !== null && (
+          <TweetThreadView
+            threadId={currentTweetThread}
+            onNavigate={navigate}
+            onLoaded={setTweetThreadDetail}
           />
         )}
         {view === 'podcasts' && <PodcastsListView onNavigate={navigate}/>}

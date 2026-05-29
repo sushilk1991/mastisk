@@ -37,6 +37,7 @@ _AGENT_CATALOG: list[dict] = [
     {"id": "github_poller",  "name": "GitHub Poller",  "role": "Polls GitHub + local repos, builds context","color": "violet",  "implemented": True, "load_cap": 5},
     {"id": "github_ideator", "name": "GitHub Ideator", "role": "Generates research ideas from repo context","color": "rose",    "implemented": True, "load_cap": 5},
     {"id": "blog_writer",    "name": "Blog Writer",    "role": "Drafts blog posts from recent activity",    "color": "emerald", "implemented": True, "load_cap": 5},
+    {"id": "tweet_writer",   "name": "Tweet Writer",   "role": "Drafts tweet threads from recent signals",  "color": "blue",    "implemented": True, "load_cap": 5},
     {"id": "roundtable",     "name": "Roundtable",     "role": "Runs multi-LLM perspectives on a prompt",   "color": "amber",   "implemented": True, "load_cap": 5},
 ]
 

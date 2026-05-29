@@ -15,6 +15,8 @@ const CRUMB: Record<string, readonly string[]> = {
   settings:['System', 'Settings'],
   blog:       ['Wiki', 'Blog Posts'],
   blog_post:  ['Wiki', 'Blog Posts', 'Draft'],
+  tweets:     ['Wiki', 'Tweet Threads'],
+  tweet_thread: ['Wiki', 'Tweet Threads', 'Thread'],
 };
 
 interface Props {
@@ -23,6 +25,8 @@ interface Props {
   articleKind?: string;
   blogPostTitle?: string | null;
   blogPostStatus?: 'pending' | 'running' | 'done' | 'failed' | null;
+  tweetThreadTitle?: string | null;
+  tweetThreadStatus?: 'pending' | 'running' | 'done' | 'failed' | null;
   theme: 'light' | 'dark';
   onTheme: () => void;
   onToggleSide: () => void;
@@ -45,6 +49,8 @@ function buildCrumb(
   articleKind?: string,
   blogPostTitle?: string | null,
   blogPostStatus?: 'pending' | 'running' | 'done' | 'failed' | null,
+  tweetThreadTitle?: string | null,
+  tweetThreadStatus?: 'pending' | 'running' | 'done' | 'failed' | null,
 ): string[] {
   const base = CRUMB[view] ?? ['Wiki'];
   // Copy — never mutate the module-level const
@@ -64,15 +70,28 @@ function buildCrumb(
       crumb[crumb.length - 1] = 'Draft failed';
     }
     // On null status (still loading the row) we leave the default "Draft".
+  } else if (view === 'tweet_thread') {
+    const trimmed = tweetThreadTitle?.trim();
+    if (trimmed) {
+      crumb[crumb.length - 1] = trimmed;
+    } else if (tweetThreadStatus === 'pending' || tweetThreadStatus === 'running') {
+      crumb[crumb.length - 1] = 'Thread in progress';
+    } else if (tweetThreadStatus === 'failed') {
+      crumb[crumb.length - 1] = 'Thread failed';
+    }
   }
   return crumb.filter(Boolean);
 }
 
 export function Titlebar({
   view, articleTitle, articleKind, blogPostTitle, blogPostStatus,
+  tweetThreadTitle, tweetThreadStatus,
   theme, onTheme, onToggleSide, onToggleRail, onAsk, onCapture, onSearchClick,
 }: Props) {
-  const crumb = buildCrumb(view, articleTitle, articleKind, blogPostTitle, blogPostStatus);
+  const crumb = buildCrumb(
+    view, articleTitle, articleKind, blogPostTitle, blogPostStatus,
+    tweetThreadTitle, tweetThreadStatus,
+  );
 
   return (
     <div className="titlebar">
@@ -86,7 +105,7 @@ export function Titlebar({
       </div>
       <div className="tb-search" onClick={onSearchClick} role="button">
         {Icon.search}
-        <span style={{flex:1}}>Search wiki, notes, blog…</span>
+        <span style={{flex:1}}>Search wiki, notes, blog...</span>
         <kbd>⌘K</kbd>
       </div>
       <div className="tb-actions">

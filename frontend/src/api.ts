@@ -5,7 +5,7 @@ import type {
   PinnedItem, PodcastListItem, PodcastView, RepoDetail, RepoIdeasResponse, RepoSummary,
   Roundtable, RoundtableSummary, SearchResult,
   SettingsBundle, SettingsPatch, TranscriptAnchor,
-  SynthesisRunResponse, TopicSuggestion, UserInfo, VaultItem,
+  SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem,
 } from './types';
 
 const BASE = '/api';
@@ -385,6 +385,60 @@ export const api = {
 
     delete: (id: number): Promise<void> =>
       fetch(`/api/blog-posts/${id}`, { method: 'DELETE' }).then(async r => {
+        if (!r.ok) await throwApiError(r);
+      }),
+  },
+
+  tweets: {
+    create: (body: {
+      theme?: string;
+      url?: string;
+      window_days: number;
+      include_web: boolean;
+      use_browser_context: boolean;
+    }, signal?: AbortSignal): Promise<{ id: number; status: string }> =>
+      fetch('/api/tweet-threads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          theme: body.theme ?? '',
+          url: body.url?.trim() || null,
+          window_days: body.window_days,
+          include_web: body.include_web,
+          use_browser_context: body.use_browser_context,
+        }),
+        signal,
+      }).then(async r => {
+        if (!r.ok) await throwApiError(r);
+        return r.json();
+      }),
+
+    list: (opts: { limit?: number; before?: number } = {}): Promise<TweetThread[]> => {
+      const params = new URLSearchParams();
+      if (opts.limit) params.set('limit', String(opts.limit));
+      if (opts.before !== undefined) params.set('before', String(opts.before));
+      const qs = params.toString();
+      const url = qs ? `/api/tweet-threads?${qs}` : '/api/tweet-threads';
+      return fetch(url).then(async r => {
+        if (!r.ok) await throwApiError(r);
+        return r.json();
+      });
+    },
+
+    get: (id: number): Promise<TweetThread> =>
+      fetch(`/api/tweet-threads/${id}`).then(async r => {
+        if (!r.ok) await throwApiError(r);
+        return r.json();
+      }),
+
+    regenerate: (id: number): Promise<{ id: number; status: string }> =>
+      fetch(`/api/tweet-threads/${id}/regenerate`, { method: 'POST' }).then(async r => {
+        if (!r.ok) await throwApiError(r);
+        return r.json();
+      }),
+
+    delete: (id: number): Promise<void> =>
+      fetch(`/api/tweet-threads/${id}`, { method: 'DELETE' }).then(async r => {
         if (!r.ok) await throwApiError(r);
       }),
   },

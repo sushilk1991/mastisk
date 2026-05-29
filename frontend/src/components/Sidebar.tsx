@@ -13,7 +13,7 @@ interface Props {
   onCreateBlog: () => void;
 }
 
-const SYS_VIEWS = new Set<View>(['digest', 'queue', 'feed', 'agents', 'graph', 'ingest', 'lint', 'settings', 'open_questions', 'notes', 'roundtables', 'repos', 'blog']);
+const SYS_VIEWS = new Set<View>(['digest', 'queue', 'feed', 'agents', 'graph', 'ingest', 'lint', 'settings', 'open_questions', 'notes', 'roundtables', 'repos', 'blog', 'tweets']);
 
 export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNavigate, onAddRepo, onCaptureNote, onCreateBlog }: Props) {
   // Folders are collapsed by default. A label appearing in `opened` with value
@@ -133,6 +133,13 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
         >
           +
         </button>
+      </div>
+      <div
+        className={`side-row ${currentView === 'tweets' || currentView === 'tweet_thread' ? 'active' : ''}`}
+        onClick={() => onNavigate('tweets')}
+      >
+        <span className="glyph">#</span>
+        <span className="label">Tweet Threads</span>
       </div>
       {user && (
         <div className="user-pill" onClick={() => onNavigate('ingest')} role="button" title="Sources & ingest">

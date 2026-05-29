@@ -8,6 +8,7 @@ export interface Route {
   roundtableId: number | null;
   repoSlug: string | null;
   blogPostId: number | null;
+  tweetThreadId: number | null;
   date: string | null;
 }
 
@@ -30,6 +31,7 @@ const VIEW_PATHS: Record<string, View> = {
   '/roundtables': 'roundtables',
   '/repos': 'repos',
   '/blog': 'blog',
+  '/tweets': 'tweets',
   '/podcasts': 'podcasts',
 };
 
@@ -54,6 +56,8 @@ const PATH_FOR_VIEW: Record<View, string> = {
   repo: '/repos/',
   blog: '/blog',
   blog_post: '/blog/',
+  tweets: '/tweets',
+  tweet_thread: '/tweets/',
   podcasts: '/podcasts',
   podcast: '/p/',
 };
@@ -63,7 +67,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function emptyRoute(view: View): Route {
   return {
     view, articleId: null, noteId: null, roundtableId: null, repoSlug: null,
-    blogPostId: null, date: null,
+    blogPostId: null, tweetThreadId: null, date: null,
   };
 }
 
@@ -118,6 +122,14 @@ export function parseRoute(pathname: string): Route {
     }
     return emptyRoute('blog');
   }
+  if (pathname.startsWith('/tweets/')) {
+    const raw = pathname.slice('/tweets/'.length).split('/')[0];
+    const id = Number(raw);
+    if (raw && Number.isFinite(id) && id > 0) {
+      return { ...emptyRoute('tweet_thread'), tweetThreadId: id };
+    }
+    return emptyRoute('tweets');
+  }
   if (pathname.startsWith('/p/')) {
     const raw = pathname.slice(3).split('/')[0];
     if (raw) return { ...emptyRoute('podcast'), articleId: decodeURIComponent(raw) };
@@ -136,6 +148,7 @@ export function routeToPath(view: View, arg?: string | null): string {
   if (view === 'roundtable' && arg) return `/roundtables/${arg}`;
   if (view === 'repo' && arg) return `/repos/${arg}`;
   if (view === 'blog_post' && arg) return `/blog/${arg}`;
+  if (view === 'tweet_thread' && arg) return `/tweets/${arg}`;
   return PATH_FOR_VIEW[view] ?? '/';
 }
 
@@ -158,6 +171,7 @@ export function useRoute() {
     else if (view === 'roundtable' && arg) next.roundtableId = Number(arg);
     else if (view === 'repo' && arg) next.repoSlug = arg;
     else if (view === 'blog_post' && arg) next.blogPostId = Number(arg);
+    else if (view === 'tweet_thread' && arg) next.tweetThreadId = Number(arg);
     return next;
   };
 

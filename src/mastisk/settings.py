@@ -144,6 +144,25 @@ class BlogSettings(BaseSettings):
     opinion_gap_miner_max_pairs: int = 6
 
 
+class TweetSettings(BaseSettings):
+    """Config for short-form thread suggestions.
+
+    The local wiki supplies the point of view. Web/browser context supplies
+    what is recent enough to make the thread timely.
+    """
+    default_window_days: int = 7
+    allowed_window_days: list[int] = Field(default_factory=lambda: [1, 3, 7, 14, 30])
+    max_local_sources: int = 8
+    max_web_sources: int = 6
+    web_search_enabled: bool = True
+    web_search_timeout_seconds: float = 8.0
+    web_page_excerpt_char_limit: int = 700
+    browser_context_timeout_seconds: float = 25.0
+    prompt_char_limit: int = 40000
+    per_local_source_char_limit: int = 1200
+    claude_timeout_seconds: int = 180
+
+
 class Settings(BaseSettings):
     # populate_by_name: accept both the field name (from TOML) AND the alias
     # (from env vars). Without this, pydantic v2 silently drops TOML kwargs
@@ -182,6 +201,8 @@ class Settings(BaseSettings):
     github: GithubSettings = Field(default_factory=GithubSettings)
 
     blog: BlogSettings = Field(default_factory=BlogSettings)
+
+    tweet: TweetSettings = Field(default_factory=TweetSettings)
 
     # RSS feeds to subscribe (managed via CLI, stored in DB — this is just the initial seed)
     seed_feeds: list[str] = Field(default_factory=list)

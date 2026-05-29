@@ -325,6 +325,7 @@ export type View =
   | 'roundtables' | 'roundtable'
   | 'repos' | 'repo'
   | 'blog' | 'blog_post'
+  | 'tweets' | 'tweet_thread'
   | 'podcasts' | 'podcast';
 
 export interface PodcastListItem {
@@ -424,6 +425,32 @@ export interface BlogPostDetail extends BlogPostSummary {
   body_md: string | null;
   error: string | null;
   sources: BlogPostSource[];
+}
+
+export interface TweetThreadSource {
+  kind?: string;
+  title?: string;
+  url?: string | null;
+  why?: string;
+}
+
+export interface TweetThread {
+  id: number;
+  title: string | null;
+  angle: string | null;
+  theme: string;
+  url: string | null;
+  window_days: number;
+  include_web: boolean;
+  use_browser_context: boolean;
+  status: 'pending' | 'running' | 'done' | 'failed';
+  model: string | null;
+  thread: string[];
+  sources: TweetThreadSource[];
+  warnings: string[];
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
 }
 
 export interface RepoSnapshot {

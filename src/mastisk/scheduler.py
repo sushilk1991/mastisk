@@ -17,6 +17,7 @@ async def start_scheduler():
     # ignores them (only picks `queued`), so they'd be stuck forever.
     _reclaim_orphaned_running()
     _reclaim_running_blog_posts()
+    _reclaim_running_tweet_threads()
 
     # One-shot graph repair on boot: reconnects links the Compiler dropped
     # because sibling articles didn't exist yet. This closes the gap between
@@ -214,6 +215,19 @@ async def start_scheduler():
         log.warning("scheduler: blog_writer registration failed: %s", e)
 
     try:
+        from mastisk.agents.tweet_writer import TweetWriter
+        sched.add_job(
+            TweetWriter().run_once, "interval",
+            seconds=TweetWriter.tick_seconds, id="tweet_writer",
+            max_instances=1,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=5),
+            coalesce=True,
+        )
+        log.info("scheduler: tweet_writer registered (10s tick)")
+    except Exception as e:
+        log.warning("scheduler: tweet_writer registration failed: %s", e)
+
+    try:
         from mastisk.agents.topic_suggester import TopicSuggester
         # TopicSuggester is timer-driven (no jobs queue). 10-min tick keeps
         # it cheap; the agent self-times via cadence_hours so we won't write
@@ -284,6 +298,18 @@ def _reclaim_running_blog_posts() -> None:
             log.info("reclaimed %s stale running blog_posts row(s)", n)
     except Exception as e:
         log.warning("blog_posts reclaim skipped: %s", e)
+
+
+def _reclaim_running_tweet_threads() -> None:
+    from mastisk.db import queries as q
+    from mastisk.db.queries import connect
+    try:
+        with connect() as conn:
+            n = q.reclaim_running_tweet_threads(conn, stale_minutes=60)
+        if n:
+            log.info("reclaimed %s stale running tweet_threads row(s)", n)
+    except Exception as e:
+        log.warning("tweet_threads reclaim skipped: %s", e)
 
 
 def _graph_repair_once() -> None:
