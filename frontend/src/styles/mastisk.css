@@ -2196,6 +2196,401 @@ a { color: inherit; }
   .bp-menu { right: auto; left: 0; min-width: 240px; }
 }
 
+/* ---------- Tweet thread workshop ---------- */
+.tw-page {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: clamp(28px, 5vw, 58px) clamp(18px, 5vw, 64px) 120px;
+}
+.tw-hero {
+  position: relative;
+  padding: clamp(22px, 4vw, 34px) 0 22px;
+}
+.tw-hero::before {
+  content: '';
+  position: absolute;
+  left: -24px;
+  top: 14px;
+  width: 2px;
+  height: calc(100% - 22px);
+  background: linear-gradient(180deg, var(--accent), color-mix(in oklch, var(--accent) 20%, transparent));
+  border-radius: 999px;
+}
+.tw-kicker,
+.tw-section-label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.tw-kicker { margin-bottom: 10px; }
+.tw-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 22px;
+  align-items: start;
+}
+.tw-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: clamp(36px, 5vw, 66px);
+  line-height: 0.98;
+  font-weight: 540;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.tw-angle {
+  max-width: 70ch;
+  margin: 16px 0 0;
+  font-family: var(--serif);
+  font-size: clamp(18px, 2vw, 23px);
+  line-height: 1.42;
+  color: var(--fg-mute);
+  font-weight: 330;
+  text-wrap: pretty;
+}
+.tw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 6px;
+}
+.tw-btn,
+.tw-inline-action {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 560;
+  white-space: nowrap;
+  transition-property: background, color, box-shadow, opacity, transform;
+  transition-duration: 140ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+.tw-btn {
+  padding: 0 16px;
+  box-shadow:
+    0 1px 2px rgba(40, 30, 15, 0.06),
+    0 8px 22px rgba(40, 30, 15, 0.05);
+}
+.tw-btn:active:not(:disabled),
+.tw-inline-action:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.tw-btn:focus-visible,
+.tw-inline-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.tw-btn:disabled,
+.tw-inline-action:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+.tw-btn-primary {
+  color: var(--fg-inv);
+  background: var(--fg);
+}
+.tw-btn-primary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--fg) 88%, var(--accent));
+}
+.tw-btn-secondary {
+  color: var(--fg);
+  background: var(--bg-elev);
+}
+.tw-btn-secondary:hover:not(:disabled) {
+  background: var(--bg-sunk);
+}
+.tw-btn-ghost {
+  color: var(--fg-mute);
+  background: transparent;
+  box-shadow: none;
+}
+.tw-btn-ghost:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-sunk);
+}
+.tw-btn-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+}
+.tw-btn-icon svg {
+  display: block;
+}
+.tw-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.tw-meta-strip span {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--bg-sunk);
+}
+.tw-meta-strip [data-status="done"] {
+  color: oklch(0.47 0.12 150);
+  background: oklch(0.78 0.11 150 / 0.12);
+}
+.tw-meta-strip [data-status="running"],
+.tw-meta-strip [data-status="pending"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.tw-meta-strip [data-status="failed"] {
+  color: var(--danger, #c53030);
+  background: rgba(197, 48, 48, 0.08);
+}
+.tw-theme,
+.tw-url {
+  display: block;
+  max-width: 82ch;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--fg-mute);
+  text-wrap: pretty;
+}
+.tw-url { color: var(--accent); }
+.tw-working {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.tw-error {
+  color: var(--danger, #c53030);
+  font-size: 13px;
+}
+.tw-feedback-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr);
+  gap: 18px;
+  align-items: start;
+  margin: 10px 0 28px;
+  padding: 18px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, var(--bg-elev), var(--bg-sunk));
+  box-shadow:
+    0 1px 2px rgba(40, 30, 15, 0.05),
+    0 18px 44px rgba(40, 30, 15, 0.08);
+}
+.tw-feedback-form,
+.tw-tweet-feedback {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.tw-feedback-form textarea,
+.tw-tweet-feedback textarea {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  padding: 12px 13px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--fg);
+  background: var(--bg);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    0 1px 2px rgba(40, 30, 15, 0.04);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.45;
+  outline: none;
+  transition-property: box-shadow, background;
+  transition-duration: 140ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+.tw-feedback-form textarea:focus,
+.tw-tweet-feedback textarea:focus {
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 3px var(--accent-soft);
+}
+.tw-feedback-ledger,
+.tw-tweet-feedback-list {
+  display: grid;
+  gap: 8px;
+}
+.tw-feedback-pill {
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow:
+    inset 0 0 0 1px var(--line-soft),
+    0 1px 2px rgba(40, 30, 15, 0.04);
+}
+.tw-feedback-pill[data-applied="false"] {
+  background: var(--accent-soft);
+}
+.tw-feedback-pill-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.tw-feedback-pill-body {
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: var(--fg-mute);
+  line-height: 1.42;
+  text-wrap: pretty;
+}
+.tw-thread-stack {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+}
+.tw-tweet-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 16px;
+  padding: 18px;
+  border-radius: 18px;
+  background: var(--bg-elev);
+  box-shadow:
+    inset 0 0 0 1px var(--line-soft),
+    0 1px 2px rgba(40, 30, 15, 0.04),
+    0 12px 30px rgba(40, 30, 15, 0.05);
+  animation: tw-card-in 420ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+@keyframes tw-card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tw-tweet-index {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.tw-tweet-index span:first-child {
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--fg);
+  background: var(--bg-sunk);
+}
+.tw-tweet-body {
+  font-family: var(--serif);
+  font-size: clamp(18px, 1.8vw, 23px);
+  line-height: 1.35;
+  color: var(--fg);
+  text-wrap: pretty;
+}
+.tw-tweet-actions {
+  grid-column: 2;
+  display: flex;
+  justify-content: flex-start;
+  margin-top: -2px;
+}
+.tw-inline-action {
+  min-height: 40px;
+  padding: 0 12px;
+  color: var(--fg-mute);
+}
+.tw-inline-action:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-sunk);
+}
+.tw-tweet-feedback,
+.tw-tweet-feedback-list {
+  grid-column: 2;
+}
+.tw-tweet-feedback {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+.tw-panel {
+  margin-top: 28px;
+}
+.tw-source-list {
+  display: grid;
+  gap: 0;
+  margin-top: 10px;
+}
+.tw-source-row {
+  padding: 13px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.tw-source-title {
+  font-size: 13px;
+  font-weight: 620;
+}
+.tw-source-why,
+.tw-source-row a,
+.tw-warning-list {
+  font-size: 12.5px;
+  color: var(--fg-mute);
+}
+.tw-source-why {
+  margin-top: 4px;
+}
+.tw-source-row a {
+  display: inline-block;
+  margin-top: 5px;
+  font-family: var(--mono);
+  color: var(--accent);
+}
+.tw-warning-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+@media (max-width: 780px) {
+  .tw-page { padding-left: 18px; padding-right: 18px; }
+  .tw-hero::before { display: none; }
+  .tw-hero-grid,
+  .tw-feedback-board,
+  .tw-tweet-card,
+  .tw-tweet-feedback {
+    grid-template-columns: 1fr;
+  }
+  .tw-actions { justify-content: flex-start; }
+  .tw-tweet-actions,
+  .tw-tweet-feedback,
+  .tw-tweet-feedback-list {
+    grid-column: 1;
+  }
+  .tw-tweet-index {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tw-tweet-card {
+    animation: none;
+  }
+}
+
 /* Markdown content rendered via react-markdown (roundtable perspectives,
    synthesis, etc.). Tight vertical rhythm — list items and paragraphs are
    visually denser than browser defaults so a long perspective fits without

@@ -434,6 +434,14 @@ export interface TweetThreadSource {
   why?: string;
 }
 
+export interface TweetThreadFeedback {
+  id: number;
+  target_tweet_index: number | null;
+  body: string;
+  created_at: string;
+  applied_at: string | null;
+}
+
 export interface TweetThread {
   id: number;
   title: string | null;
@@ -448,6 +456,7 @@ export interface TweetThread {
   thread: string[];
   sources: TweetThreadSource[];
   warnings: string[];
+  feedback: TweetThreadFeedback[];
   error: string | null;
   created_at: string;
   finished_at: string | null;

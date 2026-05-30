@@ -324,3 +324,75 @@ def test_tweet_writer_ignores_mastisk_tweet_page_as_browser_context():
 
     assert _is_mastisk_app_context({"url": "http://localhost:5555/tweets/3"})
     assert not _is_mastisk_app_context({"url": "https://x.com/someone/status/1"})
+
+
+def test_tweet_writer_incorporates_pending_feedback(db, vault_tmp, data_tmp):
+    from mastisk.agents.tweet_writer import TweetWriter
+    from mastisk.db.queries import (
+        create_tweet_thread_feedback,
+        update_tweet_thread_done,
+    )
+
+    _seed_note(
+        db,
+        body="I use Codex for small verified changes, not giant trust-me patches.",
+        summary="Codex works best with small verified changes.",
+    )
+    thread_id = _seed_thread(db, theme="codex agent workflow", include_web=False)
+    update_tweet_thread_done(
+        db,
+        thread_id=thread_id,
+        title="Old",
+        angle="Old",
+        model="claude",
+        thread_json=json.dumps([
+            "Codex is useful for agent coding.",
+            "Let it write a lot and review later.",
+        ]),
+        sources_json="[]",
+        warnings_json="[]",
+    )
+    db.execute("UPDATE tweet_threads SET status='pending' WHERE id=?", (thread_id,))
+    create_tweet_thread_feedback(
+        db,
+        thread_id=thread_id,
+        target_tweet_index=1,
+        body="make this less trusting and more about small verified diffs",
+    )
+    _enqueue(thread_id)
+
+    draft = {
+        "title": "Codex verified diffs",
+        "angle": "Small verified changes beat big trust-me patches.",
+        "thread": [
+            "Codex works best when I keep the patch small enough to verify.",
+            "The move is not 'write a lot and review later.' I ask for one diff I can run, read, and click.",
+            "That makes agent speed useful without turning review into archaeology.",
+        ],
+        "sources": [{"kind": "local", "title": "Codex verified changes"}],
+        "warnings": [],
+    }
+    prompts: list[str] = []
+
+    async def fake_run_intelligence(prompt: str, *args, **kwargs):
+        prompts.append(prompt)
+        return {"text": json.dumps(draft)}, "claude"
+
+    with patch(
+        "mastisk.agents.tweet_writer.run_intelligence",
+        new_callable=AsyncMock,
+        side_effect=fake_run_intelligence,
+    ):
+        asyncio.run(TweetWriter().run_once())
+
+    row = db.execute(
+        "SELECT status, thread_json FROM tweet_threads WHERE id=?", (thread_id,),
+    ).fetchone()
+    assert row["status"] == "done"
+    assert "small enough to verify" in json.loads(row["thread_json"])[0]
+    feedback = db.execute(
+        "SELECT applied_at FROM tweet_thread_feedback WHERE tweet_thread_id=?", (thread_id,),
+    ).fetchone()
+    assert feedback["applied_at"] is not None
+    assert "make this less trusting" in prompts[0]
+    assert "Previous tweet 2" in prompts[0]

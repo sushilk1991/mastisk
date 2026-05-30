@@ -2051,8 +2051,7 @@ def update_tweet_thread_done(
 def reset_tweet_thread_for_regenerate(conn: sqlite3.Connection, thread_id: int) -> None:
     conn.execute(
         """UPDATE tweet_threads
-           SET status = 'pending', title = NULL, angle = NULL, model = NULL,
-               thread_json = '[]', sources_json = '[]', warnings_json = '[]',
+           SET status = 'pending', model = NULL,
                error = NULL, finished_at = NULL
            WHERE id = ?""",
         (thread_id,),
@@ -2065,6 +2064,47 @@ def soft_delete_tweet_thread(conn: sqlite3.Connection, thread_id: int) -> None:
            WHERE id = ? AND deleted_at IS NULL""",
         (thread_id,),
     )
+
+
+def create_tweet_thread_feedback(
+    conn: sqlite3.Connection,
+    *,
+    thread_id: int,
+    target_tweet_index: int | None,
+    body: str,
+) -> int:
+    cur = conn.execute(
+        """INSERT INTO tweet_thread_feedback
+           (tweet_thread_id, target_tweet_index, body)
+           VALUES (?, ?, ?)""",
+        (thread_id, target_tweet_index, body),
+    )
+    return cur.lastrowid or 0
+
+
+def list_tweet_thread_feedback(
+    conn: sqlite3.Connection,
+    thread_id: int,
+    *,
+    pending_only: bool = False,
+) -> list[dict]:
+    qry = """SELECT * FROM tweet_thread_feedback
+             WHERE tweet_thread_id = ?"""
+    params: list[Any] = [thread_id]
+    if pending_only:
+        qry += " AND applied_at IS NULL"
+    qry += " ORDER BY created_at ASC, id ASC"
+    return [dict(r) for r in conn.execute(qry, params).fetchall()]
+
+
+def mark_tweet_thread_feedback_applied(conn: sqlite3.Connection, thread_id: int) -> int:
+    cur = conn.execute(
+        """UPDATE tweet_thread_feedback
+           SET applied_at = CURRENT_TIMESTAMP
+           WHERE tweet_thread_id = ? AND applied_at IS NULL""",
+        (thread_id,),
+    )
+    return cur.rowcount or 0
 
 
 def get_recent_blog_post_source_refs(

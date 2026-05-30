@@ -558,6 +558,21 @@ CREATE INDEX IF NOT EXISTS idx_tweet_threads_status ON tweet_threads(status)
   WHERE status IN ('pending', 'running');
 CREATE INDEX IF NOT EXISTS idx_tweet_threads_not_deleted ON tweet_threads(id) WHERE deleted_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS tweet_thread_feedback (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  tweet_thread_id      INTEGER NOT NULL REFERENCES tweet_threads(id) ON DELETE CASCADE,
+  target_tweet_index   INTEGER,                 -- null = whole thread, 0-based tweet index otherwise
+  body                TEXT NOT NULL,
+  created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+  applied_at          DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_tweet_thread_feedback_thread
+  ON tweet_thread_feedback(tweet_thread_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tweet_thread_feedback_pending
+  ON tweet_thread_feedback(tweet_thread_id, created_at)
+  WHERE applied_at IS NULL;
+
 -- ─────────────────────────────── Topic suggestions ───────────────────────────────
 -- Topic suggestions surfaced by topic_suggester (kind='daily') and
 -- opinion_gap_miner (kind='opinion'). The agent runs on a cadence and

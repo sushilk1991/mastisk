@@ -437,6 +437,23 @@ export const api = {
         return r.json();
       }),
 
+    feedback: (
+      id: number,
+      body: { body: string; target_tweet_index?: number | null; rework?: boolean },
+    ): Promise<{ id: number; status: string; feedback_id: number; rework_queued: boolean }> =>
+      fetch(`/api/tweet-threads/${id}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          body: body.body,
+          target_tweet_index: body.target_tweet_index ?? null,
+          rework: body.rework ?? true,
+        }),
+      }).then(async r => {
+        if (!r.ok) await throwApiError(r);
+        return r.json();
+      }),
+
     delete: (id: number): Promise<void> =>
       fetch(`/api/tweet-threads/${id}`, { method: 'DELETE' }).then(async r => {
         if (!r.ok) await throwApiError(r);

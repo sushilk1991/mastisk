@@ -50,7 +50,11 @@ def test_post_tweet_thread_rejects_invalid_window(client):
 
 
 def test_get_tweet_thread_shapes_json_fields(client, db):
-    from mastisk.db.queries import create_tweet_thread, update_tweet_thread_done
+    from mastisk.db.queries import (
+        create_tweet_thread,
+        create_tweet_thread_feedback,
+        update_tweet_thread_done,
+    )
 
     thread_id = create_tweet_thread(
         db,
@@ -70,6 +74,12 @@ def test_get_tweet_thread_shapes_json_fields(client, db):
         sources_json=json.dumps([{"kind": "web", "title": "Example"}]),
         warnings_json=json.dumps(["thin evidence"]),
     )
+    create_tweet_thread_feedback(
+        db,
+        thread_id=thread_id,
+        target_tweet_index=1,
+        body="make this tweet less generic",
+    )
     r = client.get(f"/api/tweet-threads/{thread_id}")
     assert r.status_code == 200
     body = r.json()
@@ -77,6 +87,8 @@ def test_get_tweet_thread_shapes_json_fields(client, db):
     assert body["thread"] == ["one", "two"]
     assert body["sources"][0]["title"] == "Example"
     assert body["warnings"] == ["thin evidence"]
+    assert body["feedback"][0]["target_tweet_index"] == 1
+    assert body["feedback"][0]["body"] == "make this tweet less generic"
 
 
 def test_list_tweet_threads_recent_first(client, db):
@@ -101,3 +113,79 @@ def test_list_tweet_threads_recent_first(client, db):
     assert r.status_code == 200
     returned = [row["id"] for row in r.json()]
     assert returned == list(reversed(ids))
+
+
+def test_post_tweet_thread_feedback_queues_rework(client, db):
+    from mastisk.db.queries import create_tweet_thread, update_tweet_thread_done
+
+    thread_id = create_tweet_thread(
+        db,
+        theme="codex hacks",
+        url=None,
+        window_days=7,
+        include_web=True,
+        use_browser_context=False,
+    )
+    update_tweet_thread_done(
+        db,
+        thread_id=thread_id,
+        title="T",
+        angle="A",
+        model="claude",
+        thread_json=json.dumps(["one", "two"]),
+        sources_json="[]",
+        warnings_json="[]",
+    )
+
+    r = client.post(
+        f"/api/tweet-threads/{thread_id}/feedback",
+        json={"target_tweet_index": 0, "body": "make the hook more specific", "rework": True},
+    )
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["rework_queued"] is True
+    assert body["status"] == "pending"
+
+    row = db.execute(
+        "SELECT status, thread_json FROM tweet_threads WHERE id=?", (thread_id,),
+    ).fetchone()
+    assert row["status"] == "pending"
+    assert json.loads(row["thread_json"]) == ["one", "two"]
+    feedback = db.execute(
+        "SELECT * FROM tweet_thread_feedback WHERE tweet_thread_id=?", (thread_id,),
+    ).fetchone()
+    assert feedback["target_tweet_index"] == 0
+    assert feedback["applied_at"] is None
+    job = db.execute(
+        "SELECT * FROM jobs WHERE agent='tweet_writer' AND kind='draft'",
+    ).fetchone()
+    assert json.loads(job["payload_json"])["tweet_thread_id"] == thread_id
+
+
+def test_post_tweet_thread_feedback_rejects_bad_target(client, db):
+    from mastisk.db.queries import create_tweet_thread, update_tweet_thread_done
+
+    thread_id = create_tweet_thread(
+        db,
+        theme="codex hacks",
+        url=None,
+        window_days=7,
+        include_web=True,
+        use_browser_context=False,
+    )
+    update_tweet_thread_done(
+        db,
+        thread_id=thread_id,
+        title="T",
+        angle="A",
+        model="claude",
+        thread_json=json.dumps(["one"]),
+        sources_json="[]",
+        warnings_json="[]",
+    )
+
+    r = client.post(
+        f"/api/tweet-threads/{thread_id}/feedback",
+        json={"target_tweet_index": 2, "body": "fix tweet 3", "rework": True},
+    )
+    assert r.status_code == 422

@@ -1,11 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
-import type { TweetThread, View } from '../types';
+import type { TweetThread, TweetThreadFeedback, View } from '../types';
+import { Icon } from './icons';
 
 interface Props {
   threadId: number;
   onNavigate: (view: View, id?: string) => void;
   onLoaded?: (thread: TweetThread | null) => void;
+}
+
+type FeedbackTarget = 'thread' | number;
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return null;
+  return new Date(value).toLocaleString();
+}
+
+function feedbackLabel(item: TweetThreadFeedback) {
+  return item.target_tweet_index === null ? 'thread' : `tweet ${item.target_tweet_index + 1}`;
+}
+
+function FeedbackPill({ item }: { item: TweetThreadFeedback }) {
+  return (
+    <div className="tw-feedback-pill" data-applied={item.applied_at ? 'true' : 'false'}>
+      <div className="tw-feedback-pill-top">
+        <span>{feedbackLabel(item)}</span>
+        <span>{item.applied_at ? 'applied' : 'pending'}</span>
+      </div>
+      <div className="tw-feedback-pill-body">{item.body}</div>
+    </div>
+  );
 }
 
 export function TweetThreadView({ threadId, onNavigate, onLoaded }: Props) {
@@ -15,6 +39,10 @@ export function TweetThreadView({ threadId, onNavigate, onLoaded }: Props) {
   const [regenerating, setRegenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [pollToken, setPollToken] = useState(0);
+  const [threadFeedback, setThreadFeedback] = useState('');
+  const [tweetFeedback, setTweetFeedback] = useState<Record<number, string>>({});
+  const [openTweetFeedback, setOpenTweetFeedback] = useState<number | null>(null);
+  const [feedbackBusy, setFeedbackBusy] = useState<FeedbackTarget | null>(null);
   const ref = useRef<TweetThread | null>(null);
   const mounted = useRef(true);
 
@@ -26,6 +54,9 @@ export function TweetThreadView({ threadId, onNavigate, onLoaded }: Props) {
   useEffect(() => {
     setThread(null);
     setErr(null);
+    setThreadFeedback('');
+    setTweetFeedback({});
+    setOpenTweetFeedback(null);
     ref.current = null;
   }, [threadId]);
 
@@ -75,6 +106,16 @@ export function TweetThreadView({ threadId, onNavigate, onLoaded }: Props) {
     }
   }, [thread]);
 
+  const setReworking = useCallback(() => {
+    setThread(prev => prev ? {
+      ...prev,
+      status: 'pending',
+      error: null,
+      finished_at: null,
+    } : prev);
+    setPollToken(t => t + 1);
+  }, []);
+
   const regenerate = useCallback(async () => {
     if (!thread) return;
     setRegenerating(true);
@@ -82,15 +123,43 @@ export function TweetThreadView({ threadId, onNavigate, onLoaded }: Props) {
     try {
       await api.tweets.regenerate(thread.id);
       if (!mounted.current) return;
-      setThread(prev => prev ? { ...prev, status: 'pending', error: null, finished_at: null, thread: [] } : prev);
-      setPollToken(t => t + 1);
+      setReworking();
     } catch (e) {
       if (!mounted.current) return;
       setErr(e instanceof Error ? e.message : 'regenerate failed');
     } finally {
       if (mounted.current) setRegenerating(false);
     }
-  }, [thread]);
+  }, [thread, setReworking]);
+
+  const submitFeedback = useCallback(async (target: FeedbackTarget, e: FormEvent) => {
+    e.preventDefault();
+    if (!thread) return;
+    const text = target === 'thread' ? threadFeedback.trim() : (tweetFeedback[target] || '').trim();
+    if (!text) return;
+    setFeedbackBusy(target);
+    setErr(null);
+    try {
+      await api.tweets.feedback(thread.id, {
+        body: text,
+        target_tweet_index: target === 'thread' ? null : target,
+        rework: true,
+      });
+      if (!mounted.current) return;
+      if (target === 'thread') {
+        setThreadFeedback('');
+      } else {
+        setTweetFeedback(prev => ({ ...prev, [target]: '' }));
+        setOpenTweetFeedback(null);
+      }
+      setReworking();
+    } catch (e) {
+      if (!mounted.current) return;
+      setErr(e instanceof Error ? e.message : 'feedback failed');
+    } finally {
+      if (mounted.current) setFeedbackBusy(null);
+    }
+  }, [thread, threadFeedback, tweetFeedback, setReworking]);
 
   const remove = useCallback(async () => {
     if (!thread) return;
@@ -111,92 +180,169 @@ export function TweetThreadView({ threadId, onNavigate, onLoaded }: Props) {
   if (!thread) return <div className="view"><p style={{ color: 'var(--fg-faint)', fontFamily: 'var(--mono)', fontSize: 12 }}>loading...</p></div>;
 
   const title = thread.title || (thread.status === 'failed' ? 'Thread failed' : 'Thread in progress');
+  const isWorking = thread.status === 'pending' || thread.status === 'running';
+  const finishedAt = formatDate(thread.finished_at);
+  const pendingFeedback = thread.feedback.filter(item => !item.applied_at);
+  const appliedFeedback = thread.feedback.filter(item => item.applied_at);
 
   return (
-    <div className="view">
-      <div className="view-h">Tweet Thread · #{thread.id}</div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <h1 className="view-title" style={{ margin: 0 }}>{title}</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {thread.thread.length > 0 && (
-            <button onClick={copy}>{copied ? 'copied' : 'Copy thread'}</button>
-          )}
-          {(thread.status === 'done' || thread.status === 'failed') && (
-            <button onClick={regenerate} disabled={regenerating}>{regenerating ? 'regenerating...' : 'Regenerate'}</button>
-          )}
-          <button onClick={remove} disabled={deleting}>{deleting ? 'deleting...' : 'Delete'}</button>
+    <div className="tw-page">
+      <header className="tw-hero">
+        <div className="tw-kicker">Tweet Thread · #{thread.id}</div>
+        <div className="tw-hero-grid">
+          <div>
+            <h1 className="tw-title">{title}</h1>
+            {thread.angle && <p className="tw-angle">{thread.angle}</p>}
+          </div>
+          <div className="tw-actions" aria-label="Thread actions">
+            {thread.thread.length > 0 && (
+              <button className="tw-btn tw-btn-secondary" onClick={copy}>
+                <span>{copied ? 'Copied' : 'Copy'}</span>
+              </button>
+            )}
+            {(thread.status === 'done' || thread.status === 'failed') && (
+              <button className="tw-btn tw-btn-secondary" onClick={regenerate} disabled={regenerating}>
+                <span>{regenerating ? 'Reworking' : 'Regenerate'}</span>
+              </button>
+            )}
+            <button className="tw-btn tw-btn-ghost" onClick={remove} disabled={deleting}>
+              <span>{deleting ? 'Deleting' : 'Delete'}</span>
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div style={{ marginTop: 10, fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--fg-faint)' }}>
-        {new Date(thread.created_at).toLocaleString()} · {thread.window_days}d · {thread.status}
-        {thread.model && <> · {thread.model}</>}
-        {thread.finished_at && <> · finished {new Date(thread.finished_at).toLocaleString()}</>}
-      </div>
-      {thread.theme && (
-        <div style={{ marginTop: 10, fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--fg-faint)' }}>
-          theme: {thread.theme}
+        <div className="tw-meta-strip">
+          <span>{formatDate(thread.created_at)}</span>
+          <span>{thread.window_days}d</span>
+          <span data-status={thread.status}>{thread.status}</span>
+          {thread.model && <span>{thread.model}</span>}
+          {finishedAt && <span>finished {finishedAt}</span>}
         </div>
-      )}
-      {thread.url && (
-        <div style={{ marginTop: 6, fontFamily: 'var(--mono)', fontSize: 11 }}>
-          <a href={thread.url} target="_blank" rel="noreferrer">{thread.url}</a>
-        </div>
-      )}
-      {thread.angle && <p className="view-sub" style={{ marginTop: 12 }}>{thread.angle}</p>}
-      {err && <p style={{ color: 'var(--danger, crimson)' }}>{err}</p>}
 
-      {(thread.status === 'pending' || thread.status === 'running') && (
-        <p style={{ color: 'var(--fg-faint)', fontFamily: 'var(--mono)', fontSize: 12 }}>
-          Drafting... this usually takes 30-90s.
-        </p>
-      )}
+        {thread.theme && <div className="tw-theme">{thread.theme}</div>}
+        {thread.url && (
+          <a className="tw-url" href={thread.url} target="_blank" rel="noreferrer">{thread.url}</a>
+        )}
+        {err && <p className="tw-error">{err}</p>}
+        {isWorking && <div className="tw-working">Reworking with the latest instructions...</div>}
+      </header>
+
+      <section className="tw-feedback-board" aria-labelledby="thread-feedback-title">
+        <div>
+          <div className="tw-section-label" id="thread-feedback-title">Thread feedback</div>
+          <form className="tw-feedback-form" onSubmit={(e) => submitFeedback('thread', e)}>
+            <textarea
+              value={threadFeedback}
+              onChange={(e) => setThreadFeedback(e.target.value)}
+              placeholder="Make the hook sharper, cut tweet 7, add more lived detail..."
+              rows={3}
+              maxLength={2000}
+              disabled={isWorking || feedbackBusy !== null}
+            />
+            <button
+              className="tw-btn tw-btn-primary"
+              type="submit"
+              disabled={isWorking || feedbackBusy !== null || !threadFeedback.trim()}
+            >
+              <span className="tw-btn-icon">{Icon.arrow}</span>
+              <span>{feedbackBusy === 'thread' ? 'Reworking' : 'Rework thread'}</span>
+            </button>
+          </form>
+        </div>
+        {(pendingFeedback.length > 0 || appliedFeedback.length > 0) && (
+          <div className="tw-feedback-ledger">
+            {pendingFeedback.map(item => <FeedbackPill key={item.id} item={item} />)}
+            {appliedFeedback.slice(-3).map(item => <FeedbackPill key={item.id} item={item} />)}
+          </div>
+        )}
+      </section>
+
       {thread.status === 'failed' && thread.error && (
-        <p style={{ color: 'var(--danger, crimson)' }}>{thread.error}</p>
+        <p className="tw-error">{thread.error}</p>
       )}
 
       {thread.thread.length > 0 && (
-        <div style={{ display: 'grid', gap: 10, marginTop: 18, maxWidth: 760 }}>
-          {thread.thread.map((tweet, i) => (
-            <div
-              key={`${i}-${tweet.slice(0, 20)}`}
-              style={{ border: '1px solid var(--line)', borderRadius: 6, padding: 12 }}
-            >
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--fg-faint)', marginBottom: 6 }}>
-                {i + 1}/{thread.thread.length} · {tweet.length}/280
-              </div>
-              <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{tweet}</div>
-            </div>
-          ))}
-        </div>
+        <section className="tw-thread-stack" aria-label="Tweet draft">
+          {thread.thread.map((tweet, i) => {
+            const itemFeedback = thread.feedback.filter(item => item.target_tweet_index === i);
+            const formOpen = openTweetFeedback === i;
+            return (
+              <article
+                className="tw-tweet-card"
+                key={`${i}-${tweet.slice(0, 20)}`}
+                style={{ animationDelay: `${Math.min(i, 8) * 55}ms` }}
+              >
+                <div className="tw-tweet-index">
+                  <span>{i + 1}/{thread.thread.length}</span>
+                  <span>{tweet.length}/280</span>
+                </div>
+                <div className="tw-tweet-body">{tweet}</div>
+                <div className="tw-tweet-actions">
+                  <button
+                    className="tw-inline-action"
+                    type="button"
+                    onClick={() => setOpenTweetFeedback(formOpen ? null : i)}
+                    disabled={isWorking || feedbackBusy !== null}
+                  >
+                    <span className="tw-btn-icon">{Icon.ask}</span>
+                    <span>{formOpen ? 'Close feedback' : 'Feedback'}</span>
+                  </button>
+                </div>
+                {formOpen && (
+                  <form className="tw-tweet-feedback" onSubmit={(e) => submitFeedback(i, e)}>
+                    <textarea
+                      value={tweetFeedback[i] || ''}
+                      onChange={(e) => setTweetFeedback(prev => ({ ...prev, [i]: e.target.value }))}
+                      placeholder={`Feedback for tweet ${i + 1}`}
+                      rows={2}
+                      maxLength={2000}
+                      disabled={isWorking || feedbackBusy !== null}
+                    />
+                    <button
+                      className="tw-btn tw-btn-primary"
+                      type="submit"
+                      disabled={isWorking || feedbackBusy !== null || !(tweetFeedback[i] || '').trim()}
+                    >
+                      <span className="tw-btn-icon">{Icon.arrow}</span>
+                      <span>{feedbackBusy === i ? 'Reworking' : 'Rework tweet'}</span>
+                    </button>
+                  </form>
+                )}
+                {itemFeedback.length > 0 && (
+                  <div className="tw-tweet-feedback-list">
+                    {itemFeedback.slice(-2).map(item => <FeedbackPill key={item.id} item={item} />)}
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </section>
       )}
 
       {thread.sources.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <div className="view-h">Sources</div>
-          <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
+        <section className="tw-panel">
+          <div className="tw-section-label">Sources</div>
+          <div className="tw-source-list">
             {thread.sources.map((source, i) => (
-              <div key={i} style={{ borderTop: '1px solid var(--line)', paddingTop: 8 }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{source.title || source.url || source.kind || 'source'}</div>
-                {source.why && <div style={{ fontSize: 12, color: 'var(--fg-mute)', marginTop: 3 }}>{source.why}</div>}
+              <div key={i} className="tw-source-row">
+                <div className="tw-source-title">{source.title || source.url || source.kind || 'source'}</div>
+                {source.why && <div className="tw-source-why">{source.why}</div>}
                 {source.url && (
-                  <a href={source.url} target="_blank" rel="noreferrer" style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
-                    {source.url}
-                  </a>
+                  <a href={source.url} target="_blank" rel="noreferrer">{source.url}</a>
                 )}
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {thread.warnings.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <div className="view-h">Warnings</div>
-          <ul>
+        <section className="tw-panel">
+          <div className="tw-section-label">Warnings</div>
+          <ul className="tw-warning-list">
             {thread.warnings.map((w, i) => <li key={i}>{w}</li>)}
           </ul>
-        </div>
+        </section>
       )}
     </div>
   );
