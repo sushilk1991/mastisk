@@ -5,6 +5,8 @@ import json
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 
 def _seed_note(db, *, body: str, summary: str, days_ago: int = 0) -> int:
     ts = (datetime.now().astimezone() - timedelta(days=days_ago)).isoformat()
@@ -250,3 +252,75 @@ def test_tweet_writer_rejects_sloppy_analyst_patterns(db, vault_tmp, data_tmp):
     ).fetchone()
     assert row["status"] == "failed"
     assert "anti-slop" in row["error"]
+
+
+def test_tweet_writer_enforces_practical_top_ten_theme_contract():
+    from mastisk.agents.tweet_writer import _analyze_thread_intent, _validate_draft
+
+    intent = _analyze_thread_intent(
+        "How to take maximum advantage of Codex: top 10 hacks I have figured out "
+        "while coding using agents for the past 6 months.",
+    )
+    draft = {
+        "title": "Codex agent hacks",
+        "angle": "A practical list of Codex habits that make agent coding less mushy.",
+        "thread": [
+            "10 Codex agent hacks I keep using after six months of coding with agents.",
+            "1. Start with the failure mode. Ask Codex to name what would make the task wrong before it writes code.",
+            "2. Keep the diff small. I split UI, backend, and prompt changes so the agent has one thing to hold.",
+            "3. Run tests before polish. A pretty explanation is useless if the route or typecheck is broken.",
+            "4. Save context as a skill when I repeat myself. The next run should inherit the scar tissue.",
+            "5. Ask for file and line evidence. It stops vague agent confidence from turning into bad code.",
+            "6. Use browser checks for UI. Screenshots catch the issues a green unit test will never see.",
+            "7. Commit only the intended change. Agent speed is dangerous if unrelated dirt rides along.",
+            "8. Make it explain the mechanism. If Codex cannot say why a fix works, I do not trust the patch.",
+            "9. Restart local services after install changes. Otherwise I end up judging stale code.",
+            "10. Keep one unresolved question. The best agent sessions end with the next sharp test, not a victory lap.",
+        ],
+        "sources": [],
+        "warnings": [],
+    }
+
+    _, _, tweets, _, _ = _validate_draft(draft, intent=intent)
+    assert len(tweets) == 11
+
+
+def test_tweet_writer_rejects_topic_drift_from_top_ten_hacks_theme():
+    from mastisk.agents.tweet_writer import _analyze_thread_intent, _validate_draft
+
+    intent = _analyze_thread_intent(
+        "How to take maximum advantage of Codex: top 10 hacks I have figured out "
+        "while coding using agents for the past 6 months.",
+    )
+    draft = {
+        "title": "Capability converged",
+        "angle": "Recent AI model capability changed the cost curve.",
+        "thread": [
+            "Quandri found their MCP tool definitions ate 10.5% of the context window.",
+            "Opus 4.8 landed incremental, and an open 11B-active model got close to old Opus.",
+            "If frontier coding ability gets cheap, harness cost becomes the real fight.",
+            "Tool schemas are an easy place to leak tokens and never notice.",
+            "The question is whether CLI wrapping saves lifetime tokens or only upfront ones.",
+        ],
+        "sources": [],
+        "warnings": [],
+    }
+
+    with pytest.raises(RuntimeError, match="exactly 11"):
+        _validate_draft(draft, intent=intent)
+
+
+def test_tweet_writer_sanitizes_browser_traceback_warning():
+    from mastisk.agents.tweet_writer import _sanitize_warning
+
+    warning = "browser/url context unavailable: Traceback (most recent call last):\n/Users/me/x.py"
+    assert _sanitize_warning(warning) == (
+        "Browser capture unavailable; generated without browser context."
+    )
+
+
+def test_tweet_writer_ignores_mastisk_tweet_page_as_browser_context():
+    from mastisk.agents.tweet_writer import _is_mastisk_app_context
+
+    assert _is_mastisk_app_context({"url": "http://localhost:5555/tweets/3"})
+    assert not _is_mastisk_app_context({"url": "https://x.com/someone/status/1"})
