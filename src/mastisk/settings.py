@@ -159,6 +159,8 @@ class TweetSettings(BaseSettings):
     web_page_excerpt_char_limit: int = 700
     x_browser_search_enabled: bool = True
     x_browser_search_limit: int = 5
+    x_browser_search_max_actions: int = 3
+    x_browser_search_plan_timeout_seconds: int = 60
     x_browser_search_timeout_seconds: float = 35.0
     browser_context_timeout_seconds: float = 25.0
     prompt_char_limit: int = 40000

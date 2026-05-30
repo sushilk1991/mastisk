@@ -399,7 +399,7 @@ def test_tweet_writer_searches_x_with_browser_harness():
     }]
 
 
-def test_tweet_writer_compacts_long_theme_for_x_search():
+def test_tweet_writer_plans_x_search_with_agent_and_filters_full_theme():
     from mastisk.agents.tweet_writer import TweetWriter, _analyze_thread_intent
 
     theme = (
@@ -407,20 +407,83 @@ def test_tweet_writer_compacts_long_theme_for_x_search():
         "while coding using agents for the past 6 months."
     )
     intent = _analyze_thread_intent(theme)
+    prompts: list[str] = []
 
-    query = TweetWriter._x_search_query(
-        theme=theme,
-        intent=intent,
-        local_sources=[{
-            "title": "Opus 4.8 Landed Incremental and an Open Model Comparison",
-            "summary": "A nearby source title that should not get pasted into X search.",
-        }],
-    )
+    async def fake_run_intelligence(prompt: str, *args, **kwargs):
+        prompts.append(prompt)
+        return {
+            "text": json.dumps({
+                "actions": [
+                    {"type": "x_search", "query": theme},
+                    {"type": "x_search", "query": "Codex agent workflow tips"},
+                    {"type": "web_search", "query": "ignored"},
+                ],
+            }),
+        }, "claude"
 
-    assert query == "Codex coding agents tips"
-    assert "How to take maximum advantage" not in query
-    assert "Opus 4.8" not in query
-    assert len(query) <= 72
+    with patch(
+        "mastisk.agents.tweet_writer.run_intelligence",
+        new_callable=AsyncMock,
+        side_effect=fake_run_intelligence,
+    ):
+        queries = asyncio.run(TweetWriter()._plan_x_browser_searches(
+            theme=theme,
+            intent=intent,
+            local_sources=[{
+                "title": "Opus 4.8 Landed Incremental and an Open Model Comparison",
+                "summary": "A nearby source title that should be a hint, not pasted blindly.",
+            }],
+            browser_context=None,
+        ))
+
+    assert queries == ["Codex agent workflow tips"]
+    assert "x_search(query)" in prompts[0]
+    assert "browser-harness" in prompts[0]
+    assert "Do not paste the full theme" in prompts[0]
+
+
+def test_tweet_writer_executes_agent_planned_browser_searches():
+    from mastisk.agents.tweet_writer import TweetWriter, _analyze_thread_intent
+
+    calls: list[tuple[str, int | None]] = []
+
+    async def fake_run_intelligence(*args, **kwargs):
+        return {
+            "text": json.dumps({
+                "actions": [
+                    {"type": "x_search", "query": "Codex agent workflow tips"},
+                    {"type": "x_search", "query": "Claude Code browser agents"},
+                ],
+            }),
+        }, "claude"
+
+    def fake_x_context(query: str, result_limit: int | None = None):
+        calls.append((query, result_limit))
+        return [{
+            "kind": "browser",
+            "title": f"X: {query}",
+            "url": f"https://x.com/search/{len(calls)}",
+            "snippet": "Live X search",
+            "excerpt": query,
+        }]
+
+    with patch(
+        "mastisk.agents.tweet_writer.run_intelligence",
+        new_callable=AsyncMock,
+        side_effect=fake_run_intelligence,
+    ), patch("mastisk.agents.tweet_writer._x_browser_search_context", side_effect=fake_x_context):
+        rows = asyncio.run(TweetWriter()._gather_x_browser_context(
+            theme="codex agent hacks",
+            intent=_analyze_thread_intent("codex agent hacks"),
+            local_sources=[],
+            browser_context=None,
+        ))
+
+    assert [call[0] for call in calls] == [
+        "Codex agent workflow tips",
+        "Claude Code browser agents",
+    ]
+    assert rows[0]["excerpt"] == "Codex agent workflow tips"
 
 
 def test_tweet_writer_keeps_x_browser_search_when_public_web_fails():
