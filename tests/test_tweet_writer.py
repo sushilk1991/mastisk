@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+import subprocess
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -324,6 +325,112 @@ def test_tweet_writer_ignores_mastisk_tweet_page_as_browser_context():
 
     assert _is_mastisk_app_context({"url": "http://localhost:5555/tweets/3"})
     assert not _is_mastisk_app_context({"url": "https://x.com/someone/status/1"})
+
+
+def test_tweet_writer_prompt_includes_current_date_and_x_context(vault_tmp, data_tmp):
+    from mastisk.agents.tweet_writer import (
+        TweetWriter,
+        _analyze_thread_intent,
+        _current_date_context,
+    )
+
+    prompt = TweetWriter()._render_prompt(
+        theme="codex agent hacks",
+        intent=_analyze_thread_intent("codex agent hacks"),
+        previous_tweets=[],
+        feedback=[],
+        local_sources=[],
+        web_context=[{
+            "kind": "browser",
+            "title": "X: Codex agents are trending",
+            "url": "https://x.com/someone/status/1",
+            "excerpt": "Codex agents are trending in developer workflows.",
+        }],
+        browser_context=None,
+    )
+
+    assert "Current date:" in prompt
+    assert datetime.now().astimezone().date().isoformat() in prompt
+    assert "[browser] X: Codex agents are trending" in prompt
+    fixed_date = _current_date_context(datetime(2026, 5, 30, tzinfo=UTC))
+    assert fixed_date.startswith("Saturday, May 30, 2026 (")
+    assert "ISO 2026-05-30" in fixed_date
+
+
+def test_tweet_writer_searches_x_with_browser_harness():
+    from mastisk.agents.tweet_writer import _x_browser_search_context
+
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        payload = {
+            "captured_at": "2026-05-30T10:00:00Z",
+            "url": "https://x.com/search?q=codex%20agent%20hacks",
+            "tweets": [
+                {
+                    "url": "https://x.com/dev/status/123",
+                    "text": "Codex agent workflows are moving from prompt tricks to verified diffs.",
+                },
+            ],
+        }
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=f"browser started\n{json.dumps(payload)}\n",
+            stderr="",
+        )
+
+    with patch("mastisk.agents.tweet_writer.subprocess.run", side_effect=fake_run):
+        rows = _x_browser_search_context("codex agent hacks")
+
+    assert calls
+    assert calls[0][:2] == ["browser-harness", "-c"]
+    assert "https://x.com/search" in calls[0][2]
+    assert "q=codex%20agent%20hacks" in calls[0][2]
+    assert rows == [{
+        "kind": "browser",
+        "title": "X: Codex agent workflows are moving from prompt tricks to verified diffs.",
+        "url": "https://x.com/dev/status/123",
+        "snippet": (
+            "Live X search for codex agent hacks captured at 2026-05-30T10:00:00Z"
+        ),
+        "excerpt": "Codex agent workflows are moving from prompt tricks to verified diffs.",
+    }]
+
+
+def test_tweet_writer_keeps_x_browser_search_when_public_web_fails():
+    from mastisk.agents.tweet_writer import TweetWriter, _analyze_thread_intent
+
+    writer = TweetWriter()
+    x_context = [{
+        "kind": "browser",
+        "title": "X: Codex agent workflows",
+        "url": "https://x.com/dev/status/123",
+        "snippet": "Live X search",
+        "excerpt": "Codex agent workflows are current on X.",
+    }]
+
+    with patch.object(
+        writer,
+        "_fetch_public_web_results",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("duckduckgo down"),
+    ), patch.object(
+        writer,
+        "_gather_x_browser_context",
+        new_callable=AsyncMock,
+        return_value=x_context,
+    ) as x_search:
+        rows = asyncio.run(writer._gather_web_context(
+            theme="codex agent hacks",
+            intent=_analyze_thread_intent("codex agent hacks"),
+            local_sources=[],
+            browser_context=None,
+        ))
+
+    assert rows == x_context
+    x_search.assert_awaited_once()
 
 
 def test_tweet_writer_incorporates_pending_feedback(db, vault_tmp, data_tmp):
