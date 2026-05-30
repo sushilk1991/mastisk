@@ -399,6 +399,30 @@ def test_tweet_writer_searches_x_with_browser_harness():
     }]
 
 
+def test_tweet_writer_compacts_long_theme_for_x_search():
+    from mastisk.agents.tweet_writer import TweetWriter, _analyze_thread_intent
+
+    theme = (
+        "How to take maximum advantage of Codex: top 10 hacks I have figured out "
+        "while coding using agents for the past 6 months."
+    )
+    intent = _analyze_thread_intent(theme)
+
+    query = TweetWriter._x_search_query(
+        theme=theme,
+        intent=intent,
+        local_sources=[{
+            "title": "Opus 4.8 Landed Incremental and an Open Model Comparison",
+            "summary": "A nearby source title that should not get pasted into X search.",
+        }],
+    )
+
+    assert query == "Codex coding agents tips"
+    assert "How to take maximum advantage" not in query
+    assert "Opus 4.8" not in query
+    assert len(query) <= 72
+
+
 def test_tweet_writer_keeps_x_browser_search_when_public_web_fails():
     from mastisk.agents.tweet_writer import TweetWriter, _analyze_thread_intent
 

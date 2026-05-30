@@ -439,19 +439,24 @@ class TweetWriter(Agent):
                 "snippet": result.get("snippet") or "",
                 "excerpt": excerpt,
             })
-        selected.extend(await self._gather_x_browser_context(theme=theme, local_sources=local_sources))
+        selected.extend(await self._gather_x_browser_context(
+            theme=theme,
+            intent=intent,
+            local_sources=local_sources,
+        ))
         return selected
 
     async def _gather_x_browser_context(
         self,
         *,
         theme: str,
+        intent: ThreadIntent,
         local_sources: list[dict[str, Any]],
     ) -> list[dict[str, str]]:
         settings = get_settings().tweet
         if not settings.x_browser_search_enabled:
             return []
-        query = self._x_search_query(theme=theme, local_sources=local_sources)
+        query = self._x_search_query(theme=theme, intent=intent, local_sources=local_sources)
         if not query:
             return []
         try:
@@ -461,16 +466,23 @@ class TweetWriter(Agent):
             return []
 
     @staticmethod
-    def _x_search_query(*, theme: str, local_sources: list[dict[str, Any]]) -> str:
-        parts: list[str] = []
-        if theme.strip():
-            parts.append(theme.strip())
-        for source in local_sources[:2]:
-            parts.append(str(source.get("title") or source.get("summary") or "")[:100])
-        if not parts:
-            parts.append("latest AI software engineering")
-        query = _collapse_ws(" ".join(parts))
-        return query[:160]
+    def _x_search_query(
+        *,
+        theme: str,
+        intent: ThreadIntent,
+        local_sources: list[dict[str, Any]],
+    ) -> str:
+        query = _compact_x_search_query(theme, intent=intent)
+        if query:
+            return query
+        for source in local_sources[:3]:
+            source_text = f"{source.get('title') or ''} {source.get('summary') or ''}"
+            if not _contains_intent_anchor(source_text, intent):
+                continue
+            query = _compact_x_search_query(source_text, intent=intent)
+            if query:
+                return query
+        return "latest AI software engineering"
 
     @staticmethod
     def _web_search_query(
@@ -1066,6 +1078,114 @@ def _validate_theme_contract(tweets: list[str], intent: ThreadIntent) -> None:
 
 def _tokens(text: str) -> set[str]:
     return {t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 2}
+
+
+def _compact_x_search_query(text: str, *, intent: ThreadIntent) -> str:
+    clean = _collapse_ws(text)
+    if not clean:
+        return ""
+    lower = clean.lower()
+    terms: list[str] = []
+
+    def add(term: str) -> None:
+        if term and term.lower() not in {existing.lower() for existing in terms}:
+            terms.append(term)
+
+    if re.search(r"\bcodex\b", lower):
+        add("Codex")
+    if re.search(r"\bclaude\s+code\b", lower):
+        add("Claude Code")
+    if re.search(r"\bopenai\b", lower):
+        add("OpenAI")
+    if re.search(r"\bmcp\b", lower):
+        add("MCP")
+    for match in re.finditer(r"\bopus\s+(\d+(?:\.\d+)?)\b", lower):
+        add(f"Opus {match.group(1)}")
+    for match in re.finditer(r"\bgpt[-\s]?(\d+(?:\.\d+)?)\b", lower):
+        add(f"GPT-{match.group(1)}")
+
+    mentions_agents = bool(re.search(r"\bagents?\b", lower))
+    mentions_code = bool(re.search(r"\b(codex|coding|code|programming|dev|developer)\b", lower))
+    if mentions_agents and mentions_code:
+        add("coding agents")
+    elif mentions_agents:
+        add("AI agents")
+    if "browser" in lower and mentions_agents:
+        add("browser agents")
+    if intent.mode == "practical_list" and any(
+        word in lower for word in ("hack", "hacks", "tip", "tips", "ways", "lessons")
+    ):
+        add("tips")
+
+    if terms:
+        return _fit_x_query(terms)
+
+    return _fit_x_query(_x_keyword_tokens(clean))
+
+
+def _contains_intent_anchor(text: str, intent: ThreadIntent) -> bool:
+    lower = text.lower()
+    if not intent.required_terms:
+        return True
+    return any(term in lower for term in intent.required_terms)
+
+
+def _x_keyword_tokens(text: str) -> list[str]:
+    stopwords = {
+        "about",
+        "advantage",
+        "after",
+        "also",
+        "becoming",
+        "been",
+        "figured",
+        "from",
+        "have",
+        "here",
+        "into",
+        "latest",
+        "maximum",
+        "months",
+        "past",
+        "recent",
+        "should",
+        "take",
+        "that",
+        "their",
+        "there",
+        "this",
+        "thread",
+        "using",
+        "what",
+        "while",
+        "with",
+        "works",
+    }
+    out: list[str] = []
+    for raw in re.findall(r"[A-Za-z][A-Za-z0-9.+#-]*", text):
+        token = raw.strip(".,:;!?()[]{}")
+        lower = token.lower()
+        if len(lower) < 3 and lower not in {"ai", "x"}:
+            continue
+        if lower in stopwords:
+            continue
+        if lower.isdigit():
+            continue
+        if lower not in {existing.lower() for existing in out}:
+            out.append(token)
+        if len(out) >= 5:
+            break
+    return out
+
+
+def _fit_x_query(terms: list[str], *, max_chars: int = 72) -> str:
+    out: list[str] = []
+    for term in terms:
+        candidate = " ".join([*out, term])
+        if len(candidate) > max_chars:
+            break
+        out.append(term)
+    return " ".join(out)
 
 
 def _title_from_html(text: str) -> str | None:
