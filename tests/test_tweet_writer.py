@@ -514,17 +514,15 @@ def test_tweet_writer_plans_browser_research_with_agent_and_filters_full_theme()
         ))
 
     assert [(action.type, action.query) for action in actions] == [
-        (
-            "grok_query",
-            "Find current Codex agent workflow posts Search X/Twitter. "
-            "Focus on posts from the last 48 hours. Include post URLs and account names when available.",
-        ),
+        ("grok_query", "Find current Codex agent workflow posts"),
         ("x_search", "Codex agent workflow tips"),
     ]
     assert "grok_query(prompt)" in prompts[0]
     assert "x_search(query)" in prompts[0]
     assert "browser-harness" in prompts[0]
     assert "Do not paste the full theme" in prompts[0]
+    assert "The executor will run only the actions you return" in prompts[0]
+    assert "write the actual prompt you want sent to Grok" in prompts[0]
 
 
 def test_tweet_writer_executes_agent_planned_browser_research():
