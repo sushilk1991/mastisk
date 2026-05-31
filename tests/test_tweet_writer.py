@@ -327,6 +327,32 @@ def test_tweet_writer_ignores_mastisk_tweet_page_as_browser_context():
     assert not _is_mastisk_app_context({"url": "https://x.com/someone/status/1"})
 
 
+def test_tweet_writer_can_capture_current_browser_tab_without_url():
+    from mastisk.agents.tweet_writer import _browser_context
+
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        payload = {
+            "kind": "browser",
+            "url": "https://x.com/someone/status/1",
+            "title": "Tweet",
+            "text": "A tweet visible in the current browser tab.",
+            "captured_at": "2026-05-30T10:00:00Z",
+        }
+        return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload), stderr="")
+
+    with patch("mastisk.agents.tweet_writer.subprocess.run", side_effect=fake_run):
+        context = _browser_context(None)
+
+    assert calls
+    assert "target_url = None" in calls[0][2]
+    assert "target_url = null" not in calls[0][2]
+    assert ".join('\\\\n\\\\n')" in calls[0][2]
+    assert context["url"] == "https://x.com/someone/status/1"
+
+
 def test_tweet_writer_prompt_includes_current_date_and_x_context(vault_tmp, data_tmp):
     from mastisk.agents.tweet_writer import (
         TweetWriter,
@@ -399,7 +425,54 @@ def test_tweet_writer_searches_x_with_browser_harness():
     }]
 
 
-def test_tweet_writer_plans_x_search_with_agent_and_filters_full_theme():
+def test_tweet_writer_searches_grok_with_browser_harness():
+    from mastisk.agents.tweet_writer import _grok_browser_context
+
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        payload = {
+            "captured_at": "2026-05-30T10:00:00Z",
+            "url": "https://grok.com/share/thread-1",
+            "title": "Slack AI Agents in Dev Workflows - Grok",
+            "text": (
+                "Search X for the last 48 hours about Slack-native autonomous agents. "
+                "Return posts with URLs. Grok answer: three recent posts discuss Slack "
+                "agents moving from notifications to delegated workflows."
+            ),
+            "links": [
+                {
+                    "text": "polsia",
+                    "href": "https://x.com/polsia/status/2060962767348400251",
+                },
+            ],
+        }
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=f"browser started\n{json.dumps(payload)}\n",
+            stderr="",
+        )
+
+    prompt = "Search X for the last 48 hours about Slack-native autonomous agents."
+    with patch("mastisk.agents.tweet_writer.subprocess.run", side_effect=fake_run):
+        row = _grok_browser_context(prompt)
+
+    assert calls
+    assert calls[0][:2] == ["browser-harness", "-c"]
+    assert "https://grok.com/" in calls[0][2]
+    assert prompt in calls[0][2]
+    assert "[contenteditable=\"true\"][role=\"textbox\"]" in calls[0][2]
+    assert "type_text(" in calls[0][2]
+    assert "submit.click()" in calls[0][2]
+    assert row["title"] == "Grok: Slack AI Agents in Dev Workflows - Grok"
+    assert row["url"] == "https://grok.com/share/thread-1"
+    assert "Slack agents moving from notifications" in row["excerpt"]
+    assert "https://x.com/polsia/status/2060962767348400251" in row["excerpt"]
+
+
+def test_tweet_writer_plans_browser_research_with_agent_and_filters_full_theme():
     from mastisk.agents.tweet_writer import TweetWriter, _analyze_thread_intent
 
     theme = (
@@ -415,6 +488,10 @@ def test_tweet_writer_plans_x_search_with_agent_and_filters_full_theme():
             "text": json.dumps({
                 "actions": [
                     {"type": "x_search", "query": theme},
+                    {
+                        "type": "grok_query",
+                        "query": "Find current Codex agent workflow posts",
+                    },
                     {"type": "x_search", "query": "Codex agent workflow tips"},
                     {"type": "web_search", "query": "ignored"},
                 ],
@@ -426,7 +503,7 @@ def test_tweet_writer_plans_x_search_with_agent_and_filters_full_theme():
         new_callable=AsyncMock,
         side_effect=fake_run_intelligence,
     ):
-        queries = asyncio.run(TweetWriter()._plan_x_browser_searches(
+        actions = asyncio.run(TweetWriter()._plan_browser_research_actions(
             theme=theme,
             intent=intent,
             local_sources=[{
@@ -436,26 +513,49 @@ def test_tweet_writer_plans_x_search_with_agent_and_filters_full_theme():
             browser_context=None,
         ))
 
-    assert queries == ["Codex agent workflow tips"]
+    assert [(action.type, action.query) for action in actions] == [
+        (
+            "grok_query",
+            "Find current Codex agent workflow posts Search X/Twitter. "
+            "Focus on posts from the last 48 hours. Include post URLs and account names when available.",
+        ),
+        ("x_search", "Codex agent workflow tips"),
+    ]
+    assert "grok_query(prompt)" in prompts[0]
     assert "x_search(query)" in prompts[0]
     assert "browser-harness" in prompts[0]
     assert "Do not paste the full theme" in prompts[0]
 
 
-def test_tweet_writer_executes_agent_planned_browser_searches():
+def test_tweet_writer_executes_agent_planned_browser_research():
     from mastisk.agents.tweet_writer import TweetWriter, _analyze_thread_intent
 
     calls: list[tuple[str, int | None]] = []
+    grok_calls: list[str] = []
 
     async def fake_run_intelligence(*args, **kwargs):
         return {
             "text": json.dumps({
                 "actions": [
+                    {
+                        "type": "grok_query",
+                        "query": "Search X for Codex agent workflows from the last 48 hours with URLs.",
+                    },
                     {"type": "x_search", "query": "Codex agent workflow tips"},
                     {"type": "x_search", "query": "Claude Code browser agents"},
                 ],
             }),
         }, "claude"
+
+    def fake_grok_context(prompt: str):
+        grok_calls.append(prompt)
+        return {
+            "kind": "browser",
+            "title": "Grok: Codex agent workflows",
+            "url": "https://grok.com/share/codex",
+            "snippet": "Grok browser research",
+            "excerpt": "Grok found current Codex workflow posts.",
+        }
 
     def fake_x_context(query: str, result_limit: int | None = None):
         calls.append((query, result_limit))
@@ -471,19 +571,27 @@ def test_tweet_writer_executes_agent_planned_browser_searches():
         "mastisk.agents.tweet_writer.run_intelligence",
         new_callable=AsyncMock,
         side_effect=fake_run_intelligence,
+    ), patch(
+        "mastisk.agents.tweet_writer._grok_browser_context",
+        side_effect=fake_grok_context,
     ), patch("mastisk.agents.tweet_writer._x_browser_search_context", side_effect=fake_x_context):
-        rows = asyncio.run(TweetWriter()._gather_x_browser_context(
+        rows = asyncio.run(TweetWriter()._gather_browser_research_context(
             theme="codex agent hacks",
             intent=_analyze_thread_intent("codex agent hacks"),
             local_sources=[],
             browser_context=None,
         ))
 
+    assert grok_calls == [
+        "Search X for Codex agent workflows from the last 48 hours with URLs."
+    ]
     assert [call[0] for call in calls] == [
         "Codex agent workflow tips",
         "Claude Code browser agents",
     ]
-    assert rows[0]["excerpt"] == "Codex agent workflow tips"
+    assert [call[1] for call in calls] == [3, 3]
+    assert rows[0]["excerpt"] == "Grok found current Codex workflow posts."
+    assert rows[1]["excerpt"] == "Codex agent workflow tips"
 
 
 def test_tweet_writer_keeps_x_browser_search_when_public_web_fails():
@@ -505,10 +613,10 @@ def test_tweet_writer_keeps_x_browser_search_when_public_web_fails():
         side_effect=RuntimeError("duckduckgo down"),
     ), patch.object(
         writer,
-        "_gather_x_browser_context",
+        "_gather_browser_research_context",
         new_callable=AsyncMock,
         return_value=x_context,
-    ) as x_search:
+    ) as browser_research:
         rows = asyncio.run(writer._gather_web_context(
             theme="codex agent hacks",
             intent=_analyze_thread_intent("codex agent hacks"),
@@ -517,7 +625,7 @@ def test_tweet_writer_keeps_x_browser_search_when_public_web_fails():
         ))
 
     assert rows == x_context
-    x_search.assert_awaited_once()
+    browser_research.assert_awaited_once()
 
 
 def test_tweet_writer_incorporates_pending_feedback(db, vault_tmp, data_tmp):

@@ -158,10 +158,14 @@ class TweetSettings(BaseSettings):
     web_search_timeout_seconds: float = 8.0
     web_page_excerpt_char_limit: int = 700
     x_browser_search_enabled: bool = True
-    x_browser_search_limit: int = 5
-    x_browser_search_max_actions: int = 3
+    x_browser_search_limit: int = 9
+    x_browser_search_per_action_limit: int = 3
+    x_browser_search_max_actions: int = 5
     x_browser_search_plan_timeout_seconds: int = 60
     x_browser_search_timeout_seconds: float = 35.0
+    grok_browser_search_enabled: bool = True
+    grok_browser_timeout_seconds: float = 90.0
+    grok_browser_excerpt_char_limit: int = 3500
     browser_context_timeout_seconds: float = 25.0
     prompt_char_limit: int = 40000
     per_local_source_char_limit: int = 1200
