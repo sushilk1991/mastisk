@@ -24,7 +24,10 @@ async def run_gemini(
     """
     if shutil.which("gemini") is None:
         raise GeminiError("gemini binary not on PATH")
-    cmd = ["gemini"]
+    # --skip-trust: the daemon runs headless (under launchd), where the CLI's
+    # directory-trust check fails with "not running in a trusted directory".
+    # This flag is the documented bypass for automated environments.
+    cmd = ["gemini", "--skip-trust"]
     if model:
         cmd += ["-m", model]
     cmd += ["--prompt", prompt]

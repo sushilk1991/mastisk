@@ -65,6 +65,28 @@ async def test_run_gemini_passes_prompt_flag():
 
 
 @pytest.mark.asyncio
+async def test_run_gemini_passes_skip_trust_flag():
+    """Verify `--skip-trust` is in the command so the headless daemon isn't
+    blocked by the CLI's directory-trust check."""
+    from mastisk.bridges.gemini_bridge import run_gemini
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b"ok", b"")
+    captured_args: list = []
+
+    async def fake_exec(*args, **kwargs):
+        captured_args.extend(args)
+        return mock_proc
+
+    with patch("mastisk.bridges.gemini_bridge.shutil.which", return_value="/usr/bin/gemini"), \
+         patch("mastisk.bridges.gemini_bridge.asyncio.create_subprocess_exec", side_effect=fake_exec):
+        await run_gemini("hello world")
+
+    assert "--skip-trust" in captured_args
+
+
+@pytest.mark.asyncio
 async def test_run_gemini_passes_model_flag():
     """Verify `-m <model>` flag is in the command when model is provided."""
     from mastisk.bridges.gemini_bridge import run_gemini
