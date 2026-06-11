@@ -359,9 +359,7 @@ def mark_calendar_sync_error(error: str, *, at: str | None = None) -> None:
 
 def clear_calendar_connection() -> None:
     delete_calendar_tokens()
-    init_schema()
-    with connect() as conn:
-        conn.execute("DELETE FROM calendar_state WHERE id = 1")
+    _clear_calendar_cache_and_state()
 
 
 def events_for_day(day: date) -> list[dict[str, Any]]:

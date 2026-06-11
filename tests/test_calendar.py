@@ -441,7 +441,7 @@ def test_calendar_routes_status_force_sync_disconnect_and_sorted_today(
         assert disconnected.status_code == 200
         assert client.get("/api/calendar/status").json()["status"] == "unconfigured"
         assert client.get("/api/calendar/today?date=2026-06-12").json()["events"] == []
-        assert db.execute("SELECT COUNT(*) AS n FROM calendar_events").fetchone()["n"] == 2
+        assert db.execute("SELECT COUNT(*) AS n FROM calendar_events").fetchone()["n"] == 0
 
 
 def test_calendar_today_filters_timed_events_by_actual_timezone_day(
@@ -523,7 +523,7 @@ def test_calendar_reconnect_does_not_show_old_cache_until_new_sync(
     )
     mark_calendar_connected("2026-06-12T08:00:00+05:30")
     clear_calendar_connection()
-    assert db.execute("SELECT COUNT(*) AS n FROM calendar_events").fetchone()["n"] == 1
+    assert db.execute("SELECT COUNT(*) AS n FROM calendar_events").fetchone()["n"] == 0
     write_calendar_tokens(
         {
             "access_token": "new-access",
@@ -533,12 +533,13 @@ def test_calendar_reconnect_does_not_show_old_cache_until_new_sync(
             "scope": "https://www.googleapis.com/auth/calendar.readonly",
         }
     )
+    mark_calendar_connected("2026-06-13T08:00:00+05:30")
 
     with _client(vault_tmp, data_tmp, db) as client:
         today = client.get("/api/calendar/today?date=2026-06-12")
 
     assert today.status_code == 200, today.text
-    assert today.json()["status"]["status"] == "not_synced"
+    assert today.json()["status"]["status"] == "connected"
     assert today.json()["events"] == []
 
 
