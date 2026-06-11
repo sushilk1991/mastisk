@@ -23,6 +23,7 @@ def reminder_tick(*, now: datetime | None = None, ensure_daily_summary: bool = T
     """
     now_dt = _coerce_datetime(now)
     _reclaim_stale_firing_reminders(now_dt)
+    routine_missed_tick(now=now_dt)
     if _notify_backend_disabled():
         log.info("reminder_tick skipped: notify backend disabled")
         return 0
@@ -48,12 +49,13 @@ def reminder_tick(*, now: datetime | None = None, ensure_daily_summary: bool = T
         if not _claim_reminder(row["id"], now_iso):
             continue
         try:
-            _fire_claimed(row, now_dt)
+            did_fire = _fire_claimed(row, now_dt)
         except Exception as exc:
             log.exception("reminder %s failed unexpectedly after claim", row["id"])
             _restore_claimed_reminder(row["id"], exc)
             continue
-        fired += 1
+        if did_fire:
+            fired += 1
     return fired
 
 
@@ -242,6 +244,46 @@ def daily_summary_tick(*, now: datetime | None = None) -> dict | None:
     return get_reminder(row["id"])
 
 
+def routine_missed_tick(*, now: datetime | None = None) -> int:
+    """Queue one routine_missed reminder per routine per local day.
+
+    Defaults documented for Phase 5: morning closes at 12:00, afternoon at
+    17:00, evening at 22:00, a specific_time closes 60 minutes after that time,
+    and anytime routines without a specific_time do not nudge.
+    """
+    from mastisk.routines.sync import completion_dates, list_routines
+
+    now_dt = _coerce_datetime(now)
+    settings = get_settings()
+    tz = ZoneInfo(settings.capture.default_timezone)
+    local_now = now_dt.astimezone(tz)
+    today = local_now.date().isoformat()
+    inserted = 0
+    for routine in list_routines(include_archived=False):
+        if not routine.get("notify"):
+            continue
+        if today in set(completion_dates(routine["slug"])):
+            continue
+        window_end = _routine_window_end(routine, local_now)
+        if window_end is None or local_now < window_end:
+            continue
+        entity_id = f"{routine['slug']}:{today}"
+        with connect() as conn:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO reminders
+                     (entity_type, entity_id, fire_at, kind, status, title, body)
+                   VALUES ('routine', ?, ?, 'routine_missed', 'pending', ?, ?)""",
+                (
+                    entity_id,
+                    _utc_iso(now_dt),
+                    "Routine missed",
+                    f"{routine['name']} was not completed today.",
+                ),
+            )
+            inserted += cur.rowcount
+    return inserted
+
+
 def _claim_reminder(reminder_id: int, now_iso: str) -> bool:
     with connect() as conn:
         cur = conn.execute(
@@ -288,10 +330,13 @@ def _restore_claimed_reminder(reminder_id: int, exc: Exception) -> None:
         )
 
 
-def _fire_claimed(row: dict, now_dt: datetime) -> None:
+def _fire_claimed(row: dict, now_dt: datetime) -> bool:
     refreshed = _refresh_claimed_task_due_reminder(row, now_dt)
     if refreshed is None:
-        return
+        return False
+    refreshed = _refresh_claimed_routine_missed_reminder(refreshed)
+    if refreshed is None:
+        return False
     row = refreshed
 
     title, body, url = _notification_content(row)
@@ -317,9 +362,10 @@ def _fire_claimed(row: dict, now_dt: datetime) -> None:
                 kind="reminder",
                 payload={"kind": row["kind"], "entity_id": row["entity_id"], "title": title},
             )
-        return
+        return True
 
     _handle_notify_failure(row, now_dt)
+    return True
 
 
 def _handle_notify_failure(row: dict, now_dt: datetime) -> None:
@@ -435,6 +481,30 @@ def _refresh_claimed_task_due_reminder(row: dict, now_dt: datetime) -> dict | No
             (target["fire_at"], target["lead_minutes"], target["body"], row["id"]),
         )
     return refreshed
+
+
+def _refresh_claimed_routine_missed_reminder(row: dict) -> dict | None:
+    if row.get("kind") != "routine_missed" or row.get("entity_type") != "routine":
+        return row
+    entity_id = str(row.get("entity_id") or "")
+    slug, sep, day = entity_id.partition(":")
+    if not sep or not slug or not day:
+        _cancel_claimed(row, "routine_missed entity invalid")
+        return None
+    from mastisk.routines.sync import completion_dates, get_routine
+
+    if day in set(completion_dates(slug)):
+        _cancel_claimed(row, "routine completed")
+        return None
+    routine = get_routine(slug)
+    if routine is None or not routine.get("notify"):
+        _cancel_claimed(row, "routine unavailable")
+        return None
+    return {
+        **row,
+        "title": row.get("title") or "Routine missed",
+        "body": row.get("body") or f"{routine['name']} was not completed today.",
+    }
 
 
 def _task_due_target(row: dict) -> tuple[dict | None, str | None]:
@@ -586,6 +656,24 @@ def _ensure_daily_summary_reminder(now_dt: datetime) -> dict | None:
             (entity_id,),
         ).fetchone()
     return _reminder_row(dict(row)) if row else None
+
+
+def _routine_window_end(routine: dict, local_now: datetime) -> datetime | None:
+    if routine.get("specific_time"):
+        end_time = _parse_hhmm(str(routine["specific_time"]))
+        return datetime.combine(local_now.date(), end_time, tzinfo=local_now.tzinfo) + timedelta(
+            minutes=60
+        )
+    time_of_day = routine.get("time_of_day")
+    if time_of_day == "morning":
+        end_time = time(hour=12)
+    elif time_of_day == "afternoon":
+        end_time = time(hour=17)
+    elif time_of_day == "evening":
+        end_time = time(hour=22)
+    else:
+        return None
+    return datetime.combine(local_now.date(), end_time, tzinfo=local_now.tzinfo)
 
 
 def _log_invalid_daily_summary_config_once(value: str, error: str) -> None:

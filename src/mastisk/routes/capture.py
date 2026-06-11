@@ -4,6 +4,7 @@ from __future__ import annotations
 import hmac
 import logging
 import re
+from datetime import datetime
 from typing import Literal
 
 import yaml
@@ -15,6 +16,7 @@ from mastisk.capture.router import Capture, route_capture
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import append_project_log, find_project
 from mastisk.routes.notes import persist_note_capture
+from mastisk.routines.sync import complete_routine_completion, local_today
 from mastisk.settings import read_capture_bearer_token
 from mastisk.tasks.sync import append_task_to_host, journal_host_for_today
 
@@ -75,6 +77,15 @@ async def capture(
             return _persist_task_capture(routed, ts=req.ts, needs_triage=needs_triage)
         except Exception:
             log.exception("capture task write failed; falling back to raw inbox note")
+            return _persist_inbox_fallback(req.text, req.source)
+
+    if routed.type == "routine_done" and routed.routine:
+        try:
+            filed = _persist_routine_done_capture(routed, ts=req.ts)
+            if filed is not None:
+                return {**filed, "needs_triage": needs_triage}
+        except Exception:
+            log.exception("capture routine_done write failed; falling back to raw inbox note")
             return _persist_inbox_fallback(req.text, req.source)
 
     if routed.type == "project_update" and routed.project:
@@ -162,6 +173,22 @@ def _persist_project_update_capture(capture: Capture, *, needs_triage: bool) -> 
     }
 
 
+def _persist_routine_done_capture(capture: Capture, *, ts: str | None) -> dict | None:
+    if not capture.routine:
+        return None
+    day = local_today(_parse_client_datetime(ts))
+    updated = complete_routine_completion(capture.routine, date_value=day)
+    if updated is None:
+        return None
+    return {
+        "id": updated["slug"],
+        "type": "routine_done",
+        "routine_slug": updated["slug"],
+        "destination": updated["path"],
+        "streak": updated["streak"],
+    }
+
+
 def _date_marker(value: str | None) -> str | None:
     if not value:
         return None
@@ -182,6 +209,15 @@ def _persist_inbox_fallback(text: str, source: str) -> dict:
         "destination": row["path"],
         "needs_triage": True,
     }
+
+
+def _parse_client_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _has_typed_capture_metadata(capture: Capture) -> bool:

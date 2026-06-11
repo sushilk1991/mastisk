@@ -44,6 +44,7 @@ def test_capture_schema_matches_spec():
         "domain",
         "project",
         "person",
+        "routine",
         "due",
         "scheduled",
         "priority",
@@ -316,6 +317,59 @@ async def test_did_my_hint_does_not_force_intent_or_skip_gates(data_tmp):
         return_value=response,
     ) as run_mock:
         capture = await route_capture("did my vitamins", source="watch", ts=BASE_TS)
+
+    assert capture.type == "note"
+    assert capture.command_detected is False
+    prompt = run_mock.call_args.args[0]
+    assert "Fixed command intent: null" in prompt
+    assert "Command hint intent: routine_done" in prompt
+
+
+@pytest.mark.asyncio
+async def test_did_my_matching_routine_promotes_to_command(data_tmp, db, vault_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    from mastisk.routines.sync import create_routine_file
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_routine_file(name="Morning Vitamins", time_of_day="morning")
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="note", confidence=0.2))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as run_mock:
+        capture = await route_capture("did my vitamins", source="watch", ts=BASE_TS)
+
+    assert capture.type == "routine_done"
+    assert capture.routine == "morning-vitamins"
+    assert capture.command_detected is True
+    prompt = run_mock.call_args.args[0]
+    assert "Fixed command intent: routine_done" in prompt
+    assert '"slug": "morning-vitamins"' in prompt
+
+
+@pytest.mark.asyncio
+async def test_did_my_question_stays_hint_even_if_words_match_routine(data_tmp, db, vault_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    from mastisk.routines.sync import create_routine_file
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_routine_file(name="Flight", time_of_day="anytime")
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="note", confidence=0.2))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as run_mock:
+        capture = await route_capture("did my flight get rebooked?", source="watch", ts=BASE_TS)
 
     assert capture.type == "note"
     assert capture.command_detected is False

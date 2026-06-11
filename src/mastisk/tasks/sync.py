@@ -186,6 +186,10 @@ def rewrite_task(uid: str, **updates: Any) -> dict[str, Any] | None:
         scan_task_hosts([path])
         raise TaskLineMissingError(f"task line not found: {uid}") from exc
     scan_task_hosts([path])
+    if updates.get("checked") is True:
+        from mastisk.tasks.recurrence import materialize_next_instance
+
+        materialize_next_instance(uid)
     return get_task(uid)
 
 
@@ -248,6 +252,7 @@ def _task_row(row: dict[str, Any]) -> dict[str, Any]:
     row["checked"] = bool(row.get("checked"))
     row["needs_triage"] = bool(row.get("needs_triage"))
     row["no_reminder"] = bool(row.get("no_reminder"))
+    row["recurrence_unparsed"] = bool(row.get("recurrence_unparsed"))
     row["tags"] = json.loads(row.pop("tags_json") or "[]")
     row["links"] = json.loads(row.pop("links_json") or "[]")
     return row

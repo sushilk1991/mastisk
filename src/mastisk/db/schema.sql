@@ -391,6 +391,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   reminder_lead_minutes INTEGER,
   no_reminder      INTEGER NOT NULL DEFAULT 0,
   review_at        TEXT,
+  recurrence_materialized_key TEXT,
+  recurrence_unparsed INTEGER NOT NULL DEFAULT 0,
   deleted_at       DATETIME,
   created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -428,6 +430,43 @@ CREATE INDEX IF NOT EXISTS idx_reminders_entity ON reminders(entity_type, entity
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_daily_summary_date
   ON reminders(kind, entity_id)
   WHERE kind = 'daily_summary' AND deleted_at IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_routine_missed_date
+  ON reminders(kind, entity_id)
+  WHERE kind = 'routine_missed' AND deleted_at IS NULL;
+
+-- ─────────────────────────────── Personal OS Phase 5 ───────────────────────────────
+-- Routine files remain markdown-canonical. Completions are high-write rows, but
+-- every API mutation projects the completion list back into ## Completions.
+
+CREATE TABLE IF NOT EXISTS routines (
+  slug             TEXT PRIMARY KEY,
+  path             TEXT NOT NULL,
+  name             TEXT NOT NULL,
+  description      TEXT,
+  domain           TEXT,
+  time_of_day      TEXT NOT NULL,
+  specific_time    TEXT,
+  notify           INTEGER NOT NULL DEFAULT 0,
+  streak_type      TEXT NOT NULL DEFAULT 'ongoing',
+  target_days      INTEGER,
+  start_date       TEXT,
+  archived         INTEGER NOT NULL DEFAULT 0,
+  deleted_at       DATETIME,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS routine_completions (
+  routine_id       TEXT NOT NULL REFERENCES routines(slug) ON DELETE CASCADE,
+  date             TEXT NOT NULL,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(routine_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_routines_time ON routines(time_of_day);
+CREATE INDEX IF NOT EXISTS idx_routines_archived ON routines(archived);
+CREATE INDEX IF NOT EXISTS idx_routine_completions_date ON routine_completions(routine_id, date);
 
 -- ─────────────────────────────── Roundtables ───────────────────────────────
 -- A roundtable is one fan-out of a prompt to multiple LLMs + one synthesis.

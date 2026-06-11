@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import sqlite3
+import string
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -57,6 +58,7 @@ class Capture(BaseModel):
     domain: str | None = None
     project: str | None = None
     person: str | None = None
+    routine: str | None = None
     due: str | None = None
     scheduled: str | None = None
     priority: Priority | None = None
@@ -108,6 +110,7 @@ _PROMPT = """You are the Mastisk capture intent router.
 ## Existing routing context
 Existing domains: {domains}
 Existing projects: {projects}
+Existing routines: {routines}
 Existing people: []
 
 ## Request
@@ -131,6 +134,7 @@ Respond with a single JSON object only, matching this schema exactly:
   "domain": null,
   "project": null,
   "person": null,
+  "routine": null,
   "due": null,
   "scheduled": null,
   "priority": "high|medium|low|null",
@@ -171,14 +175,19 @@ def detect_command_hint(text: str) -> CaptureType | None:
 async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     settings = get_settings()
     fixed_intent = detect_command_intent(text)
+    routine_match = _match_routine_done_command(text)
+    if fixed_intent is None and routine_match is not None:
+        fixed_intent = "routine_done"
     hint_intent = detect_command_hint(text)
     timezone = settings.capture.default_timezone
     request_ts = _parse_request_ts(ts, timezone)
     domains, projects = _routing_context()
+    routines = _routine_routing_context()
     prompt = _PROMPT.format(
         identity=Agent.load_identity(),
         domains=domains,
         projects=projects,
+        routines=routines,
         source=source,
         ts=request_ts.isoformat() if request_ts is not None else "",
         fixed_intent=fixed_intent or "null",
@@ -206,6 +215,8 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
         payload["type"] = fixed_intent
     capture = Capture(**payload)
     capture.command_detected = fixed_intent is not None
+    if routine_match is not None:
+        capture.routine = routine_match["slug"]
 
     if capture.type == "task" or capture.due is not None:
         capture.due = resolve_datetime(text, request_ts, timezone, model_iso=capture.due)
@@ -271,6 +282,63 @@ def _routing_context() -> tuple[str, str]:
     )
 
 
+def _routine_routing_context() -> str:
+    try:
+        from mastisk.routines.sync import list_routines, scan_routines
+
+        scan_routines()
+        routines = [
+            {
+                "slug": routine["slug"],
+                "name": routine["name"],
+                "time_of_day": routine["time_of_day"],
+            }
+            for routine in list_routines(include_archived=False)
+        ]
+    except (sqlite3.Error, OSError):
+        routines = []
+    return json.dumps(routines, ensure_ascii=False)
+
+
+def _match_routine_done_command(text: str) -> dict[str, str] | None:
+    if text.strip().endswith("?"):
+        return None
+    match = re.match(r"^\s*did\s+my\s+(?P<routine>.+?)\s*[.!?]?\s*$", text, re.I)
+    if not match:
+        return None
+    target = _normalize_routine_ref(match.group("routine"))
+    if not target:
+        return None
+    try:
+        from mastisk.routines.sync import list_routines, scan_routines
+
+        scan_routines()
+        routines = list_routines(include_archived=False)
+    except (sqlite3.Error, OSError):
+        return None
+    target_tokens = set(target.split())
+    for routine in routines:
+        candidates = {
+            _normalize_routine_ref(routine["slug"].replace("-", " ")),
+            _normalize_routine_ref(routine["name"]),
+        }
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate_tokens = set(candidate.split())
+            if (
+                target in candidate
+                or target_tokens <= candidate_tokens
+            ):
+                return {"slug": routine["slug"], "name": routine["name"]}
+    return None
+
+
+def _normalize_routine_ref(value: str) -> str:
+    table = str.maketrans({char: " " for char in string.punctuation})
+    return re.sub(r"\s+", " ", value.lower().translate(table)).strip()
+
+
 def _coerce_payload(parsed: dict, text: str) -> dict:
     capture_type = _clean_capture_type(parsed.get("type"))
     priority = _clean_priority(parsed.get("priority"))
@@ -282,6 +350,7 @@ def _coerce_payload(parsed: dict, text: str) -> dict:
         "domain": parsed.get("domain"),
         "project": parsed.get("project"),
         "person": parsed.get("person"),
+        "routine": parsed.get("routine"),
         "due": parsed.get("due"),
         "scheduled": parsed.get("scheduled"),
         "priority": priority,

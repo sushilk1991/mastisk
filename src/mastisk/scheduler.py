@@ -98,14 +98,16 @@ async def start_scheduler():
         log.warning("scheduler: vault_integrity registration failed: %s", e)
 
     try:
-        from mastisk.routes.domains import sync_config_domains
         from mastisk.projects.sync import scan_projects
+        from mastisk.routes.domains import sync_config_domains
+        from mastisk.routines.sync import scan_routines
         from mastisk.tasks.sync import scan_tasks
 
         def personal_os_scan() -> None:
             sync_config_domains()
             scan_projects()
             scan_tasks()
+            scan_routines()
 
         sched.add_job(
             personal_os_scan, "interval",
@@ -117,6 +119,23 @@ async def start_scheduler():
         log.info("scheduler: personal_os_scan registered (5min tick)")
     except Exception as e:
         log.warning("scheduler: personal_os_scan registration failed: %s", e)
+
+    try:
+        from mastisk.settings import get_settings
+        from mastisk.tasks.recurrence import recurrence_tick
+
+        sched.add_job(
+            recurrence_tick, "cron",
+            hour=0,
+            minute=10,
+            timezone=ZoneInfo(get_settings().capture.default_timezone),
+            id="recurrence_tick",
+            max_instances=1,
+            coalesce=True,
+        )
+        log.info("scheduler: recurrence_tick registered (daily 00:10 local)")
+    except Exception as e:
+        log.warning("scheduler: recurrence_tick registration failed: %s", e)
 
     try:
         from mastisk.agents.reminder_engine import reminder_tick

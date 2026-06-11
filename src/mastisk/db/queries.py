@@ -110,12 +110,19 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "tasks", "needs_triage", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "tasks", "reminder_lead_minutes", "INTEGER")
     _add_column_if_missing(conn, "tasks", "no_reminder", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "tasks", "recurrence_materialized_key", "TEXT")
+    _add_column_if_missing(conn, "tasks", "recurrence_unparsed", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "reminders", "attempts", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "reminders", "next_attempt_at", "DATETIME")
     _add_column_if_missing(conn, "reminders", "last_error", "TEXT")
     _add_column_if_missing(conn, "reminders", "title", "TEXT")
     _add_column_if_missing(conn, "reminders", "body", "TEXT")
     _add_column_if_missing(conn, "reminders", "url", "TEXT")
+    conn.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_routine_missed_date
+           ON reminders(kind, entity_id)
+           WHERE kind = 'routine_missed' AND deleted_at IS NULL"""
+    )
     _add_column_if_missing(
         conn, "articles", "source_note_id",
         "INTEGER REFERENCES notes(id) ON DELETE SET NULL",

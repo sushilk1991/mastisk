@@ -649,6 +649,37 @@ def test_command_detected_capture_skips_confidence_gate(
     assert "- [ ] call Sam" in file_text
 
 
+def test_capture_routine_done_marks_completion_and_reports_streak(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    from mastisk.routines.sync import create_routine_file
+
+    create_routine_file(name="Morning Vitamins", time_of_day="morning")
+    command_capture = _capture(type="routine_done", confidence=0.2, body="did my vitamins")
+    command_capture.command_detected = True
+    command_capture.routine = "morning-vitamins"
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = command_capture
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={
+            "text": "did my vitamins",
+            "source": "watch",
+            "ts": "2026-06-11T09:00:00-07:00",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "routine_done"
+    assert body["routine_slug"] == "morning-vitamins"
+    assert body["streak"]["current"] == 1
+    file_text = (vault_tmp / "routines" / "morning-vitamins.md").read_text()
+    assert "- 2026-06-11" in file_text
+
+
 def test_typed_capture_write_failure_rolls_back_and_returns_inbox_fallback(
     client_with_token, vault_tmp, db, fake_capture_router, monkeypatch
 ):
