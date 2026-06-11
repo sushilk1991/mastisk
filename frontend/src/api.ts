@@ -436,11 +436,11 @@ export const api = {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text }),
       }),
-    setMilestoneDone: (slug: string, position: number, done: boolean): Promise<ProjectDetail> =>
+    setMilestoneDone: (slug: string, position: number, done: boolean, expectedText: string): Promise<ProjectDetail> =>
       j<ProjectDetail>(`${BASE}/projects/${encodeURIComponent(slug)}/milestones/${position}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ done }),
+        body: JSON.stringify({ done, expected_text: expectedText }),
       }),
     addTime: (slug: string, body: { date?: string | null; hours: number; text: string }): Promise<ProjectDetail> =>
       j<ProjectDetail>(`${BASE}/projects/${encodeURIComponent(slug)}/time`, {

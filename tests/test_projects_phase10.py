@@ -72,7 +72,7 @@ def test_milestone_routes_append_and_toggle_file_first(client, db, vault_tmp):
 
     toggled = client.patch(
         f"/api/projects/{project['slug']}/milestones/1",
-        json={"done": True},
+        json={"done": True, "expected_text": "Launch beta"},
     )
     assert toggled.status_code == 200, toggled.text
     assert toggled.json()["milestone_progress"] == {"done": 1, "total": 1, "percent": 100}
@@ -84,6 +84,28 @@ def test_milestone_routes_append_and_toggle_file_first(client, db, vault_tmp):
         (project["slug"],),
     ).fetchone()
     assert row["done"] == 1
+
+
+def test_milestone_toggle_conflicts_on_stale_expected_text(client, vault_tmp):
+    project = client.post("/api/projects", json={"name": "Mastisk"}).json()
+    created = client.post(
+        f"/api/projects/{project['slug']}/milestones",
+        json={"text": "Launch beta"},
+    )
+    assert created.status_code == 201, created.text
+    path = vault_tmp / "projects" / "mastisk.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("Launch beta", "Edited elsewhere"),
+        encoding="utf-8",
+    )
+
+    toggled = client.patch(
+        f"/api/projects/{project['slug']}/milestones/1",
+        json={"done": True, "expected_text": "Launch beta"},
+    )
+
+    assert toggled.status_code == 409
+    assert "- [ ] Edited elsewhere" in path.read_text(encoding="utf-8")
 
 
 def test_milestone_toggle_ignores_blank_checkbox_lines(db, vault_tmp):
@@ -100,11 +122,48 @@ def test_milestone_toggle_ignores_blank_checkbox_lines(db, vault_tmp):
     )
     scan_projects([path])
 
-    updated = set_project_milestone_done("mastisk", 1, done=True)
+    updated = set_project_milestone_done("mastisk", 1, done=True, expected_text="Alpha")
 
     assert updated is not None
     file_text = path.read_text(encoding="utf-8")
     assert "- [ ]\n- [x] Alpha" in file_text
+
+
+def test_all_milestones_sections_are_counted_and_ignored_by_task_scan(db, vault_tmp):
+    from mastisk.projects.sync import project_payload, scan_projects
+    from mastisk.tasks.sync import scan_task_hosts
+
+    path = vault_tmp / "projects" / "mastisk.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\nname: Mastisk\nstatus: active\n---\n\n"
+        "## Milestones\n"
+        "- [ ] First milestone 🆔 oldmilestone1\n\n"
+        "## Tasks\n"
+        "- [ ] Real task 🆔 task1\n\n"
+        "## Milestones\n"
+        "- [x] Second milestone 🆔 oldmilestone2\n",
+        encoding="utf-8",
+    )
+
+    scan_projects([path])
+    scan_task_hosts([path], uid_factory=lambda: "baduid")
+
+    milestones = db.execute(
+        "SELECT position, text, done FROM milestones WHERE project_slug = 'mastisk' ORDER BY position"
+    ).fetchall()
+    assert [dict(row) for row in milestones] == [
+        {"position": 1, "text": "First milestone", "done": 0},
+        {"position": 2, "text": "Second milestone", "done": 1},
+    ]
+    payload = project_payload("mastisk")
+    assert payload is not None
+    assert payload["milestone_progress"] == {"done": 1, "total": 2, "percent": 50}
+    tasks = db.execute(
+        "SELECT uid, text FROM tasks WHERE deleted_at IS NULL ORDER BY uid"
+    ).fetchall()
+    assert [dict(row) for row in tasks] == [{"uid": "task1", "text": "Real task"}]
+    assert "baduid" not in path.read_text(encoding="utf-8")
 
 
 def test_checklist_template_application_creates_mirrored_tasks_with_uids(client, db, vault_tmp):
@@ -194,6 +253,37 @@ def test_time_entry_scan_route_and_totals(client, db, vault_tmp):
     file_text = path.read_text(encoding="utf-8")
     assert f"- {today.isoformat()} 0.5h reviewed notes" in file_text
     assert db.execute("SELECT COUNT(*) AS n FROM time_entries").fetchone()["n"] == 3
+
+
+def test_project_time_rejects_exponent_hours_without_writing(client, vault_tmp):
+    project = client.post("/api/projects", json={"name": "Client"}).json()
+
+    added = client.post(
+        f"/api/projects/{project['slug']}/time",
+        json={"date": "2026-06-10", "hours": 1_000_000, "text": "too much"},
+    )
+
+    assert added.status_code == 422
+    file_text = (vault_tmp / "projects" / "client.md").read_text(encoding="utf-8")
+    assert "too much" not in file_text
+
+
+def test_append_project_time_verifies_formatted_line_round_trips(db, vault_tmp):
+    from mastisk.projects.sync import append_project_time, scan_projects
+
+    path = vault_tmp / "projects" / "client.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\nname: Client\nstatus: active\n---\n\n"
+        "## Activity\n",
+        encoding="utf-8",
+    )
+    scan_projects([path])
+
+    with pytest.raises(RuntimeError, match="round-trip"):
+        append_project_time("client", entry_date="2026-06-10", hours=1_000_000, text="too much")
+
+    assert "too much" not in path.read_text(encoding="utf-8")
 
 
 def test_project_detail_reads_milestones_and_time_from_file_before_scan(client, vault_tmp):
@@ -370,6 +460,38 @@ def test_retainer_rollover_skips_bad_due_dates_and_continues(
     assert "- [ ] Monthly report 📅 2026-07-31 🆔 new1" in first_text
     second_text = second.read_text(encoding="utf-8")
     assert "- [ ] Other report 📅 2026-07-31 🆔 new2" in second_text
+
+
+def test_retainer_rollover_skips_noncanonical_milestones_section(db, vault_tmp, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "UTC"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.agents.retainer_rollover import retainer_rollover
+    from mastisk.projects.sync import scan_projects
+
+    path = vault_tmp / "projects" / "client.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\n"
+        "name: Client\n"
+        "type: retainer\n"
+        "status: active\n"
+        "---\n\n"
+        "##   Milestones\n"
+        "- [ ] Milestone due 📅 2026-06-20 🆔 milestone1\n\n"
+        "## Tasks\n"
+        "- [ ] Old task 📅 2026-06-20 🆔 task1\n",
+        encoding="utf-8",
+    )
+    scan_projects([path])
+
+    assert retainer_rollover(now=datetime(2026, 7, 5, 9, 0, tzinfo=UTC)) == 1
+
+    file_text = path.read_text(encoding="utf-8")
+    assert "- [ ] Milestone due 📅 2026-06-20 🆔 milestone1" in file_text
+    assert "- [ ] Old task 📅 2026-07-31 🆔 task1" in file_text
 
 
 def test_retainer_current_month_state_includes_month_end_due_times(db, vault_tmp):

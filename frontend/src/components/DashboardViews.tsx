@@ -402,10 +402,10 @@ export function ProjectsView({ liveKey }: LiveProps) {
     await loadList();
   }
 
-  async function setMilestoneDone(position: number, done: boolean) {
+  async function setMilestoneDone(position: number, done: boolean, expectedText: string) {
     if (!detail) return;
     const slug = detail.slug;
-    const updated = await api.projectsApi.setMilestoneDone(slug, position, done);
+    const updated = await api.projectsApi.setMilestoneDone(slug, position, done, expectedText);
     if (selectedRef.current === slug) setDetail(updated);
     await loadList();
   }
@@ -486,7 +486,7 @@ export function ProjectsView({ liveKey }: LiveProps) {
                 <MilestonesBlock
                   detail={detail}
                   onAdd={(text) => runMutation(() => addMilestone(text), setErr)}
-                  onToggle={(position, done) => runMutation(() => setMilestoneDone(position, done), setErr)}
+                  onToggle={(position, done, expectedText) => runMutation(() => setMilestoneDone(position, done, expectedText), setErr)}
                 />
                 <TimeBlock detail={detail} onAdd={(hours, text, entryDate) => runMutation(() => addTime(hours, text, entryDate), setErr)}/>
                 {detail.retainer && <RetainerBlock detail={detail}/>}
@@ -1208,7 +1208,7 @@ function MilestonesBlock({
 }: {
   detail: ProjectDetail;
   onAdd: (text: string) => void;
-  onToggle: (position: number, done: boolean) => void;
+  onToggle: (position: number, done: boolean, expectedText: string) => void;
 }) {
   const [text, setText] = useState('');
   const progress = detail.milestone_progress;
@@ -1228,7 +1228,7 @@ function MilestonesBlock({
               <input
                 type="checkbox"
                 checked={milestone.done}
-                onChange={(event) => onToggle(milestone.position, event.target.checked)}
+                onChange={(event) => onToggle(milestone.position, event.target.checked, milestone.text)}
               />
               <span>{milestone.text}</span>
             </label>

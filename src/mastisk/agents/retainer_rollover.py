@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from mastisk.file_locks import host_file_lock
-from mastisk.markdown_sections import append_to_section
+from mastisk.markdown_sections import append_to_section, section_line_numbers
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import (
     dump_project_file,
@@ -95,14 +95,11 @@ def _carry_forward_overdue_tasks(body: str, month_start: date, month_end: str) -
     # date is before the first day of the materialized month are re-dated to the
     # new month end. Done tasks and undated tasks stay unchanged.
     lines = body.splitlines(keepends=True)
+    milestone_lines = section_line_numbers(body, {"Milestones"})
     rewritten: list[str] = []
-    in_milestones = False
-    for raw in lines:
+    for line_number, raw in enumerate(lines, start=1):
         line, ending = _split_line_ending(raw)
-        heading = line.strip().lower()
-        if heading.startswith("## "):
-            in_milestones = heading == "## milestones"
-        parsed = None if in_milestones else parse_task_line(line)
+        parsed = None if line_number in milestone_lines else parse_task_line(line)
         due_date = _safe_task_due_date(parsed, line) if parsed is not None else None
         if (
             parsed is not None

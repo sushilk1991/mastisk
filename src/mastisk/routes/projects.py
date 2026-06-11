@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from mastisk.projects.sync import (
     ChecklistTemplateValidationError,
+    MilestoneConflictError,
     MilestoneMissingError,
     append_project_milestone,
     append_project_time,
@@ -76,11 +77,19 @@ class MilestoneCreate(BaseModel):
 
 class MilestonePatch(BaseModel):
     done: bool
+    expected_text: str = Field(min_length=1)
+
+    @field_validator("expected_text")
+    @classmethod
+    def _non_blank_expected_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("expected_text must be non-blank")
+        return value.strip()
 
 
 class TimeCreate(BaseModel):
     date: str | None = None
-    hours: float = Field(ge=0.01)
+    hours: float = Field(ge=0.01, le=10000)
     text: str = Field(min_length=1)
 
     @field_validator("text")
@@ -145,9 +154,16 @@ async def toggle_milestone_endpoint(
     req: MilestonePatch,
 ) -> dict:
     try:
-        updated = set_project_milestone_done(slug, position, done=req.done)
+        updated = set_project_milestone_done(
+            slug,
+            position,
+            done=req.done,
+            expected_text=req.expected_text,
+        )
     except MilestoneMissingError as exc:
         raise HTTPException(status_code=404, detail="milestone not found") from exc
+    except MilestoneConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="project not found")
     return updated

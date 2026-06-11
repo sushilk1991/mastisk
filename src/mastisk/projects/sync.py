@@ -12,7 +12,11 @@ from slugify import slugify
 
 from mastisk.db.queries import connect
 from mastisk.file_locks import host_file_lock
-from mastisk.markdown_sections import append_to_section
+from mastisk.markdown_sections import (
+    append_to_section,
+    section_line_numbers,
+    section_lines,
+)
 from mastisk.paths import checklist_templates_dir, projects_dir, vault_dir
 from mastisk.routes.notes import atomic_write
 from mastisk.settings import get_settings
@@ -32,6 +36,10 @@ _UID_RE = re.compile(r"\s*🆔\s*[A-Za-z0-9_-]+")
 
 class MilestoneMissingError(RuntimeError):
     """Raised when a milestone position is not present in the project file."""
+
+
+class MilestoneConflictError(RuntimeError):
+    """Raised when the milestone text no longer matches the caller's expectation."""
 
 
 class ChecklistTemplateValidationError(ValueError):
@@ -240,6 +248,7 @@ def set_project_milestone_done(
     position: int,
     *,
     done: bool,
+    expected_text: str,
 ) -> dict[str, Any] | None:
     project = get_project(slug)
     if project is None:
@@ -250,7 +259,10 @@ def set_project_milestone_done(
         return None
     with host_file_lock(path):
         markdown = path.read_text(encoding="utf-8")
-        atomic_write(path, _rewrite_milestone(markdown, position, done=done))
+        atomic_write(
+            path,
+            _rewrite_milestone(markdown, position, done=done, expected_text=expected_text),
+        )
     scan_projects([path])
     return project_payload(slug)
 
@@ -274,7 +286,9 @@ def append_project_time(
         return None
     with host_file_lock(path):
         markdown = path.read_text(encoding="utf-8")
-        line = f"- {day} {hours:g}h {_sanitize_line(text)}"
+        line = _format_time_entry_line(day, hours, text)
+        if _parse_time_entry_line(line, position=1) is None:
+            raise RuntimeError("formatted time entry did not round-trip")
         atomic_write(path, append_to_section(markdown, "Activity", line))
     scan_projects([path])
     return project_payload(slug)
@@ -468,7 +482,7 @@ def _parse_milestones(body: str) -> list[dict[str, Any]]:
         milestones.append(
             {
                 "position": len(milestones) + 1,
-                "text": _UID_RE.sub("", match.group("text")).strip(),
+                "text": _milestone_text(match),
                 "done": match.group("mark").lower() == "x",
             }
         )
@@ -478,62 +492,39 @@ def _parse_milestones(body: str) -> list[dict[str, Any]]:
 def _parse_time_entries(body: str) -> list[dict[str, Any]]:
     entries = []
     for line in _section_lines(body, "Activity"):
-        match = _ACTIVITY_RE.match(line)
-        if not match:
-            continue
-        parsed_date = _clean_date(match.group("date"))
-        if parsed_date is None:
-            continue
-        try:
-            hours = float(match.group("hours"))
-        except ValueError:
-            continue
-        if hours <= 0:
-            continue
-        entries.append(
-            {
-                "position": len(entries) + 1,
-                "date": parsed_date,
-                "hours": hours,
-                "text": match.group("text").strip(),
-            }
-        )
+        parsed = _parse_time_entry_line(line, position=len(entries) + 1)
+        if parsed is not None:
+            entries.append(parsed)
     return entries
 
 
 def _section_lines(body: str, heading: str) -> list[str]:
-    lines = body.splitlines()
-    section_re = re.compile(rf"^##\s+{re.escape(heading)}\s*$", re.I)
-    next_section_re = re.compile(r"^##\s+")
-    for idx, line in enumerate(lines):
-        if not section_re.match(line):
-            continue
-        end = len(lines)
-        for cursor in range(idx + 1, len(lines)):
-            if next_section_re.match(lines[cursor]):
-                end = cursor
-                break
-        return lines[idx + 1:end]
-    return []
+    return section_lines(body, heading)
 
 
-def _rewrite_milestone(markdown: str, position: int, *, done: bool) -> str:
+def _rewrite_milestone(
+    markdown: str,
+    position: int,
+    *,
+    done: bool,
+    expected_text: str,
+) -> str:
     if position < 1:
         raise MilestoneMissingError(f"milestone not found: {position}")
     lines = markdown.splitlines(keepends=True)
-    active = False
+    milestone_lines = section_line_numbers(markdown, {"Milestones"})
     count = 0
     rewritten: list[str] = []
-    for raw in lines:
+    for line_number, raw in enumerate(lines, start=1):
         line, ending = _split_line_ending(raw)
-        heading = re.match(r"^##\s+(?P<heading>.+?)\s*$", line)
-        if heading:
-            active = heading.group("heading").strip().lower() == "milestones"
-            rewritten.append(raw)
-            continue
-        if active and _MILESTONE_RE.match(line):
+        if line_number in milestone_lines and (match := _MILESTONE_RE.match(line)):
             count += 1
             if count == position:
+                actual_text = _milestone_text(match)
+                if actual_text != expected_text:
+                    raise MilestoneConflictError(
+                        f"milestone text mismatch: expected {expected_text!r}, found {actual_text!r}"
+                    )
                 mark = "x" if done else " "
                 line = re.sub(r"\[[ xX]\]", f"[{mark}]", line, count=1)
                 rewritten.append(line + ending)
@@ -542,6 +533,35 @@ def _rewrite_milestone(markdown: str, position: int, *, done: bool) -> str:
     if count < position:
         raise MilestoneMissingError(f"milestone not found: {position}")
     return "".join(rewritten)
+
+
+def _format_time_entry_line(day: str, hours: float, text: str) -> str:
+    return f"- {day} {hours:g}h {_sanitize_line(text)}"
+
+
+def _parse_time_entry_line(line: str, *, position: int) -> dict[str, Any] | None:
+    match = _ACTIVITY_RE.match(line)
+    if not match:
+        return None
+    parsed_date = _clean_date(match.group("date"))
+    if parsed_date is None:
+        return None
+    try:
+        hours = float(match.group("hours"))
+    except ValueError:
+        return None
+    if hours <= 0:
+        return None
+    return {
+        "position": position,
+        "date": parsed_date,
+        "hours": hours,
+        "text": match.group("text").strip(),
+    }
+
+
+def _milestone_text(match: re.Match[str]) -> str:
+    return _UID_RE.sub("", match.group("text")).strip()
 
 
 def _payload_time_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:

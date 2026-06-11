@@ -13,6 +13,8 @@ from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any
 
+from mastisk.markdown_sections import section_line_numbers
+
 _UNSET = object()
 
 _TASK_RE = re.compile(r"^(?P<prefix>\s*-\s+\[(?P<mark>[ xX])\]\s*)(?P<body>.*)$")
@@ -276,19 +278,7 @@ def _due_value(day: str | None, clock: str | None) -> str | None:
 
 
 def _ignored_line_numbers(markdown: str, headings: set[str]) -> set[int]:
-    normalized = {heading.strip().lower() for heading in headings if heading.strip()}
-    if not normalized:
-        return set()
-    ignored: set[int] = set()
-    active = False
-    for line_number, line in enumerate(markdown.splitlines(), start=1):
-        heading = re.match(r"^##\s+(?P<heading>.+?)\s*$", line)
-        if heading:
-            active = heading.group("heading").strip().lower() in normalized
-            continue
-        if active:
-            ignored.add(line_number)
-    return ignored
+    return section_line_numbers(markdown, headings)
 
 
 def _due_marker_parts(value: str) -> list[str]:
