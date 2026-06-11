@@ -35,6 +35,29 @@ def test_task_scan_soft_deletes_tasks_removed_from_file(db, vault_tmp):
     assert row["deleted_at"] is not None
 
 
+def test_task_scan_reassigns_duplicate_uid_in_later_host(db, vault_tmp):
+    from mastisk.tasks.sync import scan_task_hosts
+
+    journal = vault_tmp / "journal" / "2026-06-11.md"
+    project = vault_tmp / "projects" / "mastisk.md"
+    journal.parent.mkdir(parents=True)
+    project.parent.mkdir(parents=True)
+    journal.write_text("## Tasks\n- [ ] journal task 🆔 dup1\n", encoding="utf-8")
+    project.write_text("## Tasks\n- [ ] project task 🆔 dup1\n", encoding="utf-8")
+
+    scan_task_hosts([journal, project], uid_factory=lambda: "fresh2")
+
+    rows = db.execute(
+        "SELECT uid, host_path, text FROM tasks WHERE deleted_at IS NULL ORDER BY host_path"
+    ).fetchall()
+    assert [(row["uid"], row["text"]) for row in rows] == [
+        ("dup1", "journal task"),
+        ("fresh2", "project task"),
+    ]
+    assert "🆔 dup1" in journal.read_text(encoding="utf-8")
+    assert "🆔 fresh2" in project.read_text(encoding="utf-8")
+
+
 def test_project_scan_mirrors_frontmatter_and_soft_deletes_missing_files(db, vault_tmp):
     from mastisk.projects.sync import scan_projects
 

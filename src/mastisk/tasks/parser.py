@@ -149,9 +149,10 @@ def ensure_task_uids(
     markdown: str,
     *,
     uid_factory: Callable[[], str] | None = None,
+    existing_uids: set[str] | None = None,
 ) -> tuple[str, list[str]]:
     factory = uid_factory or generate_uid
-    seen: set[str] = set()
+    seen: set[str] = set(existing_uids or set())
     assigned: list[str] = []
     rewritten: list[str] = []
     for raw in markdown.splitlines(keepends=True):

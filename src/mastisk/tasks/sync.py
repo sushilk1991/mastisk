@@ -52,7 +52,7 @@ def scan_task_hosts(
                     continue
                 markdown = path.read_text(encoding="utf-8")
                 markdown_with_uids, new_uids = ensure_task_uids(
-                    markdown, uid_factory=factory
+                    markdown, uid_factory=factory, existing_uids=seen
                 )
                 if markdown_with_uids != markdown:
                     atomic_write(path, markdown_with_uids)
