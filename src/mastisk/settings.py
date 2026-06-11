@@ -84,6 +84,13 @@ class DomainsSettings(BaseSettings):
     names: list[str] = Field(default_factory=list)
 
 
+class DashboardSettings(BaseSettings):
+    """Dashboard intelligence defaults for Phase 8 derived scans."""
+    slipping_project_days: int = 14
+    slipping_task_days: int = 7
+    triage_reminder_days: int = 3
+
+
 class RoundtableSettings(BaseSettings):
     """Config for the multi-LLM roundtable subsystem.
     See docs/superpowers/specs/2026-04-22-multi-llm-roundtable-design.md §7."""
@@ -245,6 +252,8 @@ class Settings(BaseSettings):
     notify: NotifySettings = Field(default_factory=NotifySettings)
 
     domains: DomainsSettings = Field(default_factory=DomainsSettings)
+
+    dashboard: DashboardSettings = Field(default_factory=DashboardSettings)
 
     roundtable: RoundtableSettings = Field(default_factory=RoundtableSettings)
 

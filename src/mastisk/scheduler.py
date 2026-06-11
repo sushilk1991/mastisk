@@ -140,6 +140,31 @@ async def start_scheduler():
         log.warning("scheduler: recurrence_tick registration failed: %s", e)
 
     try:
+        from mastisk.dashboard.intelligence import needs_review_scan, slipping_scan
+
+        sched.add_job(
+            slipping_scan,
+            "interval",
+            minutes=60,
+            id="slipping_scan",
+            max_instances=1,
+            next_run_time=datetime.now(UTC) + timedelta(seconds=75),
+            coalesce=True,
+        )
+        sched.add_job(
+            needs_review_scan,
+            "interval",
+            minutes=60,
+            id="needs_review_scan",
+            max_instances=1,
+            next_run_time=datetime.now(UTC) + timedelta(seconds=90),
+            coalesce=True,
+        )
+        log.info("scheduler: dashboard intelligence scans registered (60min tick)")
+    except Exception as e:
+        log.warning("scheduler: dashboard intelligence registration failed: %s", e)
+
+    try:
         from mastisk.agents.reminder_engine import reminder_tick
         from mastisk.settings import get_settings
 

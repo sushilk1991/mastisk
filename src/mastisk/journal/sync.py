@@ -55,6 +55,7 @@ def append_log(
         updated_body = append_to_section(markdown_body, "Log", line)
         atomic_write(target, _dump_day(frontmatter, updated_body))
     scan_journal_days([target])
+    _bump_projects_for_journal_day(target_day.isoformat())
     return {
         "date": target_day.isoformat(),
         "path": str(target.relative_to(vault_dir())),
@@ -358,6 +359,27 @@ def _fired_reminders_for_day(day: str) -> list[dict[str, Any]]:
             (start_utc, end_utc),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _bump_projects_for_journal_day(day: str) -> None:
+    host_path = f"journal/{day}.md"
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT DISTINCT project
+               FROM tasks
+               WHERE host_path = ?
+                 AND project IS NOT NULL
+                 AND deleted_at IS NULL""",
+            (host_path,),
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                """UPDATE projects
+                   SET last_activity_at = CURRENT_TIMESTAMP,
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE slug = ? AND deleted_at IS NULL""",
+                (row["project"],),
+            )
 
 
 def _task_row(row: dict[str, Any]) -> dict[str, Any]:

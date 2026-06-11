@@ -360,6 +360,9 @@ CREATE TABLE IF NOT EXISTS projects (
   status           TEXT NOT NULL DEFAULT 'active',
   due              TEXT,
   last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  staleness_days   INTEGER,
+  slipping_muted_until TEXT,
+  slipping_muted   INTEGER NOT NULL DEFAULT 0,
   deleted_at       DATETIME,
   created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -386,6 +389,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   links_json       TEXT NOT NULL DEFAULT '[]',
   needs_triage     INTEGER NOT NULL DEFAULT 0,
   last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  staleness_days   INTEGER,
+  slipping_muted_until TEXT,
+  slipping_muted   INTEGER NOT NULL DEFAULT 0,
   -- Capture-event reminder facts are preserved across file-truth scans; the
   -- markdown task line remains canonical for text/status/date/tag fields.
   reminder_lead_minutes INTEGER,
@@ -486,6 +492,43 @@ CREATE TABLE IF NOT EXISTS journal_days (
 
 CREATE INDEX IF NOT EXISTS idx_journal_days_updated ON journal_days(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_journal_days_active ON journal_days(date) WHERE deleted_at IS NULL;
+
+-- ─────────────────────────────── Personal OS Phase 8 ───────────────────────────────
+-- Dashboard intelligence is DB-side derived/operator state. It never creates
+-- markdown obligations; task/project/journal files remain canonical.
+
+CREATE TABLE IF NOT EXISTS daily_focus (
+  date       TEXT NOT NULL,
+  task_uid   TEXT NOT NULL,
+  position   INTEGER NOT NULL CHECK(position BETWEEN 1 AND 3),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(date, position),
+  UNIQUE(date, task_uid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_focus_date ON daily_focus(date, position);
+
+CREATE TABLE IF NOT EXISTS slipping (
+  entity_type TEXT NOT NULL,
+  entity_id   TEXT NOT NULL,
+  stale_since TEXT NOT NULL,
+  computed_at DATETIME NOT NULL,
+  PRIMARY KEY(entity_type, entity_id)
+);
+
+CREATE TABLE IF NOT EXISTS needs_review (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type  TEXT NOT NULL,
+  entity_id    TEXT NOT NULL,
+  reason       TEXT NOT NULL,
+  surfaced_at  DATETIME NOT NULL,
+  dismissed_at DATETIME,
+  UNIQUE(entity_type, entity_id, reason)
+);
+
+CREATE INDEX IF NOT EXISTS idx_needs_review_open
+  ON needs_review(surfaced_at DESC)
+  WHERE dismissed_at IS NULL;
 
 -- ─────────────────────────────── Roundtables ───────────────────────────────
 -- A roundtable is one fan-out of a prompt to multiple LLMs + one synthesis.

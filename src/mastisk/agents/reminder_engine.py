@@ -207,7 +207,12 @@ def retry_reminder(reminder_id: int) -> dict | None:
     return _reminder_row(dict(row))
 
 
-def compose_daily_summary(*, today: date, open_tasks: list[dict]) -> tuple[str, str]:
+def compose_daily_summary(
+    *,
+    today: date,
+    open_tasks: list[dict],
+    needs_review_count: int = 0,
+) -> tuple[str, str]:
     due_today: list[dict] = []
     overdue: list[dict] = []
     for task in open_tasks:
@@ -230,6 +235,8 @@ def compose_daily_summary(*, today: date, open_tasks: list[dict]) -> tuple[str, 
     if overdue:
         lines.extend(["", f"Overdue ({len(overdue)})"])
         lines.extend(f"- {task['text']}" for task in overdue)
+    if needs_review_count:
+        lines.extend(["", f"{needs_review_count} need review."])
     if not due_today and not overdue:
         lines.extend(["", "No open tasks due today or overdue."])
     return title, "\n".join(lines)
@@ -653,7 +660,12 @@ def _ensure_daily_summary_reminder(now_dt: datetime) -> dict | None:
         return _reminder_row(dict(row))
 
     open_tasks = _open_tasks_with_due()
-    title, body = compose_daily_summary(today=local_now.date(), open_tasks=open_tasks)
+    needs_review_count = _daily_summary_needs_review_count(local_now.date())
+    title, body = compose_daily_summary(
+        today=local_now.date(),
+        open_tasks=open_tasks,
+        needs_review_count=needs_review_count,
+    )
     with connect() as conn:
         conn.execute(
             """INSERT OR IGNORE INTO reminders
@@ -695,6 +707,17 @@ def _log_invalid_daily_summary_config_once(value: str, error: str) -> None:
         return
     _logged_invalid_daily_summary_configs.add(key)
     log.warning("daily summary disabled by invalid reminders config: %s", error)
+
+
+def _daily_summary_needs_review_count(today: date) -> int:
+    try:
+        from mastisk.dashboard.intelligence import count_open_needs_review, needs_review_scan
+
+        needs_review_scan(today=today)
+        return count_open_needs_review()
+    except Exception:
+        log.exception("daily summary needs-review count failed")
+        return 0
 
 
 def _task_due_date(value: str | None) -> date | None:

@@ -179,6 +179,8 @@ def append_task_to_host(
     row = get_task(task_uid)
     if row is None:
         raise RuntimeError(f"task mirror missing after write: {task_uid}")
+    if row.get("project"):
+        _bump_project_activity(row["project"])
     return row
 
 
@@ -195,6 +197,13 @@ def rewrite_task(uid: str, **updates: Any) -> dict[str, Any] | None:
         scan_task_hosts([path])
         raise TaskLineMissingError(f"task line not found: {uid}") from exc
     scan_task_hosts([path])
+    # Dashboard activity is user mutation only: task toggle/edit, project log
+    # append, project-hosted task capture, and journal logs for journal-hosted
+    # tasks already linked to a project. Passive file scans preserve history.
+    _bump_task_activity(uid)
+    updated_task = get_task(uid)
+    if updated_task and updated_task.get("project"):
+        _bump_project_activity(updated_task["project"])
     if updates.get("checked") is True:
         from mastisk.tasks.recurrence import materialize_next_instance
 
@@ -368,3 +377,25 @@ def _reconcile_task_due_reminders(uid: str) -> None:
     from mastisk.agents.reminder_engine import reconcile_task_due_reminders
 
     reconcile_task_due_reminders(uid)
+
+
+def _bump_task_activity(uid: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            """UPDATE tasks
+               SET last_activity_at = CURRENT_TIMESTAMP,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE uid = ?""",
+            (uid,),
+        )
+
+
+def _bump_project_activity(slug: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            """UPDATE projects
+               SET last_activity_at = CURRENT_TIMESTAMP,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE slug = ? AND deleted_at IS NULL""",
+            (slug,),
+        )
