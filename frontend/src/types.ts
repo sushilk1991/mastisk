@@ -376,6 +376,8 @@ export interface SlippingItem {
   domain: string | null;
   stale_since: string;
   computed_at: string;
+  slipping_muted?: boolean;
+  slipping_muted_until?: string | null;
   link: string;
 }
 

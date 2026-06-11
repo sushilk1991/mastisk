@@ -734,13 +734,15 @@ function FocusTaskRow({ task, today, onChanged }: { task: TaskRow; today: string
 
 function SlippingRail({ items, onChanged }: { items: SlippingItem[]; onChanged: ChangeHandler }) {
   const [err, setErr] = useState<string | null>(null);
-  async function act(item: SlippingItem, kind: 'snooze' | 'mute') {
+  async function act(item: SlippingItem, kind: 'snooze' | 'mute' | 'unmute') {
     setErr(null);
     try {
       if (kind === 'snooze') {
         await api.slipping.snooze(item.entity_type, item.entity_id, 7);
-      } else {
+      } else if (kind === 'mute') {
         await api.slipping.mute(item.entity_type, item.entity_id);
+      } else {
+        await api.slipping.unmute(item.entity_type, item.entity_id);
       }
       await onChanged();
     } catch (e) {
@@ -760,8 +762,11 @@ function SlippingRail({ items, onChanged }: { items: SlippingItem[]; onChanged: 
             <b>{item.title}</b>
             <span>{item.stale_since}</span>
             {item.domain && <em>{item.domain}</em>}
+            {item.slipping_muted && <em>muted</em>}
             <button onClick={() => void act(item, 'snooze')}>1w</button>
-            <button onClick={() => void act(item, 'mute')}>mute</button>
+            <button onClick={() => void act(item, item.slipping_muted ? 'unmute' : 'mute')}>
+              {item.slipping_muted ? 'unmute' : 'mute'}
+            </button>
           </div>
         ))}
       </div>

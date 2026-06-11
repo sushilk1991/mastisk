@@ -35,3 +35,10 @@ def test_done_tasks_have_their_own_bucket():
 
     assert "const TASK_GROUPS = ['overdue', 'today', 'upcoming', 'someday', 'done']" in source
     assert "if (task.status !== 'open') return 'done';" in source
+
+
+def test_slipping_muted_items_have_unmute_action():
+    source = _dashboard_source()
+
+    assert "api.slipping.unmute" in source
+    assert "item.slipping_muted" in source

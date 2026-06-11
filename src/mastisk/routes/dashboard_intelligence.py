@@ -14,6 +14,7 @@ from mastisk.dashboard.intelligence import (
     resurface_for_date,
     snooze_slipping,
     star_focus,
+    unmute_slipping,
     unstar_focus,
 )
 
@@ -77,6 +78,14 @@ async def snooze_slipping_endpoint(
 @router.post("/api/slipping/{entity_type}/{entity_id}/mute")
 async def mute_slipping_endpoint(entity_type: str, entity_id: str) -> dict:
     updated = mute_slipping(entity_type, entity_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="slipping entity not found")
+    return updated
+
+
+@router.post("/api/slipping/{entity_type}/{entity_id}/unmute")
+async def unmute_slipping_endpoint(entity_type: str, entity_id: str) -> dict:
+    updated = unmute_slipping(entity_type, entity_id)
     if updated is None:
         raise HTTPException(status_code=404, detail="slipping entity not found")
     return updated

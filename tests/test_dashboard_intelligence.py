@@ -195,6 +195,74 @@ def test_slipping_route_lists_and_snoozes_items(client, db):
     assert client.get("/api/slipping").json() == []
 
 
+def test_slipping_mute_can_be_unmuted_from_muted_listing(client, db):
+    db.execute(
+        """INSERT INTO tasks
+           (uid, host_path, line_number, text, checked, status, last_activity_at, tags_json, links_json)
+           VALUES ('mute-toggle', 'journal/2026-06-01.md', 1, 'Mutable slipping task', 0, 'open',
+                   '2026-06-01T09:00:00+00:00', '[]', '[]')"""
+    )
+    from mastisk.dashboard.intelligence import slipping_scan
+
+    slipping_scan(now=datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    muted = client.post("/api/slipping/task/mute-toggle/mute")
+    assert muted.status_code == 200, muted.text
+
+    muted_list = client.get("/api/slipping")
+    assert muted_list.status_code == 200
+    assert muted_list.json()[0]["entity_id"] == "mute-toggle"
+    assert muted_list.json()[0]["slipping_muted"] is True
+
+    unmuted = client.post("/api/slipping/task/mute-toggle/unmute")
+    assert unmuted.status_code == 200, unmuted.text
+    slipping_scan(now=datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+
+    active = client.get("/api/slipping").json()
+    assert active[0]["entity_id"] == "mute-toggle"
+    assert active[0]["slipping_muted"] is False
+
+
+def test_slipping_snooze_uses_capture_timezone_today(client, db, monkeypatch):
+    from mastisk.dashboard import intelligence
+
+    monkeypatch.setattr(intelligence, "local_today", lambda now=None: "2099-01-01", raising=False)
+    db.execute(
+        """INSERT INTO tasks
+           (uid, host_path, line_number, text, checked, status, last_activity_at, tags_json, links_json)
+           VALUES ('tz-snooze', 'journal/2026-06-01.md', 1, 'Timezone snooze', 0, 'open',
+                   '2026-06-01T09:00:00+00:00', '[]', '[]')"""
+    )
+
+    snoozed = client.post("/api/slipping/task/tz-snooze/snooze", json={"days": 7})
+
+    assert snoozed.status_code == 200, snoozed.text
+    row = db.execute(
+        "SELECT slipping_muted_until FROM tasks WHERE uid = 'tz-snooze'"
+    ).fetchone()
+    assert row["slipping_muted_until"] == "2099-01-08"
+
+
+def test_slipping_scan_today_uses_capture_timezone(db, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+    from mastisk.dashboard.intelligence import slipping_scan
+
+    reload_settings()
+    db.execute(
+        """INSERT INTO projects
+           (slug, path, name, type, status, last_activity_at, slipping_muted_until)
+           VALUES ('tz-project', 'projects/tz-project.md', 'TZ Project', 'project', 'active',
+                   '2026-05-20T09:00:00+00:00', '2026-06-11')"""
+    )
+
+    count = slipping_scan(now=datetime(2026, 6, 11, 20, 0, tzinfo=UTC))
+
+    assert count == 1
+    row = db.execute("SELECT entity_id FROM slipping").fetchone()
+    assert row["entity_id"] == "tz-project"
+
+
 def test_resurfacing_is_deterministic_and_empty_pool_hides_card(client, db):
     empty = client.get("/api/resurface/2026-06-11")
     assert empty.status_code == 204
@@ -202,8 +270,9 @@ def test_resurfacing_is_deterministic_and_empty_pool_hides_card(client, db):
     for idx in range(1, 4):
         db.execute(
             """INSERT INTO notes
-               (slug, path, body, body_sha256, source, created_at, classified_at, classification, summary, confidence)
-               VALUES (?, ?, ?, ?, 'cli', ?, ?, 'idea', ?, 0.8)""",
+               (slug, path, body, body_sha256, source, created_at, classified_at, classification,
+                summary, confidence, escalation_state)
+               VALUES (?, ?, ?, ?, 'cli', ?, ?, 'idea', ?, 0.8, 'auto_done')""",
             (
                 f"note-{idx}",
                 f"_notes/note-{idx}.md",
@@ -222,6 +291,24 @@ def test_resurfacing_is_deterministic_and_empty_pool_hides_card(client, db):
     assert first["id"] != next_day["id"]
     assert first["kind"] == "note"
     assert first["link"].startswith("/notes/")
+
+
+def test_resurfacing_pool_requires_existing_wiki_signal(client, db):
+    db.execute(
+        """INSERT INTO notes
+           (id, slug, path, body, body_sha256, source, created_at, classified_at, classification, summary, confidence)
+           VALUES (501, 'plain', '_notes/plain.md', 'Plain classified note', 'sha-plain', 'cli',
+                   '2026-06-01T09:00:00+00:00', '2026-06-01T09:01:00+00:00', 'idea', 'Plain', 0.8)"""
+    )
+    assert client.get("/api/resurface/2026-06-11").status_code == 204
+
+    db.execute(
+        "UPDATE notes SET escalation_state = 'manual_done' WHERE id = 501"
+    )
+    resurfaced = client.get("/api/resurface/2026-06-11")
+
+    assert resurfaced.status_code == 200, resurfaced.text
+    assert resurfaced.json()["id"] == 501
 
 
 def test_resurfacing_empty_pool_route_returns_explicit_empty_204(monkeypatch):

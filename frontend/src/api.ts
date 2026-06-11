@@ -391,6 +391,11 @@ export const api = {
         `${BASE}/slipping/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/mute`,
         { method: 'POST' },
       ),
+    unmute: (entityType: string, entityId: string): Promise<{ ok: boolean }> =>
+      j<{ ok: boolean }>(
+        `${BASE}/slipping/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/unmute`,
+        { method: 'POST' },
+      ),
   },
 
   resurface: {

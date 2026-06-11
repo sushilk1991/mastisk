@@ -18,6 +18,7 @@ import yaml
 
 from mastisk.db.queries import connect, txn
 from mastisk.paths import vault_dir
+from mastisk.routines.sync import local_today
 from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.dashboard.intelligence")
@@ -108,7 +109,7 @@ def unstar_focus(day: str, task_uid: str) -> list[dict[str, Any]]:
 
 def slipping_scan(*, now: datetime | None = None) -> int:
     now_dt = _coerce_datetime(now)
-    today = now_dt.date()
+    today = date.fromisoformat(local_today(now_dt))
     computed_at = now_dt.isoformat()
     settings = get_settings().dashboard
     candidates: list[tuple[str, str, str, str]] = []
@@ -157,22 +158,51 @@ def list_slipping() -> list[dict[str, Any]]:
         rows = conn.execute(
             """SELECT s.entity_type, s.entity_id, s.stale_since, s.computed_at,
                       p.name AS project_name, p.type AS project_type, p.domain AS project_domain,
-                      t.text AS task_text, t.due AS task_due, t.project AS task_project, t.domain AS task_domain
+                      p.slipping_muted AS project_slipping_muted,
+                      p.slipping_muted_until AS project_slipping_muted_until,
+                      t.text AS task_text, t.due AS task_due, t.project AS task_project, t.domain AS task_domain,
+                      t.slipping_muted AS task_slipping_muted,
+                      t.slipping_muted_until AS task_slipping_muted_until
                FROM slipping s
                LEFT JOIN projects p ON s.entity_type = 'project' AND p.slug = s.entity_id
                LEFT JOIN tasks t ON s.entity_type = 'task' AND t.uid = s.entity_id
                ORDER BY s.stale_since ASC, s.entity_type, s.entity_id"""
         ).fetchall()
-    return [_slipping_row(dict(row)) for row in rows]
+        active_rows = [dict(row) for row in rows]
+        active_keys = {(row["entity_type"], row["entity_id"]) for row in active_rows}
+        muted_rows = _muted_slipping_rows(conn, active_keys)
+    return [
+        _slipping_row(row)
+        for row in sorted(
+            [*active_rows, *muted_rows],
+            key=lambda row: (row["stale_since"], row["entity_type"], row["entity_id"]),
+        )
+    ]
 
 
 def snooze_slipping(entity_type: str, entity_id: str, *, days: int = 7) -> dict[str, Any] | None:
-    until = (date.today() + timedelta(days=days)).isoformat()
+    until = (date.fromisoformat(local_today()) + timedelta(days=days)).isoformat()
     return _set_slipping_controls(entity_type, entity_id, muted_until=until, muted=None)
 
 
 def mute_slipping(entity_type: str, entity_id: str) -> dict[str, Any] | None:
-    return _set_slipping_controls(entity_type, entity_id, muted_until=None, muted=True)
+    return _set_slipping_controls(
+        entity_type,
+        entity_id,
+        muted_until=None,
+        muted=True,
+        clear_muted_until=True,
+    )
+
+
+def unmute_slipping(entity_type: str, entity_id: str) -> dict[str, Any] | None:
+    return _set_slipping_controls(
+        entity_type,
+        entity_id,
+        muted_until=None,
+        muted=False,
+        clear_muted_until=True,
+    )
 
 
 def resurface_for_date(day: str) -> dict[str, Any] | None:
@@ -187,16 +217,22 @@ def resurface_for_date(day: str) -> dict[str, Any] | None:
 def _resurfacing_pool(conn) -> list[dict[str, Any]]:
     """Pool for daily resurfacing.
 
-    TODO(Phase 12): widen this named query to include quotes after the library
-    tables land. Keeping the pool here preserves the deterministic selection
-    contract.
+    The Phase 8 spec says "favorited quote/note", but favorites and quotes do
+    not exist yet. Until that Phase 12 library work lands, use the strongest
+    existing note-value signal: the note was escalated or linked into the wiki.
+    TODO(Phase 12): switch this to favorited quotes/notes when those mirrors
+    land. Keeping the pool here preserves the deterministic selection contract.
     """
     rows = conn.execute(
-        """SELECT id, summary, body
-           FROM notes
-           WHERE deleted_at IS NULL
-             AND classification IS NOT NULL
-           ORDER BY id ASC"""
+        """SELECT n.id, n.summary, n.body
+           FROM notes n
+           WHERE n.deleted_at IS NULL
+             AND (
+               n.escalation_state IN ('auto_done', 'manual_done')
+               OR EXISTS (SELECT 1 FROM note_links nl WHERE nl.note_id = n.id)
+               OR EXISTS (SELECT 1 FROM articles a WHERE a.source_note_id = n.id)
+             )
+           ORDER BY n.id ASC"""
     ).fetchall()
     return [
         {
@@ -211,7 +247,7 @@ def _resurfacing_pool(conn) -> list[dict[str, Any]]:
 
 
 def needs_review_scan(*, today: date | None = None) -> int:
-    scan_day = today or date.today()
+    scan_day = today or date.fromisoformat(local_today())
     surfaced_at = datetime.now(UTC).isoformat()
     settings = get_settings().dashboard
     candidates = _needs_review_candidates(scan_day, settings.triage_reminder_days)
@@ -445,11 +481,15 @@ def _slipping_row(row: dict[str, Any]) -> dict[str, Any]:
         title = row.get("project_name") or row["entity_id"]
         subtitle = row.get("project_type") or "project"
         domain = row.get("project_domain")
+        muted = bool(row.get("project_slipping_muted"))
+        muted_until = row.get("project_slipping_muted_until")
         link = "/projects"
     else:
         title = row.get("task_text") or row["entity_id"]
         subtitle = row.get("task_due") or "open task"
         domain = row.get("task_domain") or row.get("task_project")
+        muted = bool(row.get("task_slipping_muted"))
+        muted_until = row.get("task_slipping_muted_until")
         link = "/tasks"
     return {
         "entity_type": row["entity_type"],
@@ -459,8 +499,81 @@ def _slipping_row(row: dict[str, Any]) -> dict[str, Any]:
         "domain": domain,
         "stale_since": row["stale_since"],
         "computed_at": row["computed_at"],
+        "slipping_muted": muted,
+        "slipping_muted_until": muted_until,
         "link": link,
     }
+
+
+def _muted_slipping_rows(
+    conn,
+    active_keys: set[tuple[str, str]],
+) -> list[dict[str, Any]]:
+    today = date.fromisoformat(local_today())
+    computed_at = datetime.now(UTC).isoformat()
+    settings = get_settings().dashboard
+    rows: list[dict[str, Any]] = []
+    for row in conn.execute(
+        """SELECT slug, name, type, domain, last_activity_at, staleness_days,
+                  slipping_muted, slipping_muted_until
+           FROM projects
+           WHERE deleted_at IS NULL
+             AND status = 'active'
+             AND type IN ('project', 'area')
+             AND COALESCE(slipping_muted, 0) = 1"""
+    ).fetchall():
+        key = ("project", row["slug"])
+        if key in active_keys:
+            continue
+        stale_since = _stale_since(
+            row["last_activity_at"], row["staleness_days"], settings.slipping_project_days
+        )
+        if stale_since is None or stale_since > today:
+            continue
+        rows.append(
+            {
+                "entity_type": "project",
+                "entity_id": row["slug"],
+                "stale_since": stale_since.isoformat(),
+                "computed_at": computed_at,
+                "project_name": row["name"],
+                "project_type": row["type"],
+                "project_domain": row["domain"],
+                "project_slipping_muted": row["slipping_muted"],
+                "project_slipping_muted_until": row["slipping_muted_until"],
+            }
+        )
+    for row in conn.execute(
+        """SELECT uid, text, due, project, domain, last_activity_at, staleness_days,
+                  slipping_muted, slipping_muted_until
+           FROM tasks
+           WHERE deleted_at IS NULL
+             AND status = 'open'
+             AND COALESCE(slipping_muted, 0) = 1"""
+    ).fetchall():
+        key = ("task", row["uid"])
+        if key in active_keys:
+            continue
+        stale_since = _stale_since(
+            row["last_activity_at"], row["staleness_days"], settings.slipping_task_days
+        )
+        if stale_since is None or stale_since > today:
+            continue
+        rows.append(
+            {
+                "entity_type": "task",
+                "entity_id": row["uid"],
+                "stale_since": stale_since.isoformat(),
+                "computed_at": computed_at,
+                "task_text": row["text"],
+                "task_due": row["due"],
+                "task_project": row["project"],
+                "task_domain": row["domain"],
+                "task_slipping_muted": row["slipping_muted"],
+                "task_slipping_muted_until": row["slipping_muted_until"],
+            }
+        )
+    return rows
 
 
 def _set_slipping_controls(
@@ -469,6 +582,7 @@ def _set_slipping_controls(
     *,
     muted_until: str | None,
     muted: bool | None,
+    clear_muted_until: bool = False,
 ) -> dict[str, Any] | None:
     if entity_type not in {"task", "project"}:
         return None
@@ -476,7 +590,9 @@ def _set_slipping_controls(
     key = "uid" if entity_type == "task" else "slug"
     updates: list[str] = []
     params: list[Any] = []
-    if muted_until is not None:
+    if clear_muted_until:
+        updates.append("slipping_muted_until = NULL")
+    elif muted_until is not None:
         updates.append("slipping_muted_until = ?")
         params.append(muted_until)
     if muted is not None:
