@@ -547,7 +547,7 @@ Shortcuts app → new shortcut:
    - URL: `https://capture.<your-domain>/api/capture`
    - Method: `POST`
    - Headers: `Authorization` = `Bearer <token>`, `Content-Type` = `application/json`
-   - Request Body: JSON → `text` = Dictated Text, `source` = `watch`
+   - Request Body: JSON → `text` = Dictated Text, `source` = `watch`, `ts` = Current Date formatted as ISO 8601
 3. Optional: **Show Notification** with the `type` field from the response.
 
 Name it "Capture". Enable **Show on Apple Watch**. Add it as a **watch-face
