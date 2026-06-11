@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 from typing import Literal
 
 import yaml
@@ -10,8 +11,11 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from mastisk.capture.router import Capture, route_capture
+from mastisk.paths import vault_dir
+from mastisk.projects.sync import append_project_log, get_project
 from mastisk.routes.notes import persist_note_capture
 from mastisk.settings import read_capture_bearer_token
+from mastisk.tasks.sync import append_task_to_host, journal_host_for_today
 
 router = APIRouter(prefix="/api/capture", tags=["capture"])
 log = logging.getLogger("mastisk.capture")
@@ -63,8 +67,25 @@ async def capture(
     ):
         return _persist_inbox_fallback(req.text, req.source)
 
+    needs_triage = False if routed.command_detected else routed.confidence < 0.85
+
+    if routed.type == "task":
+        try:
+            return _persist_task_capture(routed, ts=req.ts, needs_triage=needs_triage)
+        except Exception:
+            log.exception("capture task write failed; falling back to raw inbox note")
+            return _persist_inbox_fallback(req.text, req.source)
+
+    if routed.type == "project_update" and routed.project:
+        try:
+            filed = _persist_project_update_capture(routed)
+            if filed is not None:
+                return {**filed, "needs_triage": needs_triage}
+        except Exception:
+            log.exception("capture project update write failed; falling back to raw inbox note")
+            return _persist_inbox_fallback(req.text, req.source)
+
     try:
-        needs_triage = False if routed.command_detected else routed.confidence < 0.85
         row = persist_note_capture(
             body=routed.body,
             source=req.source,
@@ -84,6 +105,46 @@ async def capture(
         "destination": row["path"],
         "needs_triage": needs_triage,
     }
+
+
+def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: bool) -> dict:
+    project = get_project(capture.project) if capture.project else None
+    host = (vault_dir() / project["path"]) if project is not None else journal_host_for_today(ts)
+    row = append_task_to_host(
+        host,
+        text=capture.body,
+        due=_date_marker(capture.due),
+        scheduled=_date_marker(capture.scheduled),
+        recurrence=capture.recurrence,
+        priority=capture.priority,
+        tags=capture.tags,
+        links=capture.related,
+    )
+    return {
+        "id": row["uid"],
+        "type": "task",
+        "destination": row["host_path"],
+        "needs_triage": needs_triage,
+    }
+
+
+def _persist_project_update_capture(capture: Capture) -> dict | None:
+    if not capture.project:
+        return None
+    project = append_project_log(capture.project, capture.body)
+    if project is None:
+        return None
+    return {
+        "id": project["slug"],
+        "type": "project_update",
+        "destination": project["path"],
+    }
+
+
+def _date_marker(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", value) else value
 
 
 def _persist_inbox_fallback(text: str, source: str) -> dict:

@@ -148,41 +148,45 @@ def test_capture_persists_note_with_watch_source(client_with_token, vault_tmp):
         assert row["source"] == "watch"
 
 
-def test_capture_persists_typed_intent_metadata(client_with_token, vault_tmp, fake_capture_router):
+def test_capture_task_writes_today_journal_host(client_with_token, vault_tmp, fake_capture_router):
     fake_capture_router.side_effect = None
     fake_capture_router.return_value = _capture(
         type="task",
         confidence=0.93,
         body="call Sam",
         due="2026-06-10T14:00:00-07:00",
+        priority="high",
         reminder_lead_minutes=15,
         tags=["follow-up"],
     )
 
     r = client_with_token.post(
         "/api/capture",
-        json={"text": "remind me to call Sam tomorrow 2pm", "source": "watch"},
+        json={
+            "text": "remind me to call Sam tomorrow 2pm",
+            "source": "watch",
+            "ts": "2026-06-11T09:00:00-07:00",
+        },
         headers={"Authorization": "Bearer test-token"},
     )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["type"] == "task"
     assert body["needs_triage"] is False
+    assert body["destination"] == "journal/2026-06-11.md"
+    assert body["id"]
 
-    file_text = (vault_tmp / body["destination"]).read_text()
-    assert file_text.startswith("---\n")
-    assert "capture:" in file_text
-    assert "type: task" in file_text
-    assert "due: '2026-06-10T14:00:00-07:00'" in file_text
-    assert "needs_triage: false" in file_text
-    assert "command_detected: false" in file_text
-    assert file_text.endswith("call Sam")
+    file_text = (vault_tmp / body["destination"]).read_text(encoding="utf-8")
+    assert file_text.startswith("## Tasks\n")
+    assert "- [ ] call Sam 📅 2026-06-10 ⏫ #follow-up" in file_text
+    assert "🆔 " in file_text
 
-    from mastisk.db.queries import connect, get_note
+    from mastisk.db.queries import connect
 
     with connect() as conn:
-        row = get_note(conn, body["id"])
-    assert row["body"] == "call Sam"
+        row = conn.execute("SELECT * FROM tasks WHERE uid = ?", (body["id"],)).fetchone()
+    assert row is not None
+    assert row["host_path"] == body["destination"]
 
 
 def test_capture_medium_confidence_marks_needs_triage(
@@ -207,6 +211,70 @@ def test_capture_medium_confidence_marks_needs_triage(
     file_text = (vault_tmp / body["destination"]).read_text()
     assert "needs_triage: true" in file_text
     assert "confidence: 0.72" in file_text
+
+
+def test_capture_task_routes_to_existing_project_host(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    created_project = client_with_token.post(
+        "/api/projects",
+        json={"name": "Mastisk", "type": "project", "domain": "work"},
+    )
+    assert created_project.status_code == 201, created_project.text
+
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.96,
+        body="ship phase three",
+        project="mastisk",
+        tags=["phase3"],
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "add ship phase three to the Mastisk project", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "task"
+    assert body["destination"] == "projects/mastisk.md"
+    project_text = (vault_tmp / "projects" / "mastisk.md").read_text(encoding="utf-8")
+    assert "- [ ] ship phase three #phase3" in project_text
+
+
+def test_capture_project_update_appends_to_project_log(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    created_project = client_with_token.post(
+        "/api/projects",
+        json={"name": "Mastisk", "type": "project", "domain": "work"},
+    )
+    assert created_project.status_code == 201, created_project.text
+
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="project_update",
+        confidence=0.94,
+        body="shipped capture routing",
+        project="mastisk",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "add to the Mastisk project shipped capture routing", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "project_update"
+    assert body["destination"] == "projects/mastisk.md"
+    project_text = (vault_tmp / "projects" / "mastisk.md").read_text(encoding="utf-8")
+    assert "## Log" in project_text
+    assert "shipped capture routing" in project_text
 
 
 def test_capture_low_confidence_falls_back_to_raw_inbox(
@@ -274,9 +342,7 @@ def test_capture_confidence_point_five_files_with_triage(
     assert body["type"] == "task"
     assert body["needs_triage"] is True
     file_text = (vault_tmp / body["destination"]).read_text()
-    assert file_text.startswith("---\n")
-    assert "confidence: 0.5" in file_text
-    assert "needs_triage: true" in file_text
+    assert "- [ ] call Sam" in file_text
 
 
 def test_capture_confidence_point_eighty_five_files_direct(
@@ -299,9 +365,7 @@ def test_capture_confidence_point_eighty_five_files_direct(
     assert body["type"] == "task"
     assert body["needs_triage"] is False
     file_text = (vault_tmp / body["destination"]).read_text()
-    assert file_text.startswith("---\n")
-    assert "confidence: 0.85" in file_text
-    assert "needs_triage: false" in file_text
+    assert "- [ ] call Sam" in file_text
 
 
 def test_capture_router_failure_falls_back_to_raw_inbox(
@@ -356,8 +420,7 @@ def test_command_detected_capture_skips_confidence_gate(
     assert body["type"] == "task"
     assert body["needs_triage"] is False
     file_text = (vault_tmp / body["destination"]).read_text()
-    assert "confidence: 0.2" in file_text
-    assert "command_detected: true" in file_text
+    assert "- [ ] call Sam" in file_text
 
 
 def test_typed_capture_write_failure_rolls_back_and_returns_inbox_fallback(
@@ -371,18 +434,21 @@ def test_typed_capture_write_failure_rolls_back_and_returns_inbox_fallback(
     )
 
     from mastisk.routes import notes
+    from mastisk.tasks import sync as task_sync
 
-    real_atomic_write = notes.atomic_write
+    real_note_atomic_write = notes.atomic_write
+    real_task_atomic_write = task_sync.atomic_write
     calls = 0
 
-    def fail_first_frontmatter_write(target, content):
+    def fail_first_task_write(target, content):
         nonlocal calls
         calls += 1
-        if calls == 1 and content.startswith("---\n"):
+        if calls == 1:
             raise OSError("simulated frontmatter write failure")
-        return real_atomic_write(target, content)
+        return real_task_atomic_write(target, content)
 
-    monkeypatch.setattr(notes, "atomic_write", fail_first_frontmatter_write)
+    monkeypatch.setattr(task_sync, "atomic_write", fail_first_task_write)
+    monkeypatch.setattr(notes, "atomic_write", real_note_atomic_write)
 
     r = client_with_token.post(
         "/api/capture",
@@ -395,11 +461,12 @@ def test_typed_capture_write_failure_rolls_back_and_returns_inbox_fallback(
     assert body["needs_triage"] is True
     file_text = (vault_tmp / body["destination"]).read_text()
     assert file_text == "remind me to call Sam"
-    assert calls == 2
+    assert calls == 1
 
     rows = db.execute("SELECT body, path FROM notes").fetchall()
     assert len(rows) == 1
     assert rows[0]["body"] == "remind me to call Sam"
+    assert db.execute("SELECT COUNT(*) AS n FROM tasks").fetchone()["n"] == 0
 
 
 def test_capture_appears_in_notes_list(client_with_token):
@@ -438,10 +505,11 @@ def test_notetaker_skips_routed_typed_capture_without_classifying(
         headers={"Authorization": "Bearer test-token"},
     )
     assert r.status_code == 201, r.text
-    file_path = vault_tmp / r.json()["destination"]
+    destination = r.json()["destination"]
+    assert not destination.startswith("_notes/")
+    file_path = vault_tmp / destination
     before = file_path.read_text()
-    assert "capture:" in before
-    assert "type: task" in before
+    assert "- [ ] call Sam" in before
 
     from mastisk.agents.notetaker import Notetaker
 

@@ -150,9 +150,40 @@ async def test_route_capture_injects_identity_and_empty_phase3_context(data_tmp)
     prompt = run_mock.call_args.args[0]
     assert "## identity\nuser voice" in prompt
     assert "Existing domains: []" in prompt
-    assert "TODO(Phase 3)" in prompt
+    assert "Existing projects: []" in prompt
+    assert "TODO(Phase 3)" not in prompt
     assert "Command hint intent: null" in prompt
     assert "untrusted user/source data" in prompt
+
+
+@pytest.mark.asyncio
+async def test_route_capture_injects_existing_domains_and_projects(data_tmp, db):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    db.execute("INSERT INTO domains (slug, name) VALUES ('work', 'Work')")
+    db.execute(
+        """INSERT INTO projects (slug, path, name, type, domain, status)
+           VALUES ('mastisk', 'projects/mastisk.md', 'Mastisk', 'project', 'work', 'active')"""
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="task", project="mastisk"))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as run_mock:
+        capture = await route_capture("follow up on Mastisk", source="watch", ts=BASE_TS)
+
+    assert capture.project == "mastisk"
+    prompt = run_mock.call_args.args[0]
+    assert '"slug": "work"' in prompt
+    assert '"name": "Work"' in prompt
+    assert '"slug": "mastisk"' in prompt
+    assert '"name": "Mastisk"' in prompt
 
 
 @pytest.mark.asyncio

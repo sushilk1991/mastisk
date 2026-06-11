@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
+import sqlite3
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -14,6 +16,7 @@ from mastisk.agents.base import Agent
 from mastisk.bridges import intelligence
 from mastisk.bridges.claude_bridge import extract_json_block
 from mastisk.capture.dates import normalize_model_datetime, resolve_datetime
+from mastisk.db.queries import connect
 from mastisk.settings import get_settings
 
 CaptureType = Literal[
@@ -103,10 +106,9 @@ _PROMPT = """You are the Mastisk capture intent router.
 {identity}
 
 ## Existing routing context
-Existing domains: []
-Existing projects: []
+Existing domains: {domains}
+Existing projects: {projects}
 Existing people: []
-TODO(Phase 3): load these from domains/projects/people tables once typed entities land.
 
 ## Request
 source: {source}
@@ -172,8 +174,11 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     hint_intent = detect_command_hint(text)
     timezone = settings.capture.default_timezone
     request_ts = _parse_request_ts(ts, timezone)
+    domains, projects = _routing_context()
     prompt = _PROMPT.format(
         identity=Agent.load_identity(),
+        domains=domains,
+        projects=projects,
         source=source,
         ts=request_ts.isoformat() if request_ts is not None else "",
         fixed_intent=fixed_intent or "null",
@@ -223,6 +228,33 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
         capture.reminder_lead_minutes = settings.reminders.default_lead_minutes
 
     return capture
+
+
+def _routing_context() -> tuple[str, str]:
+    try:
+        with connect() as conn:
+            domains = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT slug, name FROM domains WHERE deleted_at IS NULL ORDER BY name"
+                ).fetchall()
+            ]
+            projects = [
+                dict(row)
+                for row in conn.execute(
+                    """SELECT slug, name, domain, status
+                       FROM projects
+                       WHERE deleted_at IS NULL
+                       ORDER BY status, name"""
+                ).fetchall()
+            ]
+    except sqlite3.Error:
+        domains = []
+        projects = []
+    return (
+        json.dumps(domains, ensure_ascii=False),
+        json.dumps(projects, ensure_ascii=False),
+    )
 
 
 def _coerce_payload(parsed: dict, text: str) -> dict:

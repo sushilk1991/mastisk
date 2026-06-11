@@ -96,6 +96,25 @@ async def start_scheduler():
         log.warning("scheduler: vault_integrity registration failed: %s", e)
 
     try:
+        from mastisk.projects.sync import scan_projects
+        from mastisk.tasks.sync import scan_tasks
+
+        def personal_os_scan() -> None:
+            scan_projects()
+            scan_tasks()
+
+        sched.add_job(
+            personal_os_scan, "interval",
+            minutes=5, id="personal_os_scan",
+            max_instances=1,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
+            coalesce=True,
+        )
+        log.info("scheduler: personal_os_scan registered (5min tick)")
+    except Exception as e:
+        log.warning("scheduler: personal_os_scan registration failed: %s", e)
+
+    try:
         from mastisk.agents.linter import Linter
         # Linter runs slightly after Scout/Compiler so it sees fresh articles
         # on the same boot without racing them.
