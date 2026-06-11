@@ -217,13 +217,28 @@ def resurface_for_date(day: str) -> dict[str, Any] | None:
 def _resurfacing_pool(conn) -> list[dict[str, Any]]:
     """Pool for daily resurfacing.
 
-    The Phase 8 spec says "favorited quote/note", but favorites and quotes do
-    not exist yet. Until that Phase 12 library work lands, use the strongest
-    existing note-value signal: the note was escalated or linked into the wiki.
-    TODO(Phase 12): switch this to favorited quotes/notes when those mirrors
-    land. Keeping the pool here preserves the deterministic selection contract.
+    The Phase 8 spec says "favorited quote/note", but favorites still do not
+    exist. Until that operator state lands, use deliberate saved quotes plus
+    the strongest existing note-value signal: the note was escalated or linked
+    into the wiki. Keeping the pool derived preserves deterministic selection.
     """
-    rows = conn.execute(
+    quote_rows = conn.execute(
+        """SELECT id, text, source_type, source_ref
+           FROM quotes
+           WHERE deleted_at IS NULL
+           ORDER BY id ASC"""
+    ).fetchall()
+    quote_items = [
+        {
+            "kind": "quote",
+            "id": row["id"],
+            "title": _quote_title(row["text"]),
+            "excerpt": _excerpt(row["text"]),
+            "link": f"/library/quotes/{row['id']}",
+        }
+        for row in quote_rows
+    ]
+    note_rows = conn.execute(
         """SELECT n.id, n.summary, n.body
            FROM notes n
            WHERE n.deleted_at IS NULL
@@ -234,7 +249,7 @@ def _resurfacing_pool(conn) -> list[dict[str, Any]]:
              )
            ORDER BY n.id ASC"""
     ).fetchall()
-    return [
+    note_items = [
         {
             "kind": "note",
             "id": row["id"],
@@ -242,8 +257,9 @@ def _resurfacing_pool(conn) -> list[dict[str, Any]]:
             "excerpt": _excerpt(row["body"]),
             "link": f"/notes/{row['id']}",
         }
-        for row in rows
+        for row in note_rows
     ]
+    return [*quote_items, *note_items]
 
 
 def needs_review_scan(*, today: date | None = None) -> int:
@@ -647,6 +663,12 @@ def _note_title(summary: str | None, body: str | None, note_id: int) -> str:
         if value and value.strip():
             return value.strip().splitlines()[0][:80]
     return f"Note {note_id}"
+
+
+def _quote_title(text: str | None) -> str:
+    if text and text.strip():
+        return text.strip().splitlines()[0][:80]
+    return "Saved quote"
 
 
 def _excerpt(value: str | None, limit: int = 180) -> str:

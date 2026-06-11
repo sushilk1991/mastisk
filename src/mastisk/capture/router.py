@@ -112,6 +112,7 @@ Existing domains: {domains}
 Existing projects: {projects}
 Existing routines: {routines}
 Existing people: {people}
+Existing books: {books}
 
 ## Request
 source: {source}
@@ -184,12 +185,14 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     domains, projects = _routing_context()
     routines = _routine_routing_context()
     people = _people_routing_context()
+    books = _book_routing_context()
     prompt = _PROMPT.format(
         identity=Agent.load_identity(),
         domains=domains,
         projects=projects,
         routines=routines,
         people=people,
+        books=books,
         source=source,
         ts=request_ts.isoformat() if request_ts is not None else "",
         fixed_intent=fixed_intent or "null",
@@ -315,6 +318,24 @@ def _people_routing_context() -> str:
     except (sqlite3.Error, OSError):
         people = []
     return json.dumps(people, ensure_ascii=False)
+
+
+def _book_routing_context() -> str:
+    try:
+        from mastisk.library.sync import list_books
+
+        books = [
+            {
+                "slug": book["slug"],
+                "title": book["title"],
+                "author": book.get("author"),
+                "status": book.get("status"),
+            }
+            for book in list_books()
+        ]
+    except (sqlite3.Error, OSError):
+        books = []
+    return json.dumps(books, ensure_ascii=False)
 
 
 def _match_routine_done_command(text: str) -> dict[str, str] | None:

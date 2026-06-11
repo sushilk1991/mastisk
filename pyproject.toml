@@ -36,6 +36,7 @@ dependencies = [
   "yt-dlp>=2025.1.15",
   "pyyaml>=6.0",
   "tomli-w>=1.0",
+  "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]

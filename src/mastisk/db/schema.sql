@@ -543,6 +543,94 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_followup_entity
   ON reminders(kind, entity_id)
   WHERE kind = 'followup' AND deleted_at IS NULL;
 
+-- ─────────────────────────────── Personal OS Phase 12 ───────────────────────────────
+-- Book and quote files are markdown-canonical. Highlights are parsed from each
+-- book's ## Highlights section; every book highlight is also a linked quote.
+
+CREATE TABLE IF NOT EXISTS books (
+  slug       TEXT PRIMARY KEY,
+  path       TEXT UNIQUE NOT NULL,
+  title      TEXT NOT NULL,
+  author     TEXT,
+  cover_url  TEXT,
+  status     TEXT NOT NULL DEFAULT 'want',
+  format     TEXT,
+  started    TEXT,
+  finished   TEXT,
+  rating     INTEGER,
+  isbn       TEXT,
+  summary    TEXT,
+  deleted_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
+CREATE INDEX IF NOT EXISTS idx_books_title ON books(title);
+CREATE INDEX IF NOT EXISTS idx_books_active ON books(slug) WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS book_highlights (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  book_slug    TEXT NOT NULL REFERENCES books(slug) ON DELETE CASCADE,
+  position     INTEGER NOT NULL,
+  text         TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  quote_id     TEXT,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(book_slug, content_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_book_highlights_book
+  ON book_highlights(book_slug, position);
+
+CREATE TABLE IF NOT EXISTS quotes (
+  id           TEXT PRIMARY KEY,
+  path         TEXT UNIQUE NOT NULL,
+  text         TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  source_type  TEXT NOT NULL,
+  source_ref   TEXT,
+  tags_json    TEXT NOT NULL DEFAULT '[]',
+  deleted_at   DATETIME,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_quotes_source ON quotes(source_type, source_ref);
+CREATE INDEX IF NOT EXISTS idx_quotes_active ON quotes(id) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_quotes_source_hash
+  ON quotes(source_type, COALESCE(source_ref, ''), content_hash)
+  WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS quote_thoughts (
+  quote_id   TEXT NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
+  ts         TEXT NOT NULL,
+  text       TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(quote_id, ts, text)
+);
+
+CREATE INDEX IF NOT EXISTS idx_quote_thoughts_quote_ts
+  ON quote_thoughts(quote_id, ts);
+
+CREATE TABLE IF NOT EXISTS kindle_import_review (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  raw_hash       TEXT UNIQUE NOT NULL,
+  raw_block      TEXT NOT NULL,
+  reason         TEXT NOT NULL,
+  parsed_title   TEXT,
+  parsed_author  TEXT,
+  parsed_content TEXT,
+  status         TEXT NOT NULL DEFAULT 'open',
+  quote_id       TEXT,
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+  resolved_at    DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_kindle_import_review_status
+  ON kindle_import_review(status, created_at);
+
 -- ─────────────────────────────── Personal OS Phase 6 ───────────────────────────────
 -- Journal day files are markdown-canonical. This table mirrors journal/*.md for
 -- timeline and dashboard queries.

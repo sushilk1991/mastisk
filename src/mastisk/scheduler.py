@@ -116,6 +116,7 @@ async def start_scheduler():
 
     try:
         from mastisk.journal import scan_journal_days
+        from mastisk.library.sync import scan_library
         from mastisk.people.sync import scan_people
         from mastisk.projects.sync import scan_projects
         from mastisk.routes.domains import sync_config_domains
@@ -128,6 +129,7 @@ async def start_scheduler():
             scan_tasks()
             scan_routines()
             scan_people()
+            scan_library()
             scan_journal_days()
 
         sched.add_job(

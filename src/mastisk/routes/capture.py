@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 from mastisk.agents.reminder_engine import create_task_due_reminder
 from mastisk.capture.router import Capture, route_capture
 from mastisk.journal import JournalFrontmatterError, append_log
+from mastisk.library.sync import create_quote_file, find_book, match_book_in_text
 from mastisk.paths import vault_dir
 from mastisk.people.sync import append_interaction, create_person_file, find_person
 from mastisk.projects.sync import append_project_log, find_project
@@ -130,6 +131,19 @@ async def capture(
                 return filed
         except Exception:
             log.exception("capture person write failed; falling back to raw inbox note")
+            return _persist_inbox_fallback(req.text, req.source)
+
+    if routed.type == "quote":
+        try:
+            filed = _persist_quote_capture(
+                routed,
+                raw_text=req.text,
+                needs_triage=needs_triage,
+            )
+            if filed is not None:
+                return filed
+        except Exception:
+            log.exception("capture quote write failed; falling back to raw inbox note")
             return _persist_inbox_fallback(req.text, req.source)
 
     try:
@@ -282,6 +296,44 @@ def _persist_person_capture(
         "destination": created["path"],
         "needs_triage": False,
     }
+
+
+def _persist_quote_capture(
+    capture: Capture,
+    *,
+    raw_text: str,
+    needs_triage: bool,
+) -> dict | None:
+    if needs_triage:
+        return None
+    source_type, source_ref = _infer_quote_source(raw_text, capture)
+    quote = create_quote_file(
+        text=capture.body,
+        source_type=source_type,
+        source_ref=source_ref,
+        tags=capture.tags,
+    )
+    return {
+        "id": quote["id"],
+        "type": "quote",
+        "destination": quote["path"],
+        "needs_triage": False,
+    }
+
+
+def _infer_quote_source(raw_text: str, capture: Capture) -> tuple[str, str | None]:
+    text = raw_text.casefold()
+    if "book" in text:
+        book = match_book_in_text(raw_text) or find_book(capture.title)
+        return "book", book["slug"] if book is not None else capture.title
+    if "podcast" in text:
+        return "podcast", capture.title
+    if "article" in text:
+        return "article", capture.title
+    if find_book(capture.title) is not None:
+        book = find_book(capture.title)
+        return "book", book["slug"] if book is not None else capture.title
+    return "conversation", capture.title
 
 
 def _date_marker(value: str | None) -> str | None:
