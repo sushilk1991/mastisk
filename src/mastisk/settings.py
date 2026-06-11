@@ -65,6 +65,11 @@ class RemindersSettings(BaseSettings):
     default_lead_minutes: int = 15
 
 
+class DomainsSettings(BaseSettings):
+    """User-defined top-level life domains seeded from config.toml."""
+    names: list[str] = Field(default_factory=list)
+
+
 class RoundtableSettings(BaseSettings):
     """Config for the multi-LLM roundtable subsystem.
     See docs/superpowers/specs/2026-04-22-multi-llm-roundtable-design.md §7."""
@@ -222,6 +227,8 @@ class Settings(BaseSettings):
     capture: CaptureSettings = Field(default_factory=CaptureSettings)
 
     reminders: RemindersSettings = Field(default_factory=RemindersSettings)
+
+    domains: DomainsSettings = Field(default_factory=DomainsSettings)
 
     roundtable: RoundtableSettings = Field(default_factory=RoundtableSettings)
 

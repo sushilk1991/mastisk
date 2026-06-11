@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+
+@pytest.fixture
+def client(vault_tmp, data_tmp, db):
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.app import create_app
+
+    with TestClient(create_app()) as c:
+        yield c
+
+
+def test_domains_create_list_and_config_seed(client, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[domains]\nnames = ["Work", "Home"]\n', encoding="utf-8")
+
+    listed = client.get("/api/domains")
+    assert listed.status_code == 200
+    assert {d["slug"] for d in listed.json()} >= {"work", "home"}
+
+    created = client.post("/api/domains", json={"name": "Side Quests"})
+    assert created.status_code == 201, created.text
+    assert created.json()["slug"] == "side-quests"
+    assert any(d["slug"] == "side-quests" for d in client.get("/api/domains").json())
+
+
+def test_project_create_slug_collision_and_patch_status(client, vault_tmp):
+    first = client.post(
+        "/api/projects",
+        json={"name": "Mastisk", "type": "project", "domain": "work"},
+    )
+    second = client.post(
+        "/api/projects",
+        json={"name": "Mastisk", "type": "project", "domain": "work"},
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert first.json()["slug"] == "mastisk"
+    assert second.json()["slug"] == "mastisk-2"
+    assert (vault_tmp / "projects" / "mastisk.md").exists()
+    assert (vault_tmp / "projects" / "mastisk-2.md").exists()
+
+    patched = client.patch("/api/projects/mastisk", json={"status": "paused"})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["status"] == "paused"
+    file_text = (vault_tmp / "projects" / "mastisk.md").read_text(encoding="utf-8")
+    assert "status: paused" in file_text
+
+
+def test_task_routes_create_filter_toggle_and_patch_file_first(client, vault_tmp):
+    project = client.post(
+        "/api/projects",
+        json={"name": "Mastisk", "type": "project", "domain": "work"},
+    ).json()
+
+    created = client.post(
+        "/api/tasks",
+        json={
+            "text": "Ship parser",
+            "project": project["slug"],
+            "due": "2026-06-12",
+            "priority": "high",
+            "tags": ["phase3"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    task = created.json()
+    assert task["status"] == "open"
+    assert task["project"] == "mastisk"
+    assert task["domain"] == "work"
+
+    listing = client.get("/api/tasks?status=open&due_before=2026-06-13&domain=work&project=mastisk")
+    assert listing.status_code == 200
+    assert [t["uid"] for t in listing.json()] == [task["uid"]]
+
+    toggled = client.patch(f"/api/tasks/{task['uid']}/toggle")
+    assert toggled.status_code == 200, toggled.text
+    assert toggled.json()["status"] == "done"
+    host_text = (vault_tmp / "projects" / "mastisk.md").read_text(encoding="utf-8")
+    assert f"- [x] Ship parser" in host_text
+
+    patched = client.patch(
+        f"/api/tasks/{task['uid']}",
+        json={"due": "2026-06-20", "priority": "low"},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["due"] == "2026-06-20"
+    assert patched.json()["priority"] == "low"
+    host_text = (vault_tmp / "projects" / "mastisk.md").read_text(encoding="utf-8")
+    assert "📅 2026-06-20" in host_text
+    assert "🔽" in host_text
+
+
+def test_project_list_includes_open_task_count(client):
+    project = client.post(
+        "/api/projects",
+        json={"name": "Mastisk", "type": "project", "domain": "work"},
+    ).json()
+    client.post("/api/tasks", json={"text": "Open task", "project": project["slug"]})
+
+    rows = client.get("/api/projects").json()
+
+    mastisk = next(p for p in rows if p["slug"] == project["slug"])
+    assert mastisk["open_task_count"] == 1

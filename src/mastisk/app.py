@@ -17,12 +17,14 @@ from mastisk.routes import (
     blog_route,
     capture,
     digest_route,
+    domains,
     feed_route,
     graph_route,
     listen_route,
     notes,
     open_questions_route,
     podcasts_route,
+    projects,
     repos_route,
     roundtable_route,
     search,
@@ -31,6 +33,7 @@ from mastisk.routes import (
     sources_route,
     stats_route,
     synthesis_route,
+    tasks,
     topic_suggester_route,
     tweet_route,
     vault_route,
@@ -90,6 +93,9 @@ def create_app() -> FastAPI:
     app.include_router(podcasts_route.router, prefix="/api")
     app.include_router(notes.router)
     app.include_router(capture.router)
+    app.include_router(domains.router)
+    app.include_router(projects.router)
+    app.include_router(tasks.router)
     app.include_router(notes.articles_notes_router)
     app.include_router(repos_route.router)
     app.include_router(roundtable_route.router)

@@ -338,6 +338,64 @@ CREATE TABLE IF NOT EXISTS note_escalations (
 CREATE INDEX IF NOT EXISTS idx_note_escalations_note         ON note_escalations(note_id);
 CREATE INDEX IF NOT EXISTS idx_note_escalations_triggered_at ON note_escalations(triggered_at);
 
+-- ─────────────────────────────── Personal OS Phase 3 ───────────────────────────────
+-- Domains are user-defined strings. Projects are markdown files under projects/.
+-- Tasks are inline markdown checkboxes in host files; this table is only a mirror.
+
+CREATE TABLE IF NOT EXISTS domains (
+  slug       TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_domains_active ON domains(slug) WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS projects (
+  slug             TEXT PRIMARY KEY,
+  path             TEXT UNIQUE NOT NULL,
+  name             TEXT NOT NULL,
+  type             TEXT NOT NULL DEFAULT 'project',
+  domain           TEXT,
+  status           TEXT NOT NULL DEFAULT 'active',
+  due              TEXT,
+  last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at       DATETIME,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_domain ON projects(domain);
+CREATE INDEX IF NOT EXISTS idx_projects_active ON projects(slug) WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS tasks (
+  uid              TEXT PRIMARY KEY,
+  host_path        TEXT NOT NULL,
+  line_number      INTEGER NOT NULL,
+  text             TEXT NOT NULL,
+  checked          INTEGER NOT NULL DEFAULT 0,
+  status           TEXT NOT NULL,
+  due              TEXT,
+  scheduled        TEXT,
+  priority         TEXT,
+  domain           TEXT,
+  project          TEXT,
+  recurrence       TEXT,
+  tags_json        TEXT NOT NULL DEFAULT '[]',
+  links_json       TEXT NOT NULL DEFAULT '[]',
+  last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  review_at        TEXT,
+  deleted_at       DATETIME,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_domain ON tasks(domain);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project);
+
 -- ─────────────────────────────── Roundtables ───────────────────────────────
 -- A roundtable is one fan-out of a prompt to multiple LLMs + one synthesis.
 -- Fully DB-stored (no filesystem artifact), because perspectives are transient

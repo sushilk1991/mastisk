@@ -87,6 +87,14 @@ def blog_drafts_dir() -> Path:
     return blog_dir() / "drafts"
 
 
+def journal_dir() -> Path:
+    return vault_dir() / "journal"
+
+
+def projects_dir() -> Path:
+    return vault_dir() / "projects"
+
+
 def ensure_dirs() -> None:
     """Create all directories that should exist (idempotent)."""
     for d in [
@@ -105,5 +113,7 @@ def ensure_dirs() -> None:
         notes_daily_dir(),
         blog_dir(),
         blog_drafts_dir(),
+        journal_dir(),
+        projects_dir(),
     ]:
         d.mkdir(parents=True, exist_ok=True)
