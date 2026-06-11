@@ -97,6 +97,33 @@ def test_task_routes_create_filter_toggle_and_patch_file_first(client, vault_tmp
     assert "🔽" in host_text
 
 
+def test_full_task_scan_includes_existing_non_default_hosts(client, vault_tmp, db):
+    created = client.post(
+        "/api/tasks",
+        json={"text": "Keep note task", "host_path": "_notes/somefile.md"},
+    )
+    assert created.status_code == 201, created.text
+    uid = created.json()["uid"]
+
+    from mastisk.tasks.sync import scan_tasks
+
+    scan_tasks()
+    row = db.execute(
+        "SELECT deleted_at FROM tasks WHERE uid = ?",
+        (uid,),
+    ).fetchone()
+    assert row is not None
+    assert row["deleted_at"] is None
+
+    (vault_tmp / "_notes" / "somefile.md").unlink()
+    scan_tasks()
+    row = db.execute(
+        "SELECT deleted_at FROM tasks WHERE uid = ?",
+        (uid,),
+    ).fetchone()
+    assert row["deleted_at"] is not None
+
+
 def test_project_list_includes_open_task_count(client):
     project = client.post(
         "/api/projects",

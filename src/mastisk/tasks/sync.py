@@ -30,7 +30,7 @@ def scan_task_hosts(
     *,
     uid_factory: Callable[[], str] | None = None,
 ) -> dict[str, int]:
-    host_paths = hosts if hosts is not None else _default_task_hosts()
+    host_paths = hosts if hosts is not None else _full_scan_hosts()
     factory = uid_factory or generate_uid
     seen: set[str] = set()
     scanned_hosts: list[str] = []
@@ -39,6 +39,8 @@ def scan_task_hosts(
     with connect() as conn:
         for host in host_paths:
             path = _absolute_host_path(host)
+            rel_path = str(path.relative_to(vault_dir()))
+            scanned_hosts.append(rel_path)
             if not path.exists() or path.name.startswith("."):
                 continue
             markdown = path.read_text(encoding="utf-8")
@@ -47,8 +49,6 @@ def scan_task_hosts(
                 atomic_write(path, markdown_with_uids)
                 markdown = markdown_with_uids
                 assigned += len(new_uids)
-            rel_path = str(path.relative_to(vault_dir()))
-            scanned_hosts.append(rel_path)
             project, domain = _project_domain_for_host(path, rel_path)
             for task in parse_markdown_tasks(markdown, host_path=rel_path):
                 uid = task.get("uid")
@@ -104,7 +104,7 @@ def scan_task_hosts(
                     ),
                 )
                 upserted += 1
-        _soft_delete_disappeared(conn, scanned_hosts, seen, full_scan=hosts is None)
+        _soft_delete_disappeared(conn, scanned_hosts, seen)
     return {"upserted": upserted, "assigned": assigned}
 
 
@@ -225,6 +225,24 @@ def _default_task_hosts() -> list[Path]:
     return paths
 
 
+def _full_scan_hosts() -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for path in [*_default_task_hosts(), *_mirror_task_hosts()]:
+        absolute = _absolute_host_path(path)
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        paths.append(absolute)
+    return paths
+
+
+def _mirror_task_hosts() -> list[Path]:
+    with connect() as conn:
+        rows = conn.execute("SELECT DISTINCT host_path FROM tasks").fetchall()
+    return [vault_dir() / row["host_path"] for row in rows]
+
+
 def _absolute_host_path(path: Path) -> Path:
     return path if path.is_absolute() else vault_dir() / path
 
@@ -242,18 +260,7 @@ def _project_domain_for_host(path: Path, rel_path: str) -> tuple[str | None, str
     return slug, project.get("domain") if project else None
 
 
-def _soft_delete_disappeared(conn, scanned_hosts: list[str], seen: set[str], *, full_scan: bool) -> None:
-    if full_scan:
-        if seen:
-            placeholders = ",".join("?" for _ in seen)
-            conn.execute(
-                f"""UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP
-                    WHERE deleted_at IS NULL AND uid NOT IN ({placeholders})""",
-                tuple(seen),
-            )
-        else:
-            conn.execute("UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE deleted_at IS NULL")
-        return
+def _soft_delete_disappeared(conn, scanned_hosts: list[str], seen: set[str]) -> None:
     if not scanned_hosts:
         return
     host_placeholders = ",".join("?" for _ in scanned_hosts)
