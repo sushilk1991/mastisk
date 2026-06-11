@@ -185,6 +185,9 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
         hint_intent=hint_intent or "null",
         text=text,
     )
+    # This outer bound intentionally caps the full multi-tier fallback chain
+    # (including claude-or-bust hangs): wrist latency beats fallback coverage.
+    # Revisit if captures start landing in inbox because this timeout is too tight.
     result, _backend = await asyncio.wait_for(
         intelligence.run_intelligence(
             prompt,
