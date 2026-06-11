@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import logging
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_invalid_daily_summary_time_does_not_hide_reminder_tick_log(
+    data_tmp, db, monkeypatch, caplog
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[reminders]\ndaily_summary_time = "bad"\n'
+        '[notify]\nbackend = "ntfy"\nntfy_topic = "test"\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk import scheduler
+
+    monkeypatch.setattr(scheduler, "_reclaim_orphaned_running", lambda: None)
+    monkeypatch.setattr(scheduler, "_reclaim_running_blog_posts", lambda: None)
+    monkeypatch.setattr(scheduler, "_reclaim_running_tweet_threads", lambda: None)
+    monkeypatch.setattr(scheduler, "_reclaim_firing_reminders", lambda: None)
+    monkeypatch.setattr(scheduler, "_graph_repair_once", lambda: None)
+
+    class FakeScheduler:
+        def __init__(self, timezone):
+            self.timezone = timezone
+            self.jobs: list[str | None] = []
+
+        def add_job(self, func, trigger, **kwargs):
+            self.jobs.append(kwargs.get("id"))
+
+        def start(self):
+            return None
+
+        def shutdown(self, wait=False):
+            return None
+
+    monkeypatch.setattr(scheduler, "AsyncIOScheduler", FakeScheduler)
+
+    with caplog.at_level(logging.INFO, logger="mastisk.scheduler"):
+        sched = await scheduler.start_scheduler()
+
+    assert "reminder_tick" in sched.jobs
+    assert "scheduler: reminder_tick registered" in caplog.text
+    assert "scheduler: daily_summary registration failed" in caplog.text

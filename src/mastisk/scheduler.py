@@ -119,7 +119,7 @@ async def start_scheduler():
         log.warning("scheduler: personal_os_scan registration failed: %s", e)
 
     try:
-        from mastisk.agents.reminder_engine import daily_summary_tick, reminder_tick
+        from mastisk.agents.reminder_engine import reminder_tick
         from mastisk.settings import get_settings
 
         settings = get_settings()
@@ -130,21 +130,27 @@ async def start_scheduler():
             next_run_time=datetime.now(timezone.utc) + timedelta(seconds=15),
             coalesce=True,
         )
-        summary_time = settings.reminders.daily_summary_time.strip()
-        if summary_time:
-            hour_s, minute_s = summary_time.split(":", 1)
-            sched.add_job(
-                daily_summary_tick, "cron",
-                hour=int(hour_s),
-                minute=int(minute_s),
-                timezone=ZoneInfo(settings.capture.default_timezone),
-                id="daily_summary",
-                max_instances=1,
-                coalesce=True,
-            )
         log.info("scheduler: reminder_tick registered (%ss tick)", settings.reminders.tick_seconds)
     except Exception as e:
-        log.warning("scheduler: reminder registration failed: %s", e)
+        log.warning("scheduler: reminder_tick registration failed: %s", e)
+    else:
+        try:
+            from mastisk.agents.reminder_engine import daily_summary_tick
+
+            summary_time = settings.reminders.daily_summary_time.strip()
+            if summary_time:
+                hour_s, minute_s = summary_time.split(":", 1)
+                sched.add_job(
+                    daily_summary_tick, "cron",
+                    hour=int(hour_s),
+                    minute=int(minute_s),
+                    timezone=ZoneInfo(settings.capture.default_timezone),
+                    id="daily_summary",
+                    max_instances=1,
+                    coalesce=True,
+                )
+        except Exception as e:
+            log.warning("scheduler: daily_summary registration failed: %s", e)
 
     try:
         from mastisk.agents.linter import Linter

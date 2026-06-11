@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -15,6 +16,8 @@ from mastisk.agents.reminder_engine import (
 )
 
 router = APIRouter(prefix="/api/reminders", tags=["reminders"])
+# Localhost/tailnet trust model: only /api/capture is tunnel-exposed with
+# bearer auth, so this local operator endpoint deliberately has no bearer layer.
 
 
 class ReminderCreate(BaseModel):
@@ -35,6 +38,16 @@ class ReminderCreate(BaseModel):
             datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError as exc:
             raise ValueError("fire_at must be an ISO datetime") from exc
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def _valid_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("url must be http or https")
         return value
 
 

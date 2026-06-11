@@ -12,6 +12,7 @@ from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.reminder_engine")
 FIRING_STALE_AFTER = timedelta(minutes=10)
+_logged_invalid_daily_summary_configs: set[tuple[str, str]] = set()
 
 
 def reminder_tick(*, now: datetime | None = None, ensure_daily_summary: bool = True) -> int:
@@ -547,7 +548,7 @@ def _ensure_daily_summary_reminder(now_dt: datetime) -> dict | None:
         summary_time = _parse_hhmm(configured_time)
         tz = ZoneInfo(settings.capture.default_timezone)
     except (ValueError, ZoneInfoNotFoundError) as exc:
-        log.warning("daily summary disabled by invalid reminders config: %s", exc)
+        _log_invalid_daily_summary_config_once(configured_time, str(exc))
         return None
 
     local_now = now_dt.astimezone(tz)
@@ -557,6 +558,17 @@ def _ensure_daily_summary_reminder(now_dt: datetime) -> dict | None:
         return None
 
     entity_id = local_now.date().isoformat()
+    with connect() as conn:
+        row = conn.execute(
+            """SELECT * FROM reminders
+               WHERE kind = 'daily_summary'
+                 AND entity_id = ?
+                 AND deleted_at IS NULL""",
+            (entity_id,),
+        ).fetchone()
+    if row:
+        return _reminder_row(dict(row))
+
     open_tasks = _open_tasks_with_due()
     title, body = compose_daily_summary(today=local_now.date(), open_tasks=open_tasks)
     with connect() as conn:
@@ -567,10 +579,21 @@ def _ensure_daily_summary_reminder(now_dt: datetime) -> dict | None:
             (entity_id, _utc_iso(fire_at), title, body),
         )
         row = conn.execute(
-            "SELECT * FROM reminders WHERE kind = 'daily_summary' AND entity_id = ?",
+            """SELECT * FROM reminders
+               WHERE kind = 'daily_summary'
+                 AND entity_id = ?
+                 AND deleted_at IS NULL""",
             (entity_id,),
         ).fetchone()
     return _reminder_row(dict(row)) if row else None
+
+
+def _log_invalid_daily_summary_config_once(value: str, error: str) -> None:
+    key = (value, error)
+    if key in _logged_invalid_daily_summary_configs:
+        return
+    _logged_invalid_daily_summary_configs.add(key)
+    log.warning("daily summary disabled by invalid reminders config: %s", error)
 
 
 def _task_due_date(value: str | None) -> date | None:

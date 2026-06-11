@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 
@@ -504,6 +505,81 @@ def test_daily_summary_tick_is_idempotent_per_date(db, data_tmp, monkeypatch):
     assert rows[0]["entity_id"] == "2026-06-11"
 
 
+def test_invalid_daily_summary_time_logs_once_across_ticks(db, data_tmp, caplog):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "UTC"\n'
+        '[reminders]\ndaily_summary_time = "bad"\n'
+        '[notify]\nbackend = "ntfy"\nntfy_topic = "test"\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.agents.reminder_engine import reminder_tick
+
+    with caplog.at_level(logging.WARNING, logger="mastisk.reminder_engine"):
+        reminder_tick(now=datetime(2026, 6, 11, 8, 0, tzinfo=UTC))
+        reminder_tick(now=datetime(2026, 6, 11, 8, 1, tzinfo=UTC))
+
+    assert caplog.text.count("daily summary disabled by invalid reminders config") == 1
+
+
+def test_daily_summary_skips_composition_when_row_already_exists(db, data_tmp, monkeypatch):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "UTC"\n'
+        '[reminders]\ndaily_summary_time = "07:30"\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    db.execute(
+        """INSERT INTO reminders
+           (entity_type, entity_id, fire_at, kind, status, title, body)
+           VALUES ('daily_summary', '2026-06-11', '2026-06-11T07:30:00+00:00',
+                   'daily_summary', 'sent', 'Already done', 'done')"""
+    )
+    monkeypatch.setattr(
+        "mastisk.agents.reminder_engine._open_tasks_with_due",
+        lambda: pytest.fail("existing summary row should skip task query"),
+    )
+
+    from mastisk.agents.reminder_engine import _ensure_daily_summary_reminder
+
+    row = _ensure_daily_summary_reminder(datetime(2026, 6, 11, 8, 0, tzinfo=UTC))
+
+    assert row is not None
+    assert row["title"] == "Already done"
+
+
+def test_daily_summary_ignores_soft_deleted_existing_row(db, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "UTC"\n'
+        '[reminders]\ndaily_summary_time = "07:30"\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    db.execute(
+        """INSERT INTO reminders
+           (entity_type, entity_id, fire_at, kind, status, title, body, deleted_at)
+           VALUES ('daily_summary', '2026-06-11', '2026-06-11T07:30:00+00:00',
+                   'daily_summary', 'cancelled', 'Deleted', 'old', CURRENT_TIMESTAMP)"""
+    )
+
+    from mastisk.agents.reminder_engine import _ensure_daily_summary_reminder
+
+    row = _ensure_daily_summary_reminder(datetime(2026, 6, 11, 8, 0, tzinfo=UTC))
+
+    assert row is not None
+    assert row["deleted_at"] is None
+    assert row["title"] == "Mastisk daily summary"
+
+
 def test_reminders_route_creates_lists_and_cancels_custom_reminder(client, db):
     created = client.post(
         "/api/reminders",
@@ -530,6 +606,21 @@ def test_reminders_route_creates_lists_and_cancels_custom_reminder(client, db):
     assert cancelled.json()["status"] == "cancelled"
     row = db.execute("SELECT status FROM reminders WHERE id = ?", (reminder["id"],)).fetchone()
     assert row["status"] == "cancelled"
+
+
+def test_reminders_route_rejects_non_http_urls(client):
+    created = client.post(
+        "/api/reminders",
+        json={
+            "kind": "custom",
+            "fire_at": "2099-01-01T09:00:00+00:00",
+            "title": "Check oven",
+            "body": "Turn it off",
+            "url": "mastisk://tasks/abc123",
+        },
+    )
+
+    assert created.status_code == 422
 
 
 def test_reminders_route_retries_notify_failed_reminder(client, db):
