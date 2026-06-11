@@ -157,6 +157,18 @@ def reconcile_person_followup_reminder(slug: str) -> int:
     assert target is not None
     with connect() as conn:
         conn.execute(
+            """UPDATE reminders
+               SET deleted_at = CURRENT_TIMESTAMP,
+                   last_error = 'person follow_up_at rescheduled after firing'
+               WHERE entity_type = 'person'
+                 AND entity_id = ?
+                 AND kind = 'followup'
+                 AND status IN ('sent', 'late')
+                 AND fire_at <> ?
+                 AND deleted_at IS NULL""",
+            (entity_id, target["fire_at"]),
+        )
+        conn.execute(
             """INSERT OR IGNORE INTO reminders
                  (entity_type, entity_id, fire_at, kind, status, title, body)
                VALUES ('person', ?, ?, 'followup', 'pending', ?, ?)""",
@@ -174,6 +186,7 @@ def reconcile_person_followup_reminder(slug: str) -> int:
                WHERE entity_type = 'person'
                  AND entity_id = ?
                  AND kind = 'followup'
+                 AND status = 'pending'
                  AND deleted_at IS NULL""",
             (target["fire_at"], target["title"], target["body"], entity_id),
         )
@@ -466,6 +479,7 @@ def _fire_claimed(row: dict, now_dt: datetime) -> bool:
                 kind="reminder",
                 payload={"kind": row["kind"], "entity_id": row["entity_id"], "title": title},
             )
+        _clear_person_followup_after_fire(row)
         return True
 
     _handle_notify_failure(row, now_dt)
@@ -647,6 +661,24 @@ def _refresh_claimed_person_followup_reminder(row: dict, now_dt: datetime) -> di
             (target["fire_at"], target["title"], target["body"], row["id"]),
         )
     return refreshed
+
+
+def _clear_person_followup_after_fire(row: dict) -> None:
+    if (
+        row.get("kind") != "followup"
+        or row.get("entity_type") != "person"
+        or not str(row.get("entity_id") or "").startswith("followup:")
+    ):
+        return
+    slug = str(row["entity_id"]).split(":", 1)[1]
+    try:
+        from mastisk.people.sync import patch_person
+
+        # CRM follow_up_at is one-shot: once the notification is sent, clear
+        # the file-canonical field so later scans do not show it as actionable.
+        patch_person(slug, {"follow_up_at": None})
+    except Exception:
+        log.exception("failed to clear fired person follow_up_at for %s", slug)
 
 
 def _task_due_target(row: dict) -> tuple[dict | None, str | None]:

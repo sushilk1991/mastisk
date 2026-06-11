@@ -429,3 +429,122 @@ def test_person_follow_up_at_reminder_lifecycle(db, vault_tmp, data_tmp):
         "status": "cancelled",
         "last_error": "person follow_up_at cleared",
     }
+
+
+def test_person_follow_up_reminder_fires_once_and_clears_file(
+    db, vault_tmp, data_tmp, monkeypatch
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "UTC"\n'
+        '[notify]\nbackend = "ntfy"\nntfy_topic = "test"\n',
+        encoding="utf-8",
+    )
+    from mastisk.people.sync import create_person_file, patch_person, scan_people
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_person_file(name="Anjali Rao")
+    patch_person("anjali-rao", {"follow_up_at": "2026-06-20T09:00:00+00:00"})
+
+    sent: list[tuple[str, str]] = []
+    from mastisk.agents import reminder_engine
+
+    monkeypatch.setattr(
+        "mastisk.agents.reminder_engine.notify.send",
+        lambda title, body, url=None: sent.append((title, body)) or True,
+    )
+
+    assert reminder_engine.reminder_tick(
+        now=datetime(2026, 6, 20, 9, 0, tzinfo=UTC),
+        ensure_daily_summary=False,
+    ) == 1
+    assert sent == [("Follow up: Anjali Rao", "Follow up with Anjali Rao")]
+
+    row = db.execute(
+        "SELECT status FROM reminders WHERE entity_id = 'followup:anjali-rao'"
+    ).fetchone()
+    assert row["status"] == "sent"
+    file_text = (vault_tmp / "people" / "anjali-rao.md").read_text(encoding="utf-8")
+    assert "follow_up_at" not in file_text
+
+    scan_people()
+    assert reminder_engine.people_dates_tick(
+        now=datetime(2026, 6, 20, 9, 1, tzinfo=UTC)
+    ) == 0
+    rows = db.execute(
+        """SELECT status FROM reminders
+           WHERE entity_id = 'followup:anjali-rao'
+           ORDER BY id"""
+    ).fetchall()
+    assert [row["status"] for row in rows] == ["sent"]
+
+
+def test_person_follow_up_can_be_scheduled_again_after_firing(
+    db, vault_tmp, data_tmp, monkeypatch
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "UTC"\n'
+        '[notify]\nbackend = "ntfy"\nntfy_topic = "test"\n',
+        encoding="utf-8",
+    )
+    from mastisk.people.sync import create_person_file, patch_person
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_person_file(name="Anjali Rao")
+    patch_person("anjali-rao", {"follow_up_at": "2026-06-20T09:00:00+00:00"})
+
+    from mastisk.agents import reminder_engine
+
+    monkeypatch.setattr("mastisk.agents.reminder_engine.notify.send", lambda *args, **kwargs: True)
+    assert reminder_engine.reminder_tick(
+        now=datetime(2026, 6, 20, 9, 0, tzinfo=UTC),
+        ensure_daily_summary=False,
+    ) == 1
+
+    patch_person("anjali-rao", {"follow_up_at": "2026-06-25T10:00:00+00:00"})
+
+    rows = db.execute(
+        """SELECT fire_at, status, deleted_at FROM reminders
+           WHERE entity_id = 'followup:anjali-rao'
+           ORDER BY id"""
+    ).fetchall()
+    assert [dict(row) for row in rows] == [
+        {
+            "fire_at": "2026-06-20T09:00:00+00:00",
+            "status": "sent",
+            "deleted_at": rows[0]["deleted_at"],
+        },
+        {
+            "fire_at": "2026-06-25T10:00:00+00:00",
+            "status": "pending",
+            "deleted_at": None,
+        },
+    ]
+    assert rows[0]["deleted_at"] is not None
+
+
+def test_person_follow_up_reconcile_does_not_resurrect_cancelled_rows(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.agents.reminder_engine import cancel_reminder, people_dates_tick
+    from mastisk.people.sync import create_person_file, patch_person, scan_people
+
+    create_person_file(name="Anjali Rao")
+    patch_person("anjali-rao", {"follow_up_at": "2026-06-20T09:00:00+00:00"})
+    row = db.execute(
+        "SELECT id FROM reminders WHERE entity_id = 'followup:anjali-rao'"
+    ).fetchone()
+    assert cancel_reminder(row["id"]) is not None
+
+    scan_people()
+    assert people_dates_tick(now=datetime(2026, 6, 19, 9, 0, tzinfo=UTC)) == 0
+
+    rows = db.execute(
+        """SELECT status FROM reminders
+           WHERE entity_id = 'followup:anjali-rao'
+           ORDER BY id"""
+    ).fetchall()
+    assert [row["status"] for row in rows] == ["cancelled"]
