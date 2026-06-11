@@ -1,6 +1,7 @@
 """Monthly retainer task materialization."""
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -24,6 +25,8 @@ from mastisk.tasks.parser import (
     rewrite_task_line,
 )
 from mastisk.tasks.sync import scan_task_hosts
+
+log = logging.getLogger("mastisk.retainer_rollover")
 
 
 def retainer_rollover(
@@ -100,11 +103,12 @@ def _carry_forward_overdue_tasks(body: str, month_start: date, month_end: str) -
         if heading.startswith("## "):
             in_milestones = heading == "## milestones"
         parsed = None if in_milestones else parse_task_line(line)
+        due_date = _safe_task_due_date(parsed, line) if parsed is not None else None
         if (
             parsed is not None
             and not parsed["checked"]
-            and parsed.get("due")
-            and date.fromisoformat(str(parsed["due"])[:10]) < month_start
+            and due_date is not None
+            and due_date < month_start
         ):
             rewritten.append(
                 rewrite_task_line(line, due=month_end, uid=parsed.get("uid")) + ending
@@ -112,6 +116,17 @@ def _carry_forward_overdue_tasks(body: str, month_start: date, month_end: str) -
         else:
             rewritten.append(raw)
     return "".join(rewritten)
+
+
+def _safe_task_due_date(parsed: dict | None, line: str) -> date | None:
+    if parsed is None or not parsed.get("due"):
+        return None
+    raw = str(parsed["due"])[:10]
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        log.warning("retainer_rollover: skipping task with malformed due date %r: %s", raw, line)
+        return None
 
 
 def _local_now(now: datetime | None) -> datetime:

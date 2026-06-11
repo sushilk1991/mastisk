@@ -300,6 +300,60 @@ def test_retainer_rollover_idempotent_carries_forward_and_skips_inactive(
     ]
 
 
+def test_retainer_rollover_skips_bad_due_dates_and_continues(
+    db, vault_tmp, data_tmp, caplog
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "UTC"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.agents.retainer_rollover import retainer_rollover
+    from mastisk.projects.sync import scan_projects
+
+    first = vault_tmp / "projects" / "client-a.md"
+    second = vault_tmp / "projects" / "client-b.md"
+    first.parent.mkdir(parents=True)
+    first.write_text(
+        "---\n"
+        "name: Client A\n"
+        "type: retainer\n"
+        "status: active\n"
+        "recurring_items:\n"
+        "  - Monthly report\n"
+        "---\n\n"
+        "## Tasks\n"
+        "- [ ] Bad stale task 📅 2026-99-99 🆔 bad1\n"
+        "- [ ] Good stale task 📅 2026-06-20 🆔 good1\n",
+        encoding="utf-8",
+    )
+    second.write_text(
+        "---\n"
+        "name: Client B\n"
+        "type: retainer\n"
+        "status: active\n"
+        "recurring_items:\n"
+        "  - Other report\n"
+        "---\n\n"
+        "## Tasks\n",
+        encoding="utf-8",
+    )
+    scan_projects([first, second])
+
+    now = datetime(2026, 7, 5, 9, 0, tzinfo=UTC)
+    with caplog.at_level("WARNING", logger="mastisk.retainer_rollover"):
+        processed = retainer_rollover(now=now, uid_factory=iter(["new1", "new2"]).__next__)
+
+    assert processed == 2
+    assert "malformed due date" in caplog.text
+    first_text = first.read_text(encoding="utf-8")
+    assert "- [ ] Bad stale task 📅 2026-99-99 🆔 bad1" in first_text
+    assert "- [ ] Good stale task 📅 2026-07-31 🆔 good1" in first_text
+    assert "- [ ] Monthly report 📅 2026-07-31 🆔 new1" in first_text
+    second_text = second.read_text(encoding="utf-8")
+    assert "- [ ] Other report 📅 2026-07-31 🆔 new2" in second_text
+
+
 def test_retainer_current_month_state_includes_month_end_due_times(db, vault_tmp):
     from mastisk.projects.sync import project_payload, scan_projects
     from mastisk.tasks.sync import scan_task_hosts
