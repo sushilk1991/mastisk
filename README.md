@@ -524,14 +524,26 @@ backstop, not the only control):
 brew install cloudflared
 cloudflared tunnel login
 cloudflared tunnel create mastisk-capture
-# Route a hostname to the local daemon, restricted to the capture path:
-#   ingress:
-#     - hostname: capture.<your-domain>
-#       service: http://localhost:5555
-#       path: ^/api/capture        # scope to the ingress
-#     - service: http_status:404   # everything else → 404
-cloudflared tunnel route dns mastisk-capture capture.<your-domain>
-cloudflared tunnel run mastisk-capture
+
+# Copy the UUID printed by `cloudflared tunnel create`.
+TUNNEL_ID="paste-your-tunnel-uuid"
+CAPTURE_HOST="capture.example.com"
+
+mkdir -p ~/.cloudflared
+cat > ~/.cloudflared/config.yml <<EOF
+tunnel: ${TUNNEL_ID}
+credentials-file: ${HOME}/.cloudflared/${TUNNEL_ID}.json
+
+ingress:
+  - hostname: ${CAPTURE_HOST}
+    path: ^/api/capture$
+    service: http://127.0.0.1:5555
+  - service: http_status:404
+EOF
+
+cloudflared tunnel ingress validate
+cloudflared tunnel route dns mastisk-capture "${CAPTURE_HOST}"
+cloudflared tunnel --config ~/.cloudflared/config.yml run mastisk-capture
 ```
 
 For stronger isolation, put a **Cloudflare Access** policy in front of
