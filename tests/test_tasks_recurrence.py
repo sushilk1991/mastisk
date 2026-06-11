@@ -173,3 +173,78 @@ def test_unparseable_recurring_task_is_flagged_without_materializing(
         assert row["recurrence_unparsed"] == 1
         listed = client.get("/api/tasks").json()
         assert next(task for task in listed if task["uid"] == uid)["recurrence_unparsed"] is True
+
+
+def test_recurring_task_carries_reminder_metadata_to_next_instance(
+    vault_tmp, data_tmp, db
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "UTC"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+    from mastisk.tasks.sync import append_task_to_host, rewrite_task
+
+    reload_settings()
+    row = append_task_to_host(
+        vault_tmp / "journal" / "2027-06-11.md",
+        text="Review account",
+        due="2027-06-11T10:00:00+00:00",
+        recurrence="daily",
+        reminder_lead_minutes=30,
+        no_reminder=False,
+        review_at="2027-06-10T09:00:00+00:00",
+    )
+
+    updated = rewrite_task(row["uid"], checked=True)
+    assert updated is not None
+
+    next_task = db.execute(
+        """SELECT uid, due, reminder_lead_minutes, no_reminder, review_at
+           FROM tasks
+           WHERE text = 'Review account' AND status = 'open' AND deleted_at IS NULL"""
+    ).fetchone()
+    next_uid = next_task["uid"]
+    assert dict(next_task) == {
+        "uid": next_uid,
+        "due": "2027-06-12T10:00:00",
+        "reminder_lead_minutes": 30,
+        "no_reminder": 0,
+        "review_at": "2027-06-10T09:00:00+00:00",
+    }
+    reminder = db.execute(
+        """SELECT entity_id, fire_at, lead_minutes, status
+           FROM reminders
+           WHERE kind = 'task_due'"""
+    ).fetchone()
+    assert dict(reminder) == {
+        "entity_id": next_uid,
+        "fire_at": "2027-06-12T09:30:00+00:00",
+        "lead_minutes": 30,
+        "status": "pending",
+    }
+
+
+def test_recurring_task_preserves_due_scheduled_offset(vault_tmp, data_tmp, db):
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/tasks",
+            json={
+                "text": "Prepare launch",
+                "due": "2027-06-13",
+                "scheduled": "2027-06-11",
+                "recurrence": "daily",
+            },
+        )
+        assert created.status_code == 201, created.text
+        uid = created.json()["uid"]
+
+        toggled = client.patch(f"/api/tasks/{uid}/toggle")
+        assert toggled.status_code == 200, toggled.text
+
+        next_task = db.execute(
+            """SELECT due, scheduled FROM tasks
+               WHERE text = 'Prepare launch' AND status = 'open' AND deleted_at IS NULL"""
+        ).fetchone()
+        assert dict(next_task) == {
+            "due": "2027-06-14",
+            "scheduled": "2027-06-12",
+        }

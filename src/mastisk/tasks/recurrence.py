@@ -136,7 +136,8 @@ def materialize_next_instance(uid: str, *, completed_on: str | None = None) -> b
         next_due = None
     else:
         next_due = next_day
-    next_scheduled = next_day if has_scheduled else None
+    next_scheduled = _next_scheduled_date(task, next_day) if has_scheduled else None
+    next_uid = generate_uid()
     line = format_task_line(
         task["text"],
         due=next_due,
@@ -145,7 +146,7 @@ def materialize_next_instance(uid: str, *, completed_on: str | None = None) -> b
         priority=task.get("priority"),
         tags=json.loads(task.get("tags_json") or "[]"),
         links=json.loads(task.get("links_json") or "[]"),
-        uid=generate_uid(),
+        uid=next_uid,
     )
     with host_file_lock(host):
         markdown = host.read_text(encoding="utf-8")
@@ -154,6 +155,16 @@ def materialize_next_instance(uid: str, *, completed_on: str | None = None) -> b
     from mastisk.tasks.sync import scan_task_hosts
 
     scan_task_hosts([host])
+    _copy_materialized_metadata(next_uid, task)
+    from mastisk.agents.reminder_engine import create_task_due_reminder
+
+    create_task_due_reminder(
+        task_uid=next_uid,
+        task_text=task["text"],
+        due=next_due,
+        lead_minutes=task.get("reminder_lead_minutes"),
+        no_reminder=bool(task.get("no_reminder")),
+    )
     _set_recurrence_flags(uid, materialized_key=key, unparsed=False)
     return True
 
@@ -205,3 +216,33 @@ def _next_due_with_time(previous_due: str | None, next_day: str) -> str:
     if previous_due and "T" in previous_due:
         return f"{next_day}T{previous_due.split('T', 1)[1]}"
     return next_day
+
+
+def _next_scheduled_date(task: dict, next_day: str) -> str:
+    if not task.get("due"):
+        return next_day
+    try:
+        previous_due = date.fromisoformat(str(task["due"])[:10])
+        previous_scheduled = date.fromisoformat(str(task["scheduled"])[:10])
+        next_due = date.fromisoformat(next_day)
+    except (TypeError, ValueError):
+        return next_day
+    return (next_due - (previous_due - previous_scheduled)).isoformat()
+
+
+def _copy_materialized_metadata(uid: str, source_task: dict) -> None:
+    with connect() as conn:
+        conn.execute(
+            """UPDATE tasks
+               SET reminder_lead_minutes = ?,
+                   no_reminder = ?,
+                   review_at = ?,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE uid = ?""",
+            (
+                source_task.get("reminder_lead_minutes"),
+                1 if source_task.get("no_reminder") else 0,
+                source_task.get("review_at"),
+                uid,
+            ),
+        )
