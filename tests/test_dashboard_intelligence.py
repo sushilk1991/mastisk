@@ -66,6 +66,31 @@ def test_focus_keeps_completed_tasks_visible_for_the_day(client):
     assert focus.json()[0]["checked"] is True
 
 
+def test_focus_rejects_soft_deleted_tasks(client, db):
+    task = _create_task(client, "Deleted focus candidate")
+    db.execute("UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE uid = ?", (task["uid"],))
+
+    starred = client.post("/api/focus/2026-06-11", json={"task_uid": task["uid"]})
+
+    assert starred.status_code == 404
+    assert client.get("/api/focus/2026-06-11").json() == []
+
+
+def test_focus_deleted_after_star_returns_removable_placeholder(client, db):
+    task = _create_task(client, "Delete after star")
+    day = "2026-06-11"
+    assert client.post(f"/api/focus/{day}", json={"task_uid": task["uid"]}).status_code == 201
+    db.execute("UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE uid = ?", (task["uid"],))
+
+    focus = client.get(f"/api/focus/{day}").json()
+
+    assert focus[0]["uid"] == task["uid"]
+    assert focus[0]["text"] == "Missing task"
+    removed = client.delete(f"/api/focus/{day}/{task['uid']}")
+    assert removed.status_code == 200, removed.text
+    assert removed.json() == []
+
+
 def test_slipping_scan_windows_overrides_snooze_mute_and_rebuild_idempotency(
     db, data_tmp
 ):

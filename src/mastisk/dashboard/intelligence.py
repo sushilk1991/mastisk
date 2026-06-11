@@ -32,9 +32,9 @@ class FocusFullError(RuntimeError):
 def list_focus(day: str) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
-            """SELECT df.position, t.*
+            """SELECT df.position, df.task_uid AS focus_task_uid, t.*
                FROM daily_focus df
-               LEFT JOIN tasks t ON t.uid = df.task_uid
+               LEFT JOIN tasks t ON t.uid = df.task_uid AND t.deleted_at IS NULL
                WHERE df.date = ?
                ORDER BY df.position ASC""",
             (day,),
@@ -44,7 +44,10 @@ def list_focus(day: str) -> list[dict[str, Any]]:
 
 def star_focus(day: str, task_uid: str, *, replace_uid: str | None = None) -> list[dict[str, Any]]:
     with connect() as conn, txn(conn):
-        task = conn.execute("SELECT uid FROM tasks WHERE uid = ?", (task_uid,)).fetchone()
+        task = conn.execute(
+            "SELECT uid FROM tasks WHERE uid = ? AND deleted_at IS NULL",
+            (task_uid,),
+        ).fetchone()
         if task is None:
             raise KeyError(task_uid)
         if replace_uid:
@@ -371,9 +374,9 @@ def _review_at_from_meta(meta: dict[str, Any]) -> date | None:
 
 def _list_focus_with_conn(conn, day: str) -> list[dict[str, Any]]:
     rows = conn.execute(
-        """SELECT df.position, t.*
+        """SELECT df.position, df.task_uid AS focus_task_uid, t.*
            FROM daily_focus df
-           LEFT JOIN tasks t ON t.uid = df.task_uid
+           LEFT JOIN tasks t ON t.uid = df.task_uid AND t.deleted_at IS NULL
            WHERE df.date = ?
            ORDER BY df.position ASC""",
         (day,),
@@ -395,14 +398,16 @@ def _compact_focus_positions(conn, day: str) -> None:
 
 def _focus_task_row(row: dict[str, Any]) -> dict[str, Any]:
     position = row.pop("position")
+    focus_task_uid = row.pop("focus_task_uid", None)
     if row.get("uid") is None:
         return {
             "position": position,
-            "uid": None,
+            "uid": focus_task_uid,
             "text": "Missing task",
             "checked": True,
             "status": "done",
             "deleted_at": None,
+            "focused": True,
         }
     task = _task_row(row)
     task["position"] = position
