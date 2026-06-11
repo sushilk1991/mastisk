@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from mastisk.capture.router import Capture, route_capture
 from mastisk.paths import vault_dir
-from mastisk.projects.sync import append_project_log, get_project
+from mastisk.projects.sync import append_project_log, find_project
 from mastisk.routes.notes import persist_note_capture
 from mastisk.settings import read_capture_bearer_token
 from mastisk.tasks.sync import append_task_to_host, journal_host_for_today
@@ -108,7 +108,7 @@ async def capture(
 
 
 def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: bool) -> dict:
-    project = get_project(capture.project) if capture.project else None
+    project = find_project(capture.project)
     host = (vault_dir() / project["path"]) if project is not None else journal_host_for_today(ts)
     row = append_task_to_host(
         host,
@@ -129,15 +129,16 @@ def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: boo
 
 
 def _persist_project_update_capture(capture: Capture) -> dict | None:
-    if not capture.project:
-        return None
-    project = append_project_log(capture.project, capture.body)
+    project = find_project(capture.project)
     if project is None:
         return None
+    updated = append_project_log(project["slug"], capture.body)
+    if updated is None:
+        return None
     return {
-        "id": project["slug"],
+        "id": updated["slug"],
         "type": "project_update",
-        "destination": project["path"],
+        "destination": updated["path"],
     }
 
 

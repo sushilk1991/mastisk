@@ -1,2 +1,1 @@
 """Inline markdown task support."""
-

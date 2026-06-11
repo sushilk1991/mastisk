@@ -99,3 +99,20 @@ def test_assign_missing_uids_rewrites_only_missing_task_lines():
         "not a task",
         "- [x] already has one 🆔 old123",
     ]
+
+
+def test_duplicate_uids_are_reassigned_after_the_first_occurrence():
+    from mastisk.tasks.parser import ensure_task_uids
+
+    markdown = (
+        "- [ ] original 🆔 dup1\n"
+        "- [ ] copied line 🆔 dup1\n"
+    )
+
+    rewritten, assigned = ensure_task_uids(markdown, uid_factory=lambda: "new222")
+
+    assert assigned == ["new222"]
+    assert rewritten.splitlines() == [
+        "- [ ] original 🆔 dup1",
+        "- [ ] copied line 🆔 new222",
+    ]

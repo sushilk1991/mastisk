@@ -1,2 +1,1 @@
 """Project markdown file support."""
-

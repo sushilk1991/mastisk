@@ -158,6 +158,23 @@ def get_project(slug: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def find_project(ref: str | None) -> dict[str, Any] | None:
+    if not ref:
+        return None
+    by_slug = get_project(ref)
+    if by_slug is not None:
+        return by_slug
+    with connect() as conn:
+        row = conn.execute(
+            """SELECT * FROM projects
+               WHERE lower(name) = lower(?) AND deleted_at IS NULL
+               ORDER BY updated_at DESC
+               LIMIT 1""",
+            (ref,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def list_projects() -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(

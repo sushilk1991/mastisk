@@ -144,21 +144,22 @@ def ensure_task_uids(
     uid_factory: Callable[[], str] | None = None,
 ) -> tuple[str, list[str]]:
     factory = uid_factory or generate_uid
-    existing = {
-        task["uid"]
-        for task in parse_markdown_tasks(markdown)
-        if task.get("uid")
-    }
+    seen: set[str] = set()
     assigned: list[str] = []
     rewritten: list[str] = []
     for raw in markdown.splitlines(keepends=True):
         line, ending = _split_line_ending(raw)
         parsed = parse_task_line(line)
-        if parsed is None or parsed.get("uid"):
+        if parsed is None:
             rewritten.append(raw)
             continue
-        uid = _next_unique_uid(factory, existing)
-        existing.add(uid)
+        current_uid = parsed.get("uid")
+        if current_uid and current_uid not in seen:
+            seen.add(current_uid)
+            rewritten.append(raw)
+            continue
+        uid = _next_unique_uid(factory, seen)
+        seen.add(uid)
         assigned.append(uid)
         rewritten.append(rewrite_task_line(line, uid=uid) + ending)
     return "".join(rewritten), assigned

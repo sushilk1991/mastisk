@@ -245,6 +245,33 @@ def test_capture_task_routes_to_existing_project_host(
     assert "- [ ] ship phase three #phase3" in project_text
 
 
+def test_capture_task_accepts_project_name_when_router_does_not_return_slug(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    client_with_token.post(
+        "/api/projects",
+        json={"name": "Mastisk", "type": "project", "domain": "work"},
+    )
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.96,
+        body="ship phase three",
+        project="Mastisk",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "add ship phase three to the Mastisk project", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    assert r.json()["destination"] == "projects/mastisk.md"
+    project_text = (vault_tmp / "projects" / "mastisk.md").read_text(encoding="utf-8")
+    assert "- [ ] ship phase three" in project_text
+
+
 def test_capture_project_update_appends_to_project_log(
     client_with_token, vault_tmp, fake_capture_router
 ):
