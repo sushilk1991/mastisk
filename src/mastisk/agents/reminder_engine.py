@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -27,6 +28,10 @@ def reminder_tick(*, now: datetime | None = None, ensure_daily_summary: bool = T
         routine_missed_tick(now=now_dt)
     except Exception:
         log.exception("routine_missed_tick failed; continuing reminder tick")
+    try:
+        people_dates_tick(now=now_dt)
+    except Exception:
+        log.exception("people_dates_tick failed; continuing reminder tick")
     if _notify_backend_disabled():
         log.info("reminder_tick skipped: notify backend disabled")
         return 0
@@ -127,6 +132,52 @@ def reconcile_task_due_reminders(task_uid: str) -> int:
         if _sync_pending_task_due_reminder(row):
             changed += 1
     return changed
+
+
+def reconcile_person_followup_reminder(slug: str) -> int:
+    """Refresh the CRM-native followup reminder from a person mirror row."""
+    entity_id = f"followup:{slug}"
+    target, reason = _person_followup_target(entity_id)
+    if reason is not None:
+        with connect() as conn:
+            cur = conn.execute(
+                """UPDATE reminders
+                   SET status = 'cancelled',
+                       next_attempt_at = NULL,
+                       fired_at = NULL,
+                       last_error = ?
+                   WHERE entity_type = 'person'
+                     AND entity_id = ?
+                     AND kind = 'followup'
+                     AND status = 'pending'
+                     AND deleted_at IS NULL""",
+                (reason, entity_id),
+            )
+            return cur.rowcount
+    assert target is not None
+    with connect() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO reminders
+                 (entity_type, entity_id, fire_at, kind, status, title, body)
+               VALUES ('person', ?, ?, 'followup', 'pending', ?, ?)""",
+            (entity_id, target["fire_at"], target["title"], target["body"]),
+        )
+        cur = conn.execute(
+            """UPDATE reminders
+               SET fire_at = ?,
+                   status = 'pending',
+                   title = ?,
+                   body = ?,
+                   next_attempt_at = NULL,
+                   fired_at = NULL,
+                   last_error = NULL
+               WHERE entity_type = 'person'
+                 AND entity_id = ?
+                 AND kind = 'followup'
+                 AND deleted_at IS NULL""",
+            (target["fire_at"], target["title"], target["body"], entity_id),
+        )
+    return cur.rowcount
 
 
 def create_custom_reminder(
@@ -300,6 +351,40 @@ def routine_missed_tick(*, now: datetime | None = None) -> int:
     return inserted
 
 
+def people_dates_tick(*, now: datetime | None = None) -> int:
+    """Queue birthday/anniversary followup reminders for today's local date."""
+    from mastisk.people.sync import list_people, scan_people
+
+    now_dt = _coerce_datetime(now)
+    settings = get_settings()
+    tz = ZoneInfo(settings.capture.default_timezone)
+    local_now = now_dt.astimezone(tz)
+    today_key = local_now.strftime("%m-%d")
+    year = local_now.year
+    fire_at = _people_date_fire_at(local_now)
+    try:
+        scan_people()
+    except Exception:
+        log.exception("people_dates_tick people scan failed")
+        return 0
+    inserted = 0
+    for person in list_people(include_archived=False):
+        for field, label in (("birthday", "Birthday"), ("anniversary", "Anniversary")):
+            if _person_date_key(person.get(field)) != today_key:
+                continue
+            entity_id = f"{field}:{person['slug']}:{year}"
+            title = f"{label} today: {person['name']}"
+            with connect() as conn:
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO reminders
+                         (entity_type, entity_id, fire_at, kind, status, title, body)
+                       VALUES ('person', ?, ?, 'followup', 'pending', ?, ?)""",
+                    (entity_id, _utc_iso(fire_at), title, title),
+                )
+                inserted += cur.rowcount
+    return inserted
+
+
 def _claim_reminder(reminder_id: int, now_iso: str) -> bool:
     with connect() as conn:
         cur = conn.execute(
@@ -351,6 +436,9 @@ def _fire_claimed(row: dict, now_dt: datetime) -> bool:
     if refreshed is None:
         return False
     refreshed = _refresh_claimed_routine_missed_reminder(refreshed, now_dt)
+    if refreshed is None:
+        return False
+    refreshed = _refresh_claimed_person_followup_reminder(refreshed, now_dt)
     if refreshed is None:
         return False
     row = refreshed
@@ -527,6 +615,40 @@ def _refresh_claimed_routine_missed_reminder(row: dict, now_dt: datetime) -> dic
     }
 
 
+def _refresh_claimed_person_followup_reminder(row: dict, now_dt: datetime) -> dict | None:
+    if (
+        row.get("kind") != "followup"
+        or row.get("entity_type") != "person"
+        or not str(row.get("entity_id") or "").startswith("followup:")
+    ):
+        return row
+    target, reason = _person_followup_target(str(row.get("entity_id") or ""))
+    if reason is not None:
+        _cancel_claimed(row, reason)
+        return None
+    assert target is not None
+    if _parse_datetime(target["fire_at"]) > now_dt:
+        _reschedule_claimed_person_followup(row, target)
+        return None
+    refreshed = {
+        **row,
+        "fire_at": target["fire_at"],
+        "title": target["title"],
+        "body": target["body"],
+    }
+    with connect() as conn:
+        conn.execute(
+            """UPDATE reminders
+               SET fire_at = ?,
+                   title = ?,
+                   body = ?,
+                   last_error = NULL
+               WHERE id = ? AND status = 'firing' AND deleted_at IS NULL""",
+            (target["fire_at"], target["title"], target["body"], row["id"]),
+        )
+    return refreshed
+
+
 def _task_due_target(row: dict) -> tuple[dict | None, str | None]:
     if row.get("kind") != "task_due" or row.get("entity_type") != "task":
         return None, None
@@ -563,6 +685,34 @@ def _task_due_target(row: dict) -> tuple[dict | None, str | None]:
     }, None
 
 
+def _person_followup_target(entity_id: str) -> tuple[dict | None, str | None]:
+    prefix, sep, slug = entity_id.partition(":")
+    if prefix != "followup" or not sep or not slug:
+        return None, "person followup entity invalid"
+    with connect() as conn:
+        person = conn.execute(
+            """SELECT slug, name, follow_up_at, deleted_at
+               FROM people
+               WHERE slug = ?""",
+            (slug,),
+        ).fetchone()
+    if person is None:
+        return None, "person missing"
+    if person["deleted_at"] is not None:
+        return None, "person archived"
+    if not person["follow_up_at"]:
+        return None, "person follow_up_at cleared"
+    try:
+        fire_at = _parse_datetime(person["follow_up_at"])
+    except ValueError:
+        return None, "person follow_up_at unparsable"
+    return {
+        "fire_at": _utc_iso(fire_at),
+        "title": f"Follow up: {person['name']}",
+        "body": f"Follow up with {person['name']}",
+    }, None
+
+
 def _reschedule_claimed(row: dict, target: dict) -> None:
     with connect() as conn:
         conn.execute(
@@ -577,6 +727,22 @@ def _reschedule_claimed(row: dict, target: dict) -> None:
                    last_error = NULL
                WHERE id = ? AND status = 'firing' AND deleted_at IS NULL""",
             (target["fire_at"], target["lead_minutes"], target["body"], row["id"]),
+        )
+
+
+def _reschedule_claimed_person_followup(row: dict, target: dict) -> None:
+    with connect() as conn:
+        conn.execute(
+            """UPDATE reminders
+               SET status = 'pending',
+                   fire_at = ?,
+                   title = ?,
+                   body = ?,
+                   fired_at = NULL,
+                   next_attempt_at = NULL,
+                   last_error = NULL
+               WHERE id = ? AND status = 'firing' AND deleted_at IS NULL""",
+            (target["fire_at"], target["title"], target["body"], row["id"]),
         )
 
 
@@ -681,6 +847,26 @@ def _ensure_daily_summary_reminder(now_dt: datetime) -> dict | None:
             (entity_id,),
         ).fetchone()
     return _reminder_row(dict(row)) if row else None
+
+
+def _people_date_fire_at(local_now: datetime) -> datetime:
+    configured_time = get_settings().reminders.daily_summary_time.strip() or "07:30"
+    try:
+        reminder_time = _parse_hhmm(configured_time)
+    except (ValueError, TypeError):
+        reminder_time = time(hour=7, minute=30)
+    return datetime.combine(local_now.date(), reminder_time, tzinfo=local_now.tzinfo)
+
+
+def _person_date_key(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", text):
+        return text[5:]
+    if re.match(r"^\d{2}-\d{2}$", text):
+        return text
+    return None
 
 
 def _routine_window_end(routine: dict, local_now: datetime) -> datetime | None:

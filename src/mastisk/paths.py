@@ -103,6 +103,10 @@ def routines_dir() -> Path:
     return vault_dir() / "routines"
 
 
+def people_dir() -> Path:
+    return vault_dir() / "people"
+
+
 def ensure_dirs() -> None:
     """Create all directories that should exist (idempotent)."""
     for d in [
@@ -125,5 +129,6 @@ def ensure_dirs() -> None:
         projects_dir(),
         checklist_templates_dir(),
         routines_dir(),
+        people_dir(),
     ]:
         d.mkdir(parents=True, exist_ok=True)

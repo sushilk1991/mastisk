@@ -16,6 +16,7 @@ from mastisk.agents.reminder_engine import create_task_due_reminder
 from mastisk.capture.router import Capture, route_capture
 from mastisk.journal import JournalFrontmatterError, append_log
 from mastisk.paths import vault_dir
+from mastisk.people.sync import append_interaction, create_person_file, find_person
 from mastisk.projects.sync import append_project_log, find_project
 from mastisk.routes.notes import persist_note_capture
 from mastisk.routines.sync import RoutineArchivedError, complete_routine_completion, local_today
@@ -59,6 +60,13 @@ async def capture(
     req: CaptureRequest,
     authorization: str | None = Header(default=None),
 ) -> dict:
+    """Route a capture into the personal OS.
+
+    General "follow up with Anjali Thursday" captures stay tasks: task due
+    dates/reminders are the general action mechanism. The People branch only
+    records person-typed CRM interactions; `/api/people/{slug}` owns
+    `follow_up_at` as the CRM-native follow-up field.
+    """
     require_capture_token(authorization)
 
     try:
@@ -113,6 +121,15 @@ async def capture(
                 return {**filed, "needs_triage": needs_triage}
         except Exception:
             log.exception("capture project update write failed; falling back to raw inbox note")
+            return _persist_inbox_fallback(req.text, req.source)
+
+    if routed.type == "person":
+        try:
+            filed = _persist_person_capture(routed, ts=req.ts, needs_triage=needs_triage)
+            if filed is not None:
+                return filed
+        except Exception:
+            log.exception("capture person write failed; falling back to raw inbox note")
             return _persist_inbox_fallback(req.text, req.source)
 
     try:
@@ -226,6 +243,42 @@ def _persist_routine_done_capture(capture: Capture, *, ts: str | None) -> dict |
         "routine_slug": updated["slug"],
         "destination": updated["path"],
         "streak": updated["streak"],
+    }
+
+
+def _persist_person_capture(
+    capture: Capture,
+    *,
+    ts: str | None,
+    needs_triage: bool,
+) -> dict | None:
+    person = find_person(capture.person)
+    interaction_ts = _capture_local_datetime(ts).strftime("%Y-%m-%d %H:%M")
+    if person is not None:
+        updated = append_interaction(person["slug"], capture.body, ts=interaction_ts)
+        if updated is None:
+            return None
+        return {
+            "id": updated["slug"],
+            "type": "person",
+            "destination": updated["path"],
+            "needs_triage": needs_triage,
+        }
+    if needs_triage:
+        return None
+    name = (capture.title or "").strip()
+    if not name:
+        return None
+    created = create_person_file(
+        name=name,
+        interaction_text=capture.body,
+        interaction_ts=interaction_ts,
+    )
+    return {
+        "id": created["slug"],
+        "type": "person",
+        "destination": created["path"],
+        "needs_triage": False,
     }
 
 

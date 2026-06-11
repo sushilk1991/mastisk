@@ -111,7 +111,7 @@ _PROMPT = """You are the Mastisk capture intent router.
 Existing domains: {domains}
 Existing projects: {projects}
 Existing routines: {routines}
-Existing people: []
+Existing people: {people}
 
 ## Request
 source: {source}
@@ -183,11 +183,13 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     request_ts = _parse_request_ts(ts, timezone)
     domains, projects = _routing_context()
     routines = _routine_routing_context()
+    people = _people_routing_context()
     prompt = _PROMPT.format(
         identity=Agent.load_identity(),
         domains=domains,
         projects=projects,
         routines=routines,
+        people=people,
         source=source,
         ts=request_ts.isoformat() if request_ts is not None else "",
         fixed_intent=fixed_intent or "null",
@@ -297,6 +299,22 @@ def _routine_routing_context() -> str:
     except (sqlite3.Error, OSError):
         routines = []
     return json.dumps(routines, ensure_ascii=False)
+
+
+def _people_routing_context() -> str:
+    try:
+        from mastisk.people.sync import list_people
+
+        people = [
+            {
+                "slug": person["slug"],
+                "name": person["name"],
+            }
+            for person in list_people(include_archived=False)
+        ]
+    except (sqlite3.Error, OSError):
+        people = []
+    return json.dumps(people, ensure_ascii=False)
 
 
 def _match_routine_done_command(text: str) -> dict[str, str] | None:

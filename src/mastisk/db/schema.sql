@@ -509,6 +509,40 @@ CREATE INDEX IF NOT EXISTS idx_routines_time ON routines(time_of_day);
 CREATE INDEX IF NOT EXISTS idx_routines_archived ON routines(archived);
 CREATE INDEX IF NOT EXISTS idx_routine_completions_date ON routine_completions(routine_id, date);
 
+-- ─────────────────────────────── Personal OS Phase 11 ───────────────────────────────
+-- Person files are markdown-canonical. Interactions are parsed from the
+-- person's ## Interactions section.
+
+CREATE TABLE IF NOT EXISTS people (
+  slug                TEXT PRIMARY KEY,
+  name                TEXT NOT NULL,
+  birthday            TEXT,
+  anniversary         TEXT,
+  facts_json          TEXT NOT NULL DEFAULT '{}',
+  follow_up_at        DATETIME,
+  path                TEXT NOT NULL,
+  deleted_at          DATETIME,
+  last_interaction_at TEXT,
+  created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS interactions (
+  person_slug TEXT NOT NULL REFERENCES people(slug) ON DELETE CASCADE,
+  ts          TEXT NOT NULL,
+  text        TEXT NOT NULL,
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(person_slug, ts, text)
+);
+
+CREATE INDEX IF NOT EXISTS idx_people_name ON people(name);
+CREATE INDEX IF NOT EXISTS idx_people_active ON people(deleted_at, name);
+CREATE INDEX IF NOT EXISTS idx_people_birthday ON people(birthday) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_interactions_person_ts ON interactions(person_slug, ts);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_followup_entity
+  ON reminders(kind, entity_id)
+  WHERE kind = 'followup' AND deleted_at IS NULL;
+
 -- ─────────────────────────────── Personal OS Phase 6 ───────────────────────────────
 -- Journal day files are markdown-canonical. This table mirrors journal/*.md for
 -- timeline and dashboard queries.

@@ -35,7 +35,7 @@ _TRIAGE_TAG_RE = re.compile(r"(?<!\S)#needs-triage\b")
 _H2_RE = re.compile(r"^##\s+(.+?)\s*$")
 _JOURNAL_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{2}:\d{2}\s+")
 _PROJECT_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+")
-_NOTE_SHAPED_TARGETS = {"note", "inbox", "person", "quote", "inventory", "content"}
+_NOTE_SHAPED_TARGETS = {"note", "inbox", "quote", "inventory", "content"}
 
 
 class TriageReclassifyError(ValueError):
@@ -373,6 +373,18 @@ def _file_as_target(item: dict[str, Any], target_type: str) -> None:
             raise TriageReclassifyError(str(exc)) from exc
         if updated is None:
             raise TriageReclassifyError(f"routine not found: {routine}")
+        return
+    if target_type == "person":
+        from mastisk.people.sync import append_interaction, create_person_file, find_person
+
+        person = find_person(_str_or_none(capture.get("person")))
+        if person is not None:
+            append_interaction(person["slug"], text)
+            return
+        name = _str_or_none(capture.get("title")) or _str_or_none(capture.get("person"))
+        if not name:
+            raise TriageReclassifyError("person target requires a person name")
+        create_person_file(name=name, interaction_text=text)
         return
     if target_type in {"note", "inbox"}:
         persist_note_capture(body=text, source="pwa")

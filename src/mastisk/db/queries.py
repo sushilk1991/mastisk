@@ -129,6 +129,21 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
            ON reminders(kind, entity_id)
            WHERE kind = 'routine_missed' AND deleted_at IS NULL"""
     )
+    _add_column_if_missing(conn, "people", "follow_up_at", "DATETIME")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS interactions (
+             person_slug TEXT NOT NULL REFERENCES people(slug) ON DELETE CASCADE,
+             ts          TEXT NOT NULL,
+             text        TEXT NOT NULL,
+             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY(person_slug, ts, text)
+           )"""
+    )
+    conn.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_followup_entity
+           ON reminders(kind, entity_id)
+           WHERE kind = 'followup' AND deleted_at IS NULL"""
+    )
     conn.execute(
         """CREATE TABLE IF NOT EXISTS calendar_events (
              id          TEXT NOT NULL,
