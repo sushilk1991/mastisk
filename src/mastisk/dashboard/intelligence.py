@@ -479,7 +479,6 @@ def _set_slipping_controls(
         params.append(1 if muted else 0)
     if not updates:
         return None
-    updates.append("updated_at = CURRENT_TIMESTAMP")
     params.append(entity_id)
     with connect() as conn, txn(conn):
         cur = conn.execute(

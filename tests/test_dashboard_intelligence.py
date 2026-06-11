@@ -308,6 +308,49 @@ def test_needs_review_triage_age_survives_passive_task_scan(db, vault_tmp, data_
     ]
 
 
+def test_snoozing_slipping_task_does_not_refresh_triage_age(client, db, vault_tmp, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        "[dashboard]\ntriage_reminder_days = 3\nslipping_task_days = 7\n",
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+    from mastisk.dashboard.intelligence import needs_review_scan, slipping_scan
+    from mastisk.tasks.sync import append_task_to_host
+
+    reload_settings()
+    task = append_task_to_host(
+        vault_tmp / "journal" / "2026-06-01.md",
+        text="Snooze should not reset triage",
+        uid="snooze-triage",
+        tags=["needs-triage"],
+    )
+    db.execute(
+        """UPDATE tasks
+              SET last_activity_at = '2026-06-01T09:00:00+00:00',
+                  updated_at = '2026-06-07T09:00:00+00:00'
+            WHERE uid = ?""",
+        (task["uid"],),
+    )
+    slipping_scan(now=datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+
+    snoozed = client.post(f"/api/slipping/task/{task['uid']}/snooze", json={"days": 7})
+    assert snoozed.status_code == 200, snoozed.text
+    assert db.execute(
+        "SELECT updated_at FROM tasks WHERE uid = ?",
+        (task["uid"],),
+    ).fetchone()["updated_at"] == "2026-06-07T09:00:00+00:00"
+
+    needs_review_scan(today=date(2026, 6, 11))
+
+    rows = db.execute(
+        "SELECT entity_id, reason FROM needs_review WHERE dismissed_at IS NULL"
+    ).fetchall()
+    assert [dict(row) for row in rows] == [
+        {"entity_id": "snooze-triage", "reason": "triage_stale"}
+    ]
+
+
 def test_needs_review_clears_when_triage_item_is_resolved(client, db, vault_tmp, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text("[dashboard]\ntriage_reminder_days = 3\n", encoding="utf-8")
