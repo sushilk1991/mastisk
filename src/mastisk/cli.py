@@ -309,6 +309,41 @@ def init(
         console.print("  tip:   mastisk add-feed <url>  [dim]— subscribe a feed to kick off Scout[/dim]")
 
 
+@app.command(name="capture-token")
+def capture_token(
+    rotate: bool = typer.Option(False, "--rotate", help="Replace an existing token."),
+) -> None:
+    """Generate and store the bearer token for the /api/capture ingress."""
+    import secrets
+
+    from mastisk.settings import get_settings, reload_settings, update_toml_key
+
+    existing = get_settings().capture.bearer_token
+    if existing and not rotate:
+        typer.secho(
+            "A capture token already exists. Re-run with --rotate to replace it "
+            "(this invalidates the old token in your shortcut).",
+            fg="yellow",
+        )
+        raise typer.Exit(code=1)
+
+    token = secrets.token_urlsafe(32)
+    update_toml_key("capture", "bearer_token", token)
+    reload_settings()
+
+    typer.secho("capture ingress token (store this - shown once):", fg="green")
+    typer.echo(token)
+    typer.echo("")
+    typer.secho("In your Apple Watch shortcut, set the header:", fg="cyan")
+    typer.echo(f"  Authorization: Bearer {token}")
+    typer.echo("")
+    typer.secho(
+        "Reachability: the Watch is NOT a Tailscale client. Expose ONLY /api/capture "
+        "via Cloudflare Tunnel (see README -> 'Capturing from your Apple Watch').",
+        fg="cyan",
+    )
+
+
 @app.command()
 def update(
     check: bool = typer.Option(False, "--check", help="Only show whether updates are available, don't apply"),

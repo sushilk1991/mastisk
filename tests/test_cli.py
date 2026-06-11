@@ -5,6 +5,7 @@ DB state rather than stdout text — match existing style where practical.
 """
 from __future__ import annotations
 
+import tomllib
 from datetime import datetime
 
 import pytest
@@ -112,3 +113,28 @@ def test_list_blogs_shows_recent_entries(cli, db):
     assert "My Title" in result.output
     assert "1234" in result.output
     assert f"#{bp_id}" in result.output
+
+
+def test_capture_token_generates_refuses_and_rotates(cli, data_tmp):
+    runner, app = cli
+
+    result = runner.invoke(app, ["capture-token"])
+    assert result.exit_code == 0, result.output
+    cfg = data_tmp / "config.toml"
+    data = tomllib.loads(cfg.read_text())
+    token = data["capture"]["bearer_token"]
+    assert token
+    assert token in result.output
+    assert f"Authorization: Bearer {token}" in result.output
+
+    second = runner.invoke(app, ["capture-token"])
+    assert second.exit_code == 1
+    assert "already exists" in second.output
+    assert tomllib.loads(cfg.read_text())["capture"]["bearer_token"] == token
+
+    rotated = runner.invoke(app, ["capture-token", "--rotate"])
+    assert rotated.exit_code == 0, rotated.output
+    new_token = tomllib.loads(cfg.read_text())["capture"]["bearer_token"]
+    assert new_token
+    assert new_token != token
+    assert f"Authorization: Bearer {new_token}" in rotated.output
