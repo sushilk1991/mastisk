@@ -355,6 +355,28 @@ def test_journal_patch_null_mood_clears_only_that_frontmatter_key(
     assert "energy: 3\n" in text
 
 
+def test_journal_patch_empty_reflections_clears_section(
+    db,
+    vault_tmp,
+    data_tmp,
+):
+    from mastisk.journal import set_reflections
+
+    set_reflections("2026-06-11", "Keep this until cleared.")
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        patched = client.patch("/api/journal/2026-06-11", json={"reflections": ""})
+
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["sections"]["Reflections"] == ""
+    assert body["has_reflections"] is False
+    row = db.execute(
+        "SELECT has_reflections FROM journal_days WHERE date = '2026-06-11'",
+    ).fetchone()
+    assert row["has_reflections"] == 0
+
+
 def test_journal_route_rejects_bad_frontmatter_without_rewriting(
     db,
     vault_tmp,
