@@ -304,6 +304,35 @@ def test_capture_project_update_appends_to_project_log(
     assert "shipped capture routing" in project_text
 
 
+def test_capture_mid_confidence_project_update_persists_triage_tag(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    created_project = client_with_token.post(
+        "/api/projects",
+        json={"name": "Mastisk", "type": "project", "domain": "work"},
+    )
+    assert created_project.status_code == 201, created_project.text
+
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="project_update",
+        confidence=0.72,
+        body="shipped capture routing",
+        project="mastisk",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "add to the Mastisk project shipped capture routing", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    assert r.json()["needs_triage"] is True
+    project_text = (vault_tmp / "projects" / "mastisk.md").read_text(encoding="utf-8")
+    assert "shipped capture routing #needs-triage" in project_text
+
+
 def test_capture_low_confidence_falls_back_to_raw_inbox(
     client_with_token, vault_tmp, fake_capture_router
 ):
@@ -370,6 +399,45 @@ def test_capture_confidence_point_five_files_with_triage(
     assert body["needs_triage"] is True
     file_text = (vault_tmp / body["destination"]).read_text()
     assert "- [ ] call Sam" in file_text
+
+
+def test_capture_mid_confidence_task_persists_triage_tag_and_mirror(
+    client_with_token, vault_tmp, db, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.72,
+        body="call Sam",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "call Sam", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["needs_triage"] is True
+    path = vault_tmp / body["destination"]
+    file_text = path.read_text(encoding="utf-8")
+    assert "#needs-triage" in file_text
+    row = db.execute(
+        "SELECT needs_triage FROM tasks WHERE uid = ?",
+        (body["id"],),
+    ).fetchone()
+    assert row["needs_triage"] == 1
+
+    path.write_text(file_text.replace(" #needs-triage", ""), encoding="utf-8")
+    from mastisk.tasks.sync import scan_task_hosts
+
+    scan_task_hosts([path])
+    row = db.execute(
+        "SELECT needs_triage FROM tasks WHERE uid = ?",
+        (body["id"],),
+    ).fetchone()
+    assert row["needs_triage"] == 0
 
 
 def test_capture_confidence_point_eighty_five_files_direct(

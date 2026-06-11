@@ -384,6 +384,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   recurrence       TEXT,
   tags_json        TEXT NOT NULL DEFAULT '[]',
   links_json       TEXT NOT NULL DEFAULT '[]',
+  needs_triage     INTEGER NOT NULL DEFAULT 0,
   last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   review_at        TEXT,
   deleted_at       DATETIME,

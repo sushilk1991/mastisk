@@ -56,6 +56,7 @@ def parse_task_line(
     recurrence = _first_match(_RECURRENCE_RE, body)
     uid = _first_match(_UID_RE, body)
     priority_icon = _first_match(_PRIORITY_RE, body)
+    tags = _TAG_RE.findall(body)
     text = _clean_task_text(body)
     return {
         "host_path": host_path,
@@ -67,9 +68,10 @@ def parse_task_line(
         "scheduled": scheduled,
         "recurrence": recurrence,
         "priority": _ICON_TO_PRIORITY.get(priority_icon or ""),
-        "tags": _TAG_RE.findall(body),
+        "tags": tags,
         "links": [m.group("value").strip() for m in _LINK_RE.finditer(body)],
         "uid": uid,
+        "needs_triage": "needs-triage" in tags,
     }
 
 

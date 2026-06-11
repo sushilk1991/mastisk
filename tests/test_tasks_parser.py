@@ -28,6 +28,7 @@ def test_parse_any_markdown_checkbox_line_as_task():
         "tags": ["work"],
         "links": ["Mastisk"],
         "uid": "abc123",
+        "needs_triage": False,
     }
     assert tasks[1]["checked"] is True
     assert tasks[1]["status"] == "done"

@@ -78,7 +78,7 @@ async def capture(
 
     if routed.type == "project_update" and routed.project:
         try:
-            filed = _persist_project_update_capture(routed)
+            filed = _persist_project_update_capture(routed, needs_triage=needs_triage)
             if filed is not None:
                 return {**filed, "needs_triage": needs_triage}
         except Exception:
@@ -110,6 +110,7 @@ async def capture(
 def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: bool) -> dict:
     project = find_project(capture.project)
     host = (vault_dir() / project["path"]) if project is not None else journal_host_for_today(ts)
+    tags = _with_needs_triage_tag(capture.tags, needs_triage=needs_triage)
     row = append_task_to_host(
         host,
         text=capture.body,
@@ -117,7 +118,7 @@ def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: boo
         scheduled=_date_marker(capture.scheduled),
         recurrence=capture.recurrence,
         priority=capture.priority,
-        tags=capture.tags,
+        tags=tags,
         links=capture.related,
     )
     return {
@@ -128,11 +129,16 @@ def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: boo
     }
 
 
-def _persist_project_update_capture(capture: Capture) -> dict | None:
+def _persist_project_update_capture(capture: Capture, *, needs_triage: bool) -> dict | None:
     project = find_project(capture.project)
     if project is None:
         return None
-    updated = append_project_log(project["slug"], capture.body)
+    body = (
+        f"{capture.body.rstrip()} #needs-triage"
+        if needs_triage and "#needs-triage" not in capture.body
+        else capture.body
+    )
+    updated = append_project_log(project["slug"], body)
     if updated is None:
         return None
     return {
@@ -146,6 +152,12 @@ def _date_marker(value: str | None) -> str | None:
     if not value:
         return None
     return value[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", value) else value
+
+
+def _with_needs_triage_tag(tags: list[str], *, needs_triage: bool) -> list[str]:
+    if not needs_triage or "needs-triage" in tags:
+        return tags
+    return [*tags, "needs-triage"]
 
 
 def _persist_inbox_fallback(text: str, source: str) -> dict:

@@ -59,9 +59,9 @@ def scan_task_hosts(
                 conn.execute(
                     """INSERT INTO tasks
                        (uid, host_path, line_number, text, checked, status, due, scheduled,
-                        priority, domain, project, recurrence, tags_json, links_json,
+                        priority, domain, project, recurrence, tags_json, links_json, needs_triage,
                         last_activity_at, review_at, deleted_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                                COALESCE((SELECT last_activity_at FROM tasks WHERE uid = ?), CURRENT_TIMESTAMP),
                                COALESCE((SELECT review_at FROM tasks WHERE uid = ?), NULL),
                                NULL)
@@ -79,6 +79,7 @@ def scan_task_hosts(
                          recurrence=excluded.recurrence,
                          tags_json=excluded.tags_json,
                          links_json=excluded.links_json,
+                         needs_triage=excluded.needs_triage,
                          last_activity_at=CASE
                            WHEN tasks.status IS NOT excluded.status THEN CURRENT_TIMESTAMP
                            ELSE COALESCE(tasks.last_activity_at, CURRENT_TIMESTAMP)
@@ -100,6 +101,7 @@ def scan_task_hosts(
                         task.get("recurrence"),
                         json.dumps(task.get("tags", [])),
                         json.dumps(task.get("links", [])),
+                        1 if task.get("needs_triage") else 0,
                         uid,
                         uid,
                     ),
@@ -215,6 +217,7 @@ def journal_host_for_today(ts: str | None = None) -> Path:
 
 def _task_row(row: dict[str, Any]) -> dict[str, Any]:
     row["checked"] = bool(row.get("checked"))
+    row["needs_triage"] = bool(row.get("needs_triage"))
     row["tags"] = json.loads(row.pop("tags_json") or "[]")
     row["links"] = json.loads(row.pop("links_json") or "[]")
     return row
