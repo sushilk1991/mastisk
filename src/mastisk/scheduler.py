@@ -96,10 +96,12 @@ async def start_scheduler():
         log.warning("scheduler: vault_integrity registration failed: %s", e)
 
     try:
+        from mastisk.routes.domains import sync_config_domains
         from mastisk.projects.sync import scan_projects
         from mastisk.tasks.sync import scan_tasks
 
         def personal_os_scan() -> None:
+            sync_config_domains()
             scan_projects()
             scan_tasks()
 

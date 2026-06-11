@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 from slugify import slugify
 
 from mastisk.db.queries import connect
-from mastisk.settings import reload_settings
+from mastisk.settings import get_settings
 
 router = APIRouter(prefix="/api/domains", tags=["domains"])
 
@@ -24,7 +24,6 @@ class DomainCreate(BaseModel):
 
 @router.get("")
 async def list_domains_endpoint() -> list[dict]:
-    _sync_config_domains()
     with connect() as conn:
         rows = conn.execute(
             "SELECT * FROM domains WHERE deleted_at IS NULL ORDER BY name"
@@ -37,11 +36,30 @@ async def create_domain_endpoint(req: DomainCreate) -> dict:
     return _upsert_domain(req.name)
 
 
-def _sync_config_domains() -> None:
-    settings = reload_settings()
-    for name in settings.domains.names:
-        if str(name).strip():
-            _upsert_domain(str(name))
+def sync_config_domains() -> None:
+    for row in config_domain_rows():
+        with connect() as conn:
+            conn.execute(
+                """INSERT INTO domains (slug, name, deleted_at)
+                   VALUES (?, ?, NULL)
+                   ON CONFLICT(slug) DO NOTHING""",
+                (row["slug"], row["name"]),
+            )
+
+
+def config_domain_rows() -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for name in get_settings().domains.names:
+        clean = str(name).strip()
+        if not clean:
+            continue
+        slug = slugify(clean)[:80] or "domain"
+        if slug in seen:
+            continue
+        seen.add(slug)
+        rows.append({"slug": slug, "name": clean})
+    return rows
 
 
 def _upsert_domain(name: str) -> dict:

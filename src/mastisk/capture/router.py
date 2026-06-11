@@ -232,12 +232,13 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
 
 def _routing_context() -> tuple[str, str]:
     try:
+        from mastisk.routes.domains import config_domain_rows, sync_config_domains
+
+        sync_config_domains()
         with connect() as conn:
-            domains = [
+            domain_rows = [
                 dict(row)
-                for row in conn.execute(
-                    "SELECT slug, name FROM domains WHERE deleted_at IS NULL ORDER BY name"
-                ).fetchall()
+                for row in conn.execute("SELECT slug, name, deleted_at FROM domains").fetchall()
             ]
             projects = [
                 dict(row)
@@ -248,6 +249,16 @@ def _routing_context() -> tuple[str, str]:
                        ORDER BY status, name"""
                 ).fetchall()
             ]
+        deleted_slugs = {row["slug"] for row in domain_rows if row["deleted_at"] is not None}
+        domains_by_slug = {
+            row["slug"]: {"slug": row["slug"], "name": row["name"]}
+            for row in domain_rows
+            if row["deleted_at"] is None
+        }
+        for row in config_domain_rows():
+            if row["slug"] not in deleted_slugs:
+                domains_by_slug.setdefault(row["slug"], row)
+        domains = sorted(domains_by_slug.values(), key=lambda row: row["name"])
     except sqlite3.Error:
         domains = []
         projects = []

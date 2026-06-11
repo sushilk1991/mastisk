@@ -187,6 +187,51 @@ async def test_route_capture_injects_existing_domains_and_projects(data_tmp, db)
 
 
 @pytest.mark.asyncio
+async def test_route_capture_injects_config_domains_without_domains_api_call(data_tmp, db):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "America/Los_Angeles"\n'
+        '[domains]\nnames = ["Work", "Home"]\n'
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="task", domain="work"))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as run_mock:
+        await route_capture("follow up on work", source="watch", ts=BASE_TS)
+
+    prompt = run_mock.call_args.args[0]
+    assert '"slug": "work"' in prompt
+    assert '"name": "Work"' in prompt
+    assert '"slug": "home"' in prompt
+
+
+def test_routing_context_does_not_resurrect_deleted_config_domain(data_tmp, db):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[domains]\nnames = ["Work", "Home"]\n')
+    db.execute(
+        "INSERT INTO domains (slug, name, deleted_at) VALUES ('work', 'Work', CURRENT_TIMESTAMP)"
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import _routing_context
+
+    domains_json, _projects_json = _routing_context()
+
+    assert '"slug": "home"' in domains_json
+    assert '"slug": "work"' not in domains_json
+    deleted = db.execute("SELECT deleted_at FROM domains WHERE slug = 'work'").fetchone()
+    assert deleted["deleted_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_route_capture_uses_configured_router_timeout(data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text(

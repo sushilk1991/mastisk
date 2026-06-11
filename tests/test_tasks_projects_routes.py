@@ -15,10 +15,15 @@ def client(vault_tmp, data_tmp, db):
         yield c
 
 
-def test_domains_create_list_and_config_seed(client, data_tmp):
+def test_domains_create_list_and_explicit_config_seed(client, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[domains]\nnames = ["Work", "Home"]\n', encoding="utf-8")
 
+    from mastisk.settings import reload_settings
+    from mastisk.routes.domains import sync_config_domains
+
+    reload_settings()
+    sync_config_domains()
     listed = client.get("/api/domains")
     assert listed.status_code == 200
     assert {d["slug"] for d in listed.json()} >= {"work", "home"}
@@ -27,6 +32,19 @@ def test_domains_create_list_and_config_seed(client, data_tmp):
     assert created.status_code == 201, created.text
     assert created.json()["slug"] == "side-quests"
     assert any(d["slug"] == "side-quests" for d in client.get("/api/domains").json())
+
+
+def test_domains_list_does_not_reload_settings(client, monkeypatch):
+    from mastisk.routes import domains as domains_route
+
+    def fail_reload():
+        raise AssertionError("GET /api/domains must not reload settings")
+
+    monkeypatch.setattr(domains_route, "reload_settings", fail_reload, raising=False)
+
+    listed = client.get("/api/domains")
+
+    assert listed.status_code == 200
 
 
 def test_project_create_slug_collision_and_patch_status(client, vault_tmp):
