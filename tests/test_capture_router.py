@@ -63,9 +63,10 @@ def test_capture_schema_matches_spec():
         ("journal that launch day was intense", "journal"),
         ("add to the mastisk project shipped capture routing", "project_update"),
         ("save a quote from the podcast: stay hungry", "quote"),
+        ("save this quote from the podcast: stay hungry", "quote"),
+        ("save that quote from the podcast: stay hungry", "quote"),
         ("add my new monitor to inventory", "inventory"),
         ("new video idea: local-first personal OS", "content"),
-        ("did my vitamins", "routine_done"),
     ],
 )
 def test_command_override_detection_is_deterministic(text, intent):
@@ -78,6 +79,13 @@ def test_did_my_question_is_not_a_routine_command():
     from mastisk.capture.router import detect_command_intent
 
     assert detect_command_intent("did my flight get rebooked?") is None
+
+
+def test_did_my_phrase_is_only_a_hint_for_now():
+    from mastisk.capture.router import detect_command_hint, detect_command_intent
+
+    assert detect_command_intent("did my vitamins") is None
+    assert detect_command_hint("did my vitamins") == "routine_done"
 
 
 @pytest.mark.asyncio
@@ -140,6 +148,7 @@ async def test_route_capture_injects_identity_and_empty_phase3_context(data_tmp)
     assert "## identity\nuser voice" in prompt
     assert "Existing domains: []" in prompt
     assert "TODO(Phase 3)" in prompt
+    assert "Command hint intent: null" in prompt
     assert "untrusted user/source data" in prompt
 
 
@@ -164,6 +173,29 @@ async def test_route_capture_uses_configured_router_timeout(data_tmp):
 
     assert run_mock.call_args.kwargs["timeout_s"] == 11
     assert run_mock.call_args.kwargs["classification"] is True
+
+
+@pytest.mark.asyncio
+async def test_did_my_hint_does_not_force_intent_or_skip_gates(data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="note", confidence=0.2))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as run_mock:
+        capture = await route_capture("did my vitamins", source="watch", ts=BASE_TS)
+
+    assert capture.type == "note"
+    prompt = run_mock.call_args.args[0]
+    assert "Fixed command intent: null" in prompt
+    assert "Command hint intent: routine_done" in prompt
 
 
 @pytest.mark.asyncio
