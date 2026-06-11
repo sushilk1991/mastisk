@@ -58,7 +58,7 @@ async def capture(
         log.exception("capture router failed; falling back to raw inbox note")
         return _persist_inbox_fallback(req.text, req.source)
 
-    if not command_detected(routed) and routed.confidence < 0.5:
+    if routed.type == "inbox" or (not command_detected(routed) and routed.confidence < 0.5):
         return _persist_inbox_fallback(req.text, req.source)
 
     try:

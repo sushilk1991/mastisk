@@ -231,6 +231,78 @@ def test_capture_low_confidence_falls_back_to_raw_inbox(
     assert file_text == "ambiguous raw text"
 
 
+def test_capture_model_inbox_always_falls_back_to_raw_triage(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="inbox",
+        confidence=0.99,
+        body="model cleaned this",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "keep this ambiguous thing", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "inbox"
+    assert body["needs_triage"] is True
+    assert (vault_tmp / body["destination"]).read_text() == "keep this ambiguous thing"
+
+
+def test_capture_confidence_point_five_files_with_triage(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.5,
+        body="call Sam",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "call Sam", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "task"
+    assert body["needs_triage"] is True
+    file_text = (vault_tmp / body["destination"]).read_text()
+    assert file_text.startswith("---\n")
+    assert "confidence: 0.5" in file_text
+    assert "needs_triage: true" in file_text
+
+
+def test_capture_confidence_point_eighty_five_files_direct(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.85,
+        body="call Sam",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "call Sam", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "task"
+    assert body["needs_triage"] is False
+    file_text = (vault_tmp / body["destination"]).read_text()
+    assert file_text.startswith("---\n")
+    assert "confidence: 0.85" in file_text
+    assert "needs_triage: false" in file_text
+
+
 def test_capture_router_failure_falls_back_to_raw_inbox(
     client_with_token, vault_tmp, fake_capture_router
 ):
