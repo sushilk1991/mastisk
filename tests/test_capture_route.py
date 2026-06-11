@@ -269,6 +269,48 @@ def test_command_detected_capture_skips_confidence_gate(
     assert "confidence: 0.2" in file_text
 
 
+def test_typed_capture_write_failure_rolls_back_and_returns_inbox_fallback(
+    client_with_token, vault_tmp, db, fake_capture_router, monkeypatch
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.93,
+        body="call Sam",
+    )
+
+    from mastisk.routes import notes
+
+    real_atomic_write = notes.atomic_write
+    calls = 0
+
+    def fail_first_frontmatter_write(target, content):
+        nonlocal calls
+        calls += 1
+        if calls == 1 and content.startswith("---\n"):
+            raise OSError("simulated frontmatter write failure")
+        return real_atomic_write(target, content)
+
+    monkeypatch.setattr(notes, "atomic_write", fail_first_frontmatter_write)
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "remind me to call Sam", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "inbox"
+    assert body["needs_triage"] is True
+    file_text = (vault_tmp / body["destination"]).read_text()
+    assert file_text == "remind me to call Sam"
+    assert calls == 2
+
+    rows = db.execute("SELECT body, path FROM notes").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["body"] == "remind me to call Sam"
+
+
 def test_capture_appears_in_notes_list(client_with_token):
     client_with_token.post(
         "/api/capture",

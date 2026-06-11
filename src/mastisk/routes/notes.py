@@ -1,6 +1,7 @@
 """Notes API — capture, list, detail, delete."""
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import sqlite3
@@ -110,6 +111,7 @@ def persist_note_capture(
     source: str,
     slug_text: str | None = None,
     ts: datetime | None = None,
+    file_content: str | None = None,
 ) -> dict:
     """Write a captured note to the inbox and index it. Returns the DB row dict."""
     ts = ts or datetime.now().astimezone()
@@ -129,10 +131,11 @@ def persist_note_capture(
         row = q.get_note(conn, note_id)
         actual_path = vault_dir() / row["path"]
         try:
-            atomic_write(actual_path, body)
+            atomic_write(actual_path, file_content if file_content is not None else body)
         except Exception:
-            conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
-            conn.execute("COMMIT")
+            conn.execute("ROLLBACK")
+            with contextlib.suppress(FileNotFoundError):
+                actual_path.unlink()
             raise
         conn.execute("COMMIT")
     return dict(row)
@@ -238,10 +241,8 @@ async def delete_note_endpoint(note_id: int) -> None:
             raise HTTPException(status_code=404, detail="note not found")
         q.soft_delete_note(conn, note_id)
     file_path = vault_dir() / row["path"]
-    try:
+    with contextlib.suppress(FileNotFoundError):
         file_path.unlink()
-    except FileNotFoundError:
-        pass
 
 
 @router.post("/{note_id}/escalate", status_code=202)

@@ -10,8 +10,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from mastisk.capture.router import Capture, command_detected, route_capture
-from mastisk.paths import vault_dir
-from mastisk.routes.notes import atomic_write, persist_note_capture
+from mastisk.routes.notes import persist_note_capture
 from mastisk.settings import read_capture_bearer_token
 
 router = APIRouter(prefix="/api/capture", tags=["capture"])
@@ -57,40 +56,41 @@ async def capture(
         routed = await route_capture(req.text, source=req.source, ts=req.ts)
     except Exception:
         log.exception("capture router failed; falling back to raw inbox note")
-        row = persist_note_capture(body=req.text, source=req.source)
-        return {
-            "id": row["id"],
-            "type": "inbox",
-            "destination": row["path"],
-            "needs_triage": True,
-        }
+        return _persist_inbox_fallback(req.text, req.source)
 
     if not command_detected(routed) and routed.confidence < 0.5:
-        row = persist_note_capture(body=req.text, source=req.source)
-        return {
-            "id": row["id"],
-            "type": "inbox",
-            "destination": row["path"],
-            "needs_triage": True,
-        }
+        return _persist_inbox_fallback(req.text, req.source)
 
-    needs_triage = False if command_detected(routed) else routed.confidence < 0.85
-    row = persist_note_capture(
-        body=routed.body,
-        source=req.source,
-        slug_text=req.text,
-    )
-    if _has_typed_capture_metadata(routed):
-        body_for_file = _body_with_capture_frontmatter(routed, needs_triage=needs_triage)
-        try:
-            atomic_write(vault_dir() / row["path"], body_for_file)
-        except Exception:
-            log.exception("capture frontmatter write failed; clean inbox note is preserved")
+    try:
+        needs_triage = False if command_detected(routed) else routed.confidence < 0.85
+        row = persist_note_capture(
+            body=routed.body,
+            source=req.source,
+            slug_text=req.text,
+            file_content=(
+                _body_with_capture_frontmatter(routed, needs_triage=needs_triage)
+                if _has_typed_capture_metadata(routed)
+                else routed.body
+            ),
+        )
+    except Exception:
+        log.exception("capture typed note write failed; falling back to raw inbox note")
+        return _persist_inbox_fallback(req.text, req.source)
     return {
         "id": row["id"],
         "type": routed.type,
         "destination": row["path"],
         "needs_triage": needs_triage,
+    }
+
+
+def _persist_inbox_fallback(text: str, source: str) -> dict:
+    row = persist_note_capture(body=text, source=source)
+    return {
+        "id": row["id"],
+        "type": "inbox",
+        "destination": row["path"],
+        "needs_triage": True,
     }
 
 
