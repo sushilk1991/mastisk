@@ -104,6 +104,37 @@ def atomic_write(target: Path, content: str) -> None:
         raise
 
 
+def persist_note_capture(
+    *,
+    body: str,
+    source: str,
+    slug_text: str | None = None,
+    ts: datetime | None = None,
+) -> dict:
+    """Write a captured note to the inbox and index it. Returns the DB row dict."""
+    ts = ts or datetime.now().astimezone()
+    slug = derive_slug(slug_text if slug_text is not None else body, ts)
+    target = notes_inbox_dir() / f"{slug}.md"
+    atomic_write(target, body)
+    rel_path = str(target.relative_to(vault_dir()))
+    with connect() as conn:
+        note_id = q.insert_note(
+            conn,
+            slug=slug,
+            path=rel_path,
+            body=body,
+            source=source,
+            created_at=ts,
+        )
+        row = q.get_note(conn, note_id)
+    # If insert_note hit a slug collision, the DB's final path has a `-N` suffix.
+    # The file was written with the original name; rename it to match.
+    actual_path = vault_dir() / row["path"]
+    if actual_path != target:
+        target.rename(actual_path)
+    return dict(row)
+
+
 @router.post("", status_code=201)
 async def capture_note(req: CaptureRequest) -> dict:
     # If context was provided, validate the article exists *before* writing
@@ -122,31 +153,12 @@ async def capture_note(req: CaptureRequest) -> dict:
     else:
         body_for_file = req.text
 
-    ts = datetime.now().astimezone()
-    # Slug derives from the user's text, not the preamble, so the filename
-    # reflects what the user wrote rather than the article they replied to.
-    slug = derive_slug(req.text, ts)
-    filename = f"{slug}.md"
-    inbox = notes_inbox_dir()
-    target = inbox / filename
-    atomic_write(target, body_for_file)
-    rel_path = str(target.relative_to(vault_dir()))
-    with connect() as conn:
-        note_id = q.insert_note(
-            conn,
-            slug=slug,
-            path=rel_path,
-            body=body_for_file,
-            source=req.source,
-            created_at=ts,
-        )
-    with connect() as conn:
-        row = q.get_note(conn, note_id)
-    # If insert_note hit a slug collision, the DB's final path has a `-N` suffix.
-    # The file was written with the original name; rename it to match.
-    actual_path = vault_dir() / row["path"]
-    if actual_path != target:
-        target.rename(actual_path)
+    row = persist_note_capture(
+        body=body_for_file,
+        source=req.source,
+        slug_text=req.text,
+    )
+    note_id = row["id"]
 
     # Direct user-action link (rank=0). Predates the Notetaker's classifier-
     # driven linking — the user explicitly hit "Add thoughts" on this article.
