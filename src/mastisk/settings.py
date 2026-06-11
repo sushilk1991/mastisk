@@ -53,6 +53,12 @@ class NotesSettings(BaseSettings):
     notetaker_concurrency: int = 4
 
 
+class CaptureSettings(BaseSettings):
+    """Config for the token-authenticated capture ingress."""
+    bearer_token: str | None = None
+    default_timezone: str = "America/Los_Angeles"
+
+
 class RoundtableSettings(BaseSettings):
     """Config for the multi-LLM roundtable subsystem.
     See docs/superpowers/specs/2026-04-22-multi-llm-roundtable-design.md §7."""
@@ -206,6 +212,8 @@ class Settings(BaseSettings):
     budget: AgentBudget = Field(default_factory=AgentBudget)
 
     notes: NotesSettings = Field(default_factory=NotesSettings)
+
+    capture: CaptureSettings = Field(default_factory=CaptureSettings)
 
     roundtable: RoundtableSettings = Field(default_factory=RoundtableSettings)
 
