@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.responses import Response
 
 
 @pytest.fixture
@@ -160,6 +162,18 @@ def test_resurfacing_is_deterministic_and_empty_pool_hides_card(client, db):
     assert first["id"] != next_day["id"]
     assert first["kind"] == "note"
     assert first["link"].startswith("/notes/")
+
+
+def test_resurfacing_empty_pool_route_returns_explicit_empty_204(monkeypatch):
+    from mastisk.routes import dashboard_intelligence as route
+
+    monkeypatch.setattr(route, "resurface_for_date", lambda day: None)
+
+    response = asyncio.run(route.resurface_endpoint("2026-06-11"))
+
+    assert isinstance(response, Response)
+    assert response.status_code == 204
+    assert response.body == b""
 
 
 def test_needs_review_scan_reasons_dismiss_and_triage_age_rule(

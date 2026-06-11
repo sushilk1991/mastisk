@@ -82,12 +82,11 @@ async def mute_slipping_endpoint(entity_type: str, entity_id: str) -> dict:
     return updated
 
 
-@router.get("/api/resurface/{day}")
-async def resurface_endpoint(day: str, response: Response) -> dict | None:
+@router.get("/api/resurface/{day}", response_model=None)
+async def resurface_endpoint(day: str) -> dict | Response:
     item = resurface_for_date(day)
     if item is None:
-        response.status_code = 204
-        return None
+        return Response(status_code=204)
     return item
 
 
