@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, PrivateAttr, field_validator
 from mastisk.agents.base import Agent
 from mastisk.bridges import intelligence
 from mastisk.bridges.claude_bridge import extract_json_block
-from mastisk.capture.dates import resolve_datetime
+from mastisk.capture.dates import normalize_model_datetime, resolve_datetime
 from mastisk.settings import get_settings
 
 CaptureType = Literal[
@@ -26,6 +26,19 @@ CaptureType = Literal[
 ]
 
 Priority = Literal["high", "medium", "low"]
+_CAPTURE_TYPES = {
+    "task",
+    "note",
+    "journal",
+    "project_update",
+    "routine_done",
+    "person",
+    "quote",
+    "inventory",
+    "content",
+    "inbox",
+}
+_PRIORITIES = {"high", "medium", "low"}
 
 
 class Capture(BaseModel):
@@ -65,7 +78,7 @@ _COMMAND_PATTERNS: tuple[tuple[re.Pattern[str], CaptureType], ...] = (
     (re.compile(r"^\s*save\s+(?:a\s+)?quote\b", re.I), "quote"),
     (re.compile(r"^\s*add\s+.+?\s+to\s+(?:my\s+)?inventory\b", re.I), "inventory"),
     (re.compile(r"^\s*new\s+(?:video|content|article|podcast|newsletter)\s+idea\b", re.I), "content"),
-    (re.compile(r"^\s*did\s+my\s+.+", re.I), "routine_done"),
+    (re.compile(r"^\s*did\s+my\s+[^?]+[.!]?\s*$", re.I), "routine_done"),
 )
 
 _NO_REMINDER_RE = re.compile(r"\b(?:no reminder|do not remind|don't remind|dont remind)\b", re.I)
@@ -159,11 +172,14 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     capture._command_detected = fixed_intent is not None
 
     timezone = settings.capture.default_timezone
-    capture.due = resolve_datetime(text, ts, timezone, model_iso=capture.due)
+    if capture.type == "task" or capture.due is not None:
+        capture.due = resolve_datetime(text, ts, timezone, model_iso=capture.due)
+    else:
+        capture.due = None
     if capture.scheduled is not None:
-        capture.scheduled = resolve_datetime(text, ts, timezone, model_iso=capture.scheduled)
+        capture.scheduled = normalize_model_datetime(capture.scheduled, ts, timezone)
     if capture.review_at is not None:
-        capture.review_at = resolve_datetime(text, ts, timezone, model_iso=capture.review_at)
+        capture.review_at = normalize_model_datetime(capture.review_at, ts, timezone)
 
     capture.no_reminder = capture.no_reminder or bool(_NO_REMINDER_RE.search(text))
     explicit_lead = _extract_explicit_lead_minutes(text)
@@ -178,8 +194,10 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
 
 
 def _coerce_payload(parsed: dict, text: str) -> dict:
+    capture_type = _clean_capture_type(parsed.get("type"))
+    priority = _clean_priority(parsed.get("priority"))
     payload = {
-        "type": parsed.get("type") or "inbox",
+        "type": capture_type,
         "confidence": parsed.get("confidence") or 0.0,
         "title": parsed.get("title"),
         "body": parsed.get("body") or text,
@@ -188,7 +206,7 @@ def _coerce_payload(parsed: dict, text: str) -> dict:
         "person": parsed.get("person"),
         "due": parsed.get("due"),
         "scheduled": parsed.get("scheduled"),
-        "priority": parsed.get("priority"),
+        "priority": priority,
         "recurrence": parsed.get("recurrence"),
         "reminder_lead_minutes": parsed.get("reminder_lead_minutes"),
         "no_reminder": bool(parsed.get("no_reminder") or False),
@@ -196,8 +214,6 @@ def _coerce_payload(parsed: dict, text: str) -> dict:
         "tags": parsed.get("tags") if isinstance(parsed.get("tags"), list) else [],
         "related": parsed.get("related") if isinstance(parsed.get("related"), list) else [],
     }
-    if payload["priority"] == "null":
-        payload["priority"] = None
     if payload["reminder_lead_minutes"] is not None:
         try:
             payload["reminder_lead_minutes"] = int(payload["reminder_lead_minutes"])
@@ -206,6 +222,21 @@ def _coerce_payload(parsed: dict, text: str) -> dict:
     payload["tags"] = [str(tag) for tag in payload["tags"]]
     payload["related"] = [str(item) for item in payload["related"]]
     return payload
+
+
+def _clean_capture_type(value: object) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _CAPTURE_TYPES:
+            return normalized
+    return "inbox"
+
+
+def _clean_priority(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in _PRIORITIES else None
 
 
 def _extract_explicit_lead_minutes(text: str) -> int | None:

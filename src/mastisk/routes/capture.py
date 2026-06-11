@@ -1,8 +1,4 @@
-"""Token-authenticated capture ingress.
-
-Phase 1: a capture becomes a note in the existing _notes/inbox pipeline.
-Intent routing arrives in Phase 2.
-"""
+"""Token-authenticated capture ingress with Phase-2 intent routing."""
 from __future__ import annotations
 
 import hmac
@@ -14,7 +10,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from mastisk.capture.router import Capture, command_detected, route_capture
-from mastisk.routes.notes import persist_note_capture
+from mastisk.paths import vault_dir
+from mastisk.routes.notes import atomic_write, persist_note_capture
 from mastisk.settings import read_capture_bearer_token
 
 router = APIRouter(prefix="/api/capture", tags=["capture"])
@@ -38,7 +35,7 @@ def require_capture_token(authorization: str | None) -> None:
 class CaptureRequest(BaseModel):
     text: str = Field(min_length=1)
     source: Literal["watch", "phone", "pwa", "cli"] = "watch"
-    # Reserved for Phase 2 relative-date resolution; accepted and ignored now.
+    # Request timestamp used by the router for relative-date resolution.
     ts: str | None = None
 
     @field_validator("text")
@@ -78,12 +75,16 @@ async def capture(
         }
 
     needs_triage = False if command_detected(routed) else routed.confidence < 0.85
-    body_for_file = _body_with_capture_frontmatter(routed, needs_triage=needs_triage)
     row = persist_note_capture(
-        body=body_for_file,
+        body=routed.body,
         source=req.source,
         slug_text=req.text,
     )
+    body_for_file = _body_with_capture_frontmatter(routed, needs_triage=needs_triage)
+    try:
+        atomic_write(vault_dir() / row["path"], body_for_file)
+    except Exception:
+        log.exception("capture frontmatter write failed; clean inbox note is preserved")
     return {
         "id": row["id"],
         "type": routed.type,

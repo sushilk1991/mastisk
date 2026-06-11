@@ -173,6 +173,12 @@ def test_capture_persists_typed_intent_metadata(client_with_token, vault_tmp, fa
     assert "needs_triage: false" in file_text
     assert file_text.endswith("call Sam")
 
+    from mastisk.db.queries import connect, get_note
+
+    with connect() as conn:
+        row = get_note(conn, body["id"])
+    assert row["body"] == "call Sam"
+
 
 def test_capture_medium_confidence_marks_needs_triage(
     client_with_token, vault_tmp, fake_capture_router

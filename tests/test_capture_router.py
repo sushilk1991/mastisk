@@ -74,6 +74,12 @@ def test_command_override_detection_is_deterministic(text, intent):
     assert detect_command_intent(text) == intent
 
 
+def test_did_my_question_is_not_a_routine_command():
+    from mastisk.capture.router import detect_command_intent
+
+    assert detect_command_intent("did my flight get rebooked?") is None
+
+
 @pytest.mark.asyncio
 async def test_command_override_fixes_intent_and_resolves_due(data_tmp):
     cfg = data_tmp / "config.toml"
@@ -128,10 +134,70 @@ async def test_route_capture_injects_identity_and_empty_phase3_context(data_tmp)
 
     assert capture.type == "journal"
     assert capture.body == "felt scattered"
+    assert capture.due is None
     prompt = run_mock.call_args.args[0]
     assert "## identity\nuser voice" in prompt
     assert "Existing domains: []" in prompt
     assert "TODO(Phase 3)" in prompt
+
+
+@pytest.mark.asyncio
+async def test_route_capture_does_not_clobber_scheduled_or_review_at(data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    response = (
+        {
+            "text": json.dumps(
+                _llm_capture(
+                    type="task",
+                    due="2099-01-01",
+                    scheduled="2026-07-01",
+                    review_at="2026-07-02T09:00:00-07:00",
+                )
+            )
+        },
+        "claude",
+    )
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ):
+        capture = await route_capture(
+            "remind me to call Sam tomorrow 2pm",
+            source="watch",
+            ts=BASE_TS,
+        )
+
+    assert capture.due == "2026-06-10T14:00:00-07:00"
+    assert capture.scheduled == "2026-07-01"
+    assert capture.review_at == "2026-07-02T09:00:00-07:00"
+
+
+@pytest.mark.asyncio
+async def test_route_capture_normalizes_model_enum_casing(data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="Task", priority="High"))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ):
+        capture = await route_capture("follow up with Sam", source="watch", ts=BASE_TS)
+
+    assert capture.type == "task"
+    assert capture.priority == "high"
 
 
 @pytest.mark.asyncio

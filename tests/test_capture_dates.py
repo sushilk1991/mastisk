@@ -12,6 +12,7 @@ def test_resolves_relative_dates_without_inventing_times():
     assert resolve_datetime("follow up tomorrow", BASE_TS, TZ) == "2026-06-10"
     assert resolve_datetime("follow up Thursday", BASE_TS, TZ) == "2026-06-11"
     assert resolve_datetime("review this next week", BASE_TS, TZ) == "2026-06-15"
+    assert resolve_datetime("follow up next Tuesday", BASE_TS, TZ) == "2026-06-16"
 
 
 def test_resolves_relative_dates_with_times():
@@ -41,6 +42,15 @@ def test_resolves_time_only_to_next_occurrence():
     assert (
         resolve_datetime("remind me at 2pm", BASE_TS, TZ)
         == "2026-06-10T14:00:00-07:00"
+    )
+
+
+def test_weekday_with_past_time_resolves_to_next_week():
+    from mastisk.capture.dates import resolve_datetime
+
+    assert (
+        resolve_datetime("remind me Tuesday at 2pm", BASE_TS, TZ)
+        == "2026-06-16T14:00:00-07:00"
     )
 
 
