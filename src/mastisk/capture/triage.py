@@ -33,6 +33,7 @@ _TRIAGE_TAG_RE = re.compile(r"(?<!\S)#needs-triage\b")
 _H2_RE = re.compile(r"^##\s+(.+?)\s*$")
 _JOURNAL_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{2}:\d{2}\s+")
 _PROJECT_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+")
+_NOTE_SHAPED_TARGETS = {"note", "inbox", "person", "quote", "inventory", "content"}
 
 
 def list_triage_items(limit: int = 100) -> list[dict[str, Any]]:
@@ -57,7 +58,9 @@ def reclassify_triage_item(item_id: str, target_type: CaptureTriageType) -> dict
     item = get_triage_item(item_id)
     if item is None:
         return None
-    if target_type not in {"dismiss", item["detected_type"]}:
+    if target_type not in {"dismiss", item["detected_type"]} and not _is_note_in_place_reclassify(
+        item, target_type
+    ):
         _file_as_target(item, target_type)
     _clear_triage_marker(item, target_type=target_type)
     return {
@@ -65,6 +68,10 @@ def reclassify_triage_item(item_id: str, target_type: CaptureTriageType) -> dict
         "id": item_id,
         "type": target_type,
     }
+
+
+def _is_note_in_place_reclassify(item: dict[str, Any], target_type: str) -> bool:
+    return item.get("kind") == "note" and target_type in _NOTE_SHAPED_TARGETS
 
 
 def _task_items() -> list[dict[str, Any]]:

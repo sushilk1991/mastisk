@@ -147,3 +147,40 @@ def test_capture_triage_reclassifies_typed_note_to_task_and_clears_frontmatter(
     assert "type: task" in note_text
     task = db.execute("SELECT text, needs_triage FROM tasks").fetchone()
     assert dict(task) == {"text": "call Sam", "needs_triage": 0}
+
+
+def test_capture_triage_reclassifies_typed_note_to_note_in_place(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.routes.notes import persist_note_capture
+
+    note = persist_note_capture(
+        body="save this as a normal note",
+        source="watch",
+        file_content=(
+            "---\n"
+            "capture:\n"
+            "  type: journal\n"
+            "  confidence: 0.61\n"
+            "  body: save this as a normal note\n"
+            "needs_triage: true\n"
+            "---\n\n"
+            "save this as a normal note"
+        ),
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        r = client.post(
+            f"/api/triage/note:{note['id']}/reclassify",
+            json={"type": "note"},
+        )
+
+    assert r.status_code == 200, r.text
+    notes = db.execute(
+        "SELECT id, path FROM notes WHERE deleted_at IS NULL ORDER BY id"
+    ).fetchall()
+    assert [row["id"] for row in notes] == [note["id"]]
+    assert len(list((vault_tmp / "_notes" / "inbox").glob("*.md"))) == 1
+    note_text = (vault_tmp / note["path"]).read_text(encoding="utf-8")
+    assert "needs_triage: false" in note_text
+    assert "type: note" in note_text
