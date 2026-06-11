@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { api } from '../api';
 import type {
@@ -16,13 +16,24 @@ interface NavProps {
 }
 
 const TIME_GROUPS: TimeOfDay[] = ['morning', 'afternoon', 'evening', 'anytime'];
-const TASK_GROUPS = ['overdue', 'today', 'upcoming', 'someday'] as const;
+const TASK_GROUPS = ['overdue', 'today', 'upcoming', 'someday', 'done'] as const;
 const PRIORITIES: { value: '' | 'high' | 'medium' | 'low'; label: string }[] = [
   { value: '', label: '-' },
   { value: 'high', label: 'high' },
   { value: 'medium', label: 'medium' },
   { value: 'low', label: 'low' },
 ];
+type ErrorSetter = (message: string | null) => void;
+type ChangeHandler = () => void | Promise<void>;
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : 'failed';
+}
+
+function runMutation(action: () => Promise<void>, setErr: ErrorSetter): void {
+  setErr(null);
+  void action().catch((e) => setErr(errorMessage(e)));
+}
 
 export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const today = localIsoToday();
@@ -60,9 +71,14 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
     e.preventDefault();
     const text = entry.trim();
     if (!text) return;
-    setEntry('');
-    await api.journalApi.appendLog(today, text);
-    await load();
+    setErr(null);
+    try {
+      await api.journalApi.appendLog(today, text);
+      setEntry('');
+      await load();
+    } catch (err) {
+      setErr(errorMessage(err));
+    }
   }
 
   const dueTasks = tasks
@@ -206,7 +222,7 @@ export function TasksView({ liveKey }: LiveProps) {
           ['', 'all projects'], ...projects.map((p) => [p.slug, p.name] as [string, string]),
         ]}/>
         <Select label="Due" value={dueWindow} onChange={setDueWindow} options={[
-          ['all', 'all'], ['overdue', 'overdue'], ['today', 'today'], ['upcoming', 'upcoming'], ['someday', 'someday'],
+          ['all', 'all'], ['overdue', 'overdue'], ['today', 'today'], ['upcoming', 'upcoming'], ['someday', 'someday'], ['done', 'done'],
         ]}/>
       </div>
       {err && <p className="dash-error">{err}</p>}
@@ -225,6 +241,12 @@ export function ProjectsView({ liveKey }: LiveProps) {
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const selectedRef = useRef<string | null>(null);
+  const detailRequestRef = useRef(0);
+
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
 
   async function loadList() {
     setErr(null);
@@ -238,21 +260,30 @@ export function ProjectsView({ liveKey }: LiveProps) {
   }
 
   async function loadDetail(slug: string | null) {
+    const requestId = detailRequestRef.current + 1;
+    detailRequestRef.current = requestId;
     if (!slug) {
       setDetail(null);
       setTasks([]);
       return;
     }
-    const [projectDetail, openTasks] = await Promise.all([
-      api.projectsApi.get(slug),
-      api.tasks.list({ status: 'open', project: slug }),
-    ]);
-    setDetail(projectDetail);
-    setTasks(openTasks);
+    setErr(null);
+    try {
+      const [projectDetail, openTasks] = await Promise.all([
+        api.projectsApi.get(slug),
+        api.tasks.list({ status: 'open', project: slug }),
+      ]);
+      if (detailRequestRef.current !== requestId || selectedRef.current !== slug) return;
+      setDetail(projectDetail);
+      setTasks(openTasks);
+    } catch (e) {
+      if (detailRequestRef.current !== requestId || selectedRef.current !== slug) return;
+      setErr(errorMessage(e));
+    }
   }
 
   useEffect(() => { void loadList(); }, [liveKey]);
-  useEffect(() => { void loadDetail(selected).catch((e) => setErr(e instanceof Error ? e.message : 'failed')); }, [selected, liveKey]);
+  useEffect(() => { void loadDetail(selected); }, [selected, liveKey]);
 
   async function patchStatus(status: string) {
     if (!detail) return;
@@ -292,7 +323,7 @@ export function ProjectsView({ liveKey }: LiveProps) {
               <>
                 <div className="dash-section-head">
                   <h2>{detail.name}</h2>
-                  <select value={detail.status} onChange={(e) => void patchStatus(e.target.value)}>
+                  <select value={detail.status} onChange={(e) => runMutation(() => patchStatus(e.target.value), setErr)}>
                     {['active', 'paused', 'someday', 'done'].map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
@@ -300,7 +331,7 @@ export function ProjectsView({ liveKey }: LiveProps) {
                 <h3 className="dash-mini-h">Open tasks</h3>
                 {tasks.length === 0 ? <EmptyLine>No open tasks in this project.</EmptyLine> : (
                   <div className="dash-list compact">
-                    {tasks.map((task) => <TaskLine key={task.uid} task={task} today={localIsoToday()} onChanged={() => loadDetail(detail.slug)}/>)}
+                    {tasks.map((task) => <TaskLine key={task.uid} task={task} today={localIsoToday()} onChanged={() => { void loadDetail(detail.slug); }}/>)}
                   </div>
                 )}
                 <h3 className="dash-mini-h">Recent log</h3>
@@ -407,10 +438,15 @@ export function JournalView({ liveKey }: LiveProps) {
     e.preventDefault();
     const text = entry.trim();
     if (!text) return;
-    setEntry('');
-    await api.journalApi.appendLog(selected, text);
-    await loadDays();
-    await loadDetail(selected);
+    setErr(null);
+    try {
+      await api.journalApi.appendLog(selected, text);
+      setEntry('');
+      await loadDays();
+      await loadDetail(selected);
+    } catch (err) {
+      setErr(errorMessage(err));
+    }
   }
 
   async function setScale(kind: 'mood' | 'energy', value: number | null) {
@@ -447,8 +483,8 @@ export function JournalView({ liveKey }: LiveProps) {
             <h2>{formatLongDate(selected)}</h2>
             <button className="chip" onClick={() => setSelected(today)}>today</button>
           </div>
-          <ScaleSetter label="Mood" value={detail?.mood ?? null} onSet={(v) => void setScale('mood', v)}/>
-          <ScaleSetter label="Energy" value={detail?.energy ?? null} onSet={(v) => void setScale('energy', v)}/>
+          <ScaleSetter label="Mood" value={detail?.mood ?? null} onSet={(v) => runMutation(() => setScale('mood', v), setErr)}/>
+          <ScaleSetter label="Energy" value={detail?.energy ?? null} onSet={(v) => runMutation(() => setScale('energy', v), setErr)}/>
           <form className="dash-inline-form" onSubmit={appendLog}>
             <input value={entry} onChange={(e) => setEntry(e.target.value)} placeholder="Append to log" />
             <button type="submit">Add</button>
@@ -462,7 +498,7 @@ export function JournalView({ liveKey }: LiveProps) {
               <SectionBlock title="Reflections" body={detail.sections.Reflections}/>
               <h3 className="dash-mini-h">Day assembly</h3>
               <div className="dash-list compact">
-                {detail.tasks.slice(0, 8).map((task) => <TaskLine key={task.uid} task={task} today={selected} onChanged={() => loadDetail(selected)}/>)}
+                {detail.tasks.slice(0, 8).map((task) => <TaskLine key={task.uid} task={task} today={selected} onChanged={() => { void loadDetail(selected); }}/>)}
                 {detail.routine_completions.map((routine) => (
                   <div className="dash-row" key={`${routine.routine_id}-${routine.date}`}>
                     <span>{routine.name}</span>
@@ -499,11 +535,12 @@ export function InboxTriageView({ liveKey }: LiveProps) {
 
   async function act(item: CaptureTriageItem, type: CaptureTriageTarget) {
     setBusy(item.id);
+    setErr(null);
     try {
       await api.captureTriage.reclassify(item.id, type);
       await load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'failed');
+      setErr(errorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -550,7 +587,7 @@ export function InboxTriageView({ liveKey }: LiveProps) {
   );
 }
 
-function TaskGroup({ title, tasks, today, onChanged }: { title: string; tasks: TaskRow[]; today: string; onChanged: () => void }) {
+function TaskGroup({ title, tasks, today, onChanged }: { title: string; tasks: TaskRow[]; today: string; onChanged: ChangeHandler }) {
   if (tasks.length === 0) return null;
   return (
     <section className="dash-section">
@@ -562,9 +599,10 @@ function TaskGroup({ title, tasks, today, onChanged }: { title: string; tasks: T
   );
 }
 
-function TaskLine({ task, today, onChanged }: { task: TaskRow; today: string; onChanged: () => void }) {
+function TaskLine({ task, today, onChanged }: { task: TaskRow; today: string; onChanged: ChangeHandler }) {
   const [due, setDue] = useState(task.due ?? '');
   const [priority, setPriority] = useState<Priority>(task.priority);
+  const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     setDue(task.due ?? '');
     setPriority(task.priority);
@@ -573,12 +611,19 @@ function TaskLine({ task, today, onChanged }: { task: TaskRow; today: string; on
 
   async function savePatch(next: { due?: string | null; priority?: Priority }) {
     await api.tasks.patch(task.uid, next);
-    onChanged();
+    await onChanged();
   }
 
   return (
     <div className={`dash-card task-line ${task.checked ? 'done' : ''}`}>
-      <button className="task-check" onClick={() => api.tasks.toggle(task.uid).then(onChanged)} aria-label="Toggle task">
+      <button
+        className="task-check"
+        onClick={() => runMutation(async () => {
+          await api.tasks.toggle(task.uid);
+          await onChanged();
+        }, setErr)}
+        aria-label="Toggle task"
+      >
         {task.checked ? 'x' : ''}
       </button>
       <div className="dash-row-main">
@@ -593,20 +638,23 @@ function TaskLine({ task, today, onChanged }: { task: TaskRow; today: string; on
           {task.needs_triage && <span className="warn">needs triage</span>}
           {task.recurrence_unparsed && <span className="warn">recurrence unparsed</span>}
         </div>
+        {err && <span className="dash-error">{err}</span>}
       </div>
       <div className="task-edit">
         <input
           value={due}
           placeholder="due"
           onChange={(e) => setDue(e.target.value)}
-          onBlur={() => { if ((task.due ?? '') !== due) void savePatch({ due: due.trim() || null }); }}
+          onBlur={() => {
+            if ((task.due ?? '') !== due) runMutation(() => savePatch({ due: due.trim() || null }), setErr);
+          }}
         />
         <select
           value={priority ?? ''}
           onChange={(e) => {
             const next = (e.target.value || null) as Priority;
             setPriority(next);
-            void savePatch({ priority: next });
+            runMutation(() => savePatch({ priority: next }), setErr);
           }}
         >
           {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
@@ -616,14 +664,22 @@ function TaskLine({ task, today, onChanged }: { task: TaskRow; today: string; on
   );
 }
 
-function RoutineGroup({ label, routines, onChanged }: { label: TimeOfDay; routines: RoutineRow[]; onChanged: () => void }) {
+function RoutineGroup({ label, routines, onChanged }: { label: TimeOfDay; routines: RoutineRow[]; onChanged: ChangeHandler }) {
+  const [err, setErr] = useState<string | null>(null);
   return (
     <div className="routine-group">
       <h3 className="dash-mini-h">{labelTime(label)}</h3>
+      {err && <p className="dash-error">{err}</p>}
       <div className="dash-list compact">
         {routines.map((routine) => (
           <div key={routine.slug} className="dash-row">
-            <button className={`mini-toggle ${routine.completed_today ? 'on' : ''}`} onClick={() => api.routinesApi.toggle(routine.slug).then(onChanged)}>
+            <button
+              className={`mini-toggle ${routine.completed_today ? 'on' : ''}`}
+              onClick={() => runMutation(async () => {
+                await api.routinesApi.toggle(routine.slug);
+                await onChanged();
+              }, setErr)}
+            >
               {routine.completed_today ? 'done' : 'mark'}
             </button>
             <span>{routine.name}</span>
@@ -635,8 +691,9 @@ function RoutineGroup({ label, routines, onChanged }: { label: TimeOfDay; routin
   );
 }
 
-function RoutineCard({ routine, liveKey, onChanged }: { routine: RoutineRow; liveKey: string; onChanged: () => void }) {
+function RoutineCard({ routine, liveKey, onChanged }: { routine: RoutineRow; liveKey: string; onChanged: ChangeHandler }) {
   const [progress, setProgress] = useState<RoutineProgress | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     api.routinesApi.progress(routine.slug, 30).then(setProgress).catch(() => setProgress(null));
   }, [routine.slug, liveKey]);
@@ -645,10 +702,17 @@ function RoutineCard({ routine, liveKey, onChanged }: { routine: RoutineRow; liv
     <div className="dash-card routine-card">
       <div className="dash-section-head">
         <h3>{routine.name}</h3>
-        <button className={`mini-toggle ${routine.completed_today ? 'on' : ''}`} onClick={() => api.routinesApi.toggle(routine.slug).then(onChanged)}>
+        <button
+          className={`mini-toggle ${routine.completed_today ? 'on' : ''}`}
+          onClick={() => runMutation(async () => {
+            await api.routinesApi.toggle(routine.slug);
+            await onChanged();
+          }, setErr)}
+        >
           {routine.completed_today ? 'done' : 'today'}
         </button>
       </div>
+      {err && <p className="dash-error">{err}</p>}
       {routine.description && <p>{routine.description}</p>}
       <div className="dash-tags">
         <span>current {routine.streak.current}</span>
@@ -662,7 +726,15 @@ function RoutineCard({ routine, liveKey, onChanged }: { routine: RoutineRow; liv
           <div style={{ width: `${routine.streak.fixed.target_days ? (routine.streak.fixed.days_done / routine.streak.fixed.target_days) * 100 : 0}%` }}/>
         </div>
       )}
-      <button className="chip muted" onClick={() => api.routinesApi.archive(routine.slug).then(onChanged)}>archive</button>
+      <button
+        className="chip muted"
+        onClick={() => runMutation(async () => {
+          await api.routinesApi.archive(routine.slug);
+          await onChanged();
+        }, setErr)}
+      >
+        archive
+      </button>
     </div>
   );
 }
@@ -755,13 +827,15 @@ function groupTasks(tasks: TaskRow[], today: string): Record<typeof TASK_GROUPS[
     today: tasks.filter((task) => taskBucket(task, today) === 'today'),
     upcoming: tasks.filter((task) => taskBucket(task, today) === 'upcoming'),
     someday: tasks.filter((task) => taskBucket(task, today) === 'someday'),
+    done: tasks.filter((task) => taskBucket(task, today) === 'done'),
   };
 }
 
 function taskBucket(task: TaskRow, today: string): typeof TASK_GROUPS[number] {
+  if (task.status !== 'open') return 'done';
   const due = datePart(task.due);
   if (!due) return 'someday';
-  if (due < today && task.status === 'open') return 'overdue';
+  if (due < today) return 'overdue';
   if (due === today) return 'today';
   return 'upcoming';
 }
