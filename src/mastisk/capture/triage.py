@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,13 @@ class TriageReclassifyError(ValueError):
     """Raised when a triage item cannot be filed as the requested target."""
 
 
+@dataclass(frozen=True)
+class _SourceFileSnapshot:
+    kind: str
+    path: Path
+    text: str
+
+
 def list_triage_items(limit: int = 100) -> list[dict[str, Any]]:
     items = [
         *_task_items(),
@@ -64,8 +72,19 @@ def reclassify_triage_item(item_id: str, target_type: CaptureTriageType) -> dict
     if item is None:
         return None
     if _should_file_as_target(item, target_type):
-        _file_as_target(item, target_type)
-    _clear_triage_marker(item, target_type=target_type)
+        # Idempotence: clear the source marker before additive filing, and
+        # restore the source file if filing fails. This avoids retry-time
+        # duplicates from the old file-then-clear ordering.
+        snapshot = _source_file_snapshot(item)
+        _clear_triage_marker(item, target_type=target_type)
+        try:
+            _file_as_target(item, target_type)
+        except Exception:
+            if snapshot is not None:
+                _restore_source_file_snapshot(snapshot)
+            raise
+    else:
+        _clear_triage_marker(item, target_type=target_type)
     return {
         "ok": True,
         "id": item_id,
@@ -87,9 +106,40 @@ def _should_file_as_target(item: dict[str, Any], target_type: str) -> bool:
         return False
     if target_type == "project_update" and kind == "project_update":
         return False
-    if _is_note_in_place_reclassify(item, target_type):
-        return False
-    return True
+    return not _is_note_in_place_reclassify(item, target_type)
+
+
+def _source_file_snapshot(item: dict[str, Any]) -> _SourceFileSnapshot | None:
+    path = _source_path_for_item(item)
+    if path is None:
+        return None
+    return _SourceFileSnapshot(
+        kind=str(item.get("kind") or ""),
+        path=path,
+        text=path.read_text(encoding="utf-8"),
+    )
+
+
+def _source_path_for_item(item: dict[str, Any]) -> Path | None:
+    kind = item.get("kind")
+    source = item.get("source") if isinstance(item.get("source"), dict) else {}
+    if kind == "task":
+        task = get_task(str(source.get("uid") or ""))
+        if task is None:
+            return None
+        return vault_dir() / task["host_path"]
+    if kind in {"journal", "project_update", "note"}:
+        return vault_dir() / str(source.get("path") or "")
+    return None
+
+
+def _restore_source_file_snapshot(snapshot: _SourceFileSnapshot) -> None:
+    with host_file_lock(snapshot.path):
+        atomic_write(snapshot.path, snapshot.text)
+    if snapshot.kind == "task":
+        scan_task_hosts([snapshot.path])
+    elif snapshot.kind == "journal":
+        scan_journal_days([snapshot.path])
 
 
 def _task_items() -> list[dict[str, Any]]:

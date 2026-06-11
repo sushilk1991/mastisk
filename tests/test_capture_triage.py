@@ -6,13 +6,13 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 
-def _client(vault_tmp, data_tmp, db):
+def _client(vault_tmp, data_tmp, db, **kwargs):
     from mastisk.settings import reload_settings
 
     reload_settings()
     from mastisk.app import create_app
 
-    return TestClient(create_app())
+    return TestClient(create_app(), **kwargs)
 
 
 def test_capture_triage_frontend_client_stays_outside_capture_tunnel_scope():
@@ -186,6 +186,50 @@ def test_capture_triage_reclassifies_journal_line_to_task_without_deleting_log(
     assert "#needs-triage" not in file_text
     task = db.execute("SELECT text, needs_triage FROM tasks").fetchone()
     assert dict(task) == {"text": "Call Sam", "needs_triage": 0}
+
+
+def test_capture_triage_clear_failure_does_not_file_duplicate_on_retry(
+    db, vault_tmp, data_tmp, monkeypatch
+):
+    from mastisk.capture import triage
+    from mastisk.journal import append_log
+
+    append_log("2026-06-11", "Call Sam #needs-triage", datetime(2026, 6, 11, 9, 0))
+    original_clear = triage._clear_triage_marker
+    calls = {"n": 0}
+
+    def fail_first_clear(item, *, target_type):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("clear failed")
+        return original_clear(item, target_type=target_type)
+
+    monkeypatch.setattr(triage, "_clear_triage_marker", fail_first_clear)
+
+    with _client(
+        vault_tmp, data_tmp, db, raise_server_exceptions=False
+    ) as client:
+        item_id = next(
+            row["id"]
+            for row in client.get("/api/triage").json()
+            if row["kind"] == "journal"
+        )
+        first = client.post(f"/api/triage/{item_id}/reclassify", json={"type": "task"})
+        retry_id = next(
+            row["id"]
+            for row in client.get("/api/triage").json()
+            if row["kind"] == "journal"
+        )
+        retry = client.post(f"/api/triage/{retry_id}/reclassify", json={"type": "task"})
+
+    assert first.status_code == 500, first.text
+    assert retry.status_code == 200, retry.text
+    file_text = (vault_tmp / "journal" / "2026-06-11.md").read_text(encoding="utf-8")
+    assert "#needs-triage" not in file_text
+    tasks = db.execute(
+        "SELECT text, needs_triage FROM tasks WHERE deleted_at IS NULL"
+    ).fetchall()
+    assert [dict(row) for row in tasks] == [{"text": "Call Sam", "needs_triage": 0}]
 
 
 def test_capture_triage_reclassifies_typed_note_to_task_and_clears_frontmatter(
