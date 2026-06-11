@@ -1,6 +1,8 @@
 """Integration tests for /api/notes routes."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -25,6 +27,32 @@ def test_post_notes_creates_file_and_row(client, vault_tmp):
     file_path = vault_tmp / body["path"]
     assert file_path.exists()
     assert "first thought" in file_path.read_text()
+
+
+def test_persist_note_capture_keeps_both_files_on_slug_collision(db, vault_tmp):
+    from mastisk.routes.notes import persist_note_capture
+
+    ts = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+
+    first = persist_note_capture(
+        body="first body",
+        source="cli",
+        slug_text="same title",
+        ts=ts,
+    )
+    second = persist_note_capture(
+        body="second body",
+        source="cli",
+        slug_text="same title",
+        ts=ts,
+    )
+
+    first_path = vault_tmp / first["path"]
+    second_path = vault_tmp / second["path"]
+    assert first_path.exists()
+    assert second_path.exists()
+    assert first_path.read_text(encoding="utf-8") == "first body"
+    assert second_path.read_text(encoding="utf-8") == "second body"
 
 
 def test_post_notes_rejects_empty_text(client):

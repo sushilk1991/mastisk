@@ -115,9 +115,9 @@ def persist_note_capture(
     ts = ts or datetime.now().astimezone()
     slug = derive_slug(slug_text if slug_text is not None else body, ts)
     target = notes_inbox_dir() / f"{slug}.md"
-    atomic_write(target, body)
     rel_path = str(target.relative_to(vault_dir()))
     with connect() as conn:
+        conn.execute("BEGIN")
         note_id = q.insert_note(
             conn,
             slug=slug,
@@ -127,11 +127,14 @@ def persist_note_capture(
             created_at=ts,
         )
         row = q.get_note(conn, note_id)
-    # If insert_note hit a slug collision, the DB's final path has a `-N` suffix.
-    # The file was written with the original name; rename it to match.
-    actual_path = vault_dir() / row["path"]
-    if actual_path != target:
-        target.rename(actual_path)
+        actual_path = vault_dir() / row["path"]
+        try:
+            atomic_write(actual_path, body)
+        except Exception:
+            conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+            conn.execute("COMMIT")
+            raise
+        conn.execute("COMMIT")
     return dict(row)
 
 
