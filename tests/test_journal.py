@@ -68,6 +68,38 @@ def test_journal_mood_energy_frontmatter_preserves_body_content(db, vault_tmp):
     assert "- 11:00 Implemented the write path" in text
 
 
+def test_journal_reflections_escape_headings_without_corrupting_log_mirror(db, vault_tmp):
+    from mastisk.journal import append_log, assemble_journal_day, set_reflections
+
+    append_log("2026-06-11", "Real entry", datetime(2026, 6, 11, 9, 0))
+    set_reflections("2026-06-11", "Good day\n## Log\n- 12:00 fake")
+    set_reflections("2026-06-11", "Second pass\n## Log\nstill literal")
+
+    path = vault_tmp / "journal" / "2026-06-11.md"
+    text = path.read_text(encoding="utf-8")
+    assert sum(1 for line in text.splitlines() if line == "## Log") == 1
+    assert "\\## Log" in text
+
+    row = db.execute(
+        "SELECT log_count, has_reflections FROM journal_days WHERE date = '2026-06-11'",
+    ).fetchone()
+    assert dict(row) == {"log_count": 1, "has_reflections": 1}
+    assembled = assemble_journal_day("2026-06-11")
+    assert assembled is not None
+    assert "- 09:00 Real entry" in assembled["sections"]["Log"]
+    assert "\\## Log" in assembled["sections"]["Reflections"]
+
+
+def test_journal_log_append_escapes_heading_like_text(db, vault_tmp):
+    from mastisk.journal import append_log
+
+    result = append_log("2026-06-11", "## Log", datetime(2026, 6, 11, 9, 0))
+
+    assert result["line"] == "- 09:00 \\## Log"
+    text = (vault_tmp / "journal" / "2026-06-11.md").read_text(encoding="utf-8")
+    assert "- 09:00 \\## Log" in text
+
+
 def test_journal_scan_mirrors_handmade_files_and_soft_deletes_removed_days(
     db, vault_tmp
 ):

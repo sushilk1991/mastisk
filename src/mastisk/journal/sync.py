@@ -19,6 +19,7 @@ from mastisk.settings import get_settings
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _H2_RE = re.compile(r"(?m)^##\s+(.+?)\s*$")
 _LOG_BULLET_RE = re.compile(r"^\s*-\s+\d{2}:\d{2}\b")
+_USER_HEADING_RE = re.compile(r"(?m)^(#{1,6}\s)")
 _REQUIRED_SECTIONS = ("Tasks", "Log", "Reflections")
 
 
@@ -37,7 +38,7 @@ def append_log(
 ) -> dict[str, str]:
     target_day = _coerce_day(day)
     target = _day_path(target_day)
-    body = _clean_one_line(text)
+    body = _neutralize_heading_lines(_clean_one_line(text))
     if not body:
         raise ValueError("log text must be non-blank")
     source_suffix = _source_suffix(source)
@@ -61,7 +62,11 @@ def set_reflections(day: str | date | datetime, text: str) -> dict[str, str]:
     with host_file_lock(target):
         _ensure_day_locked(target)
         frontmatter, markdown_body = split_frontmatter(target.read_text(encoding="utf-8"))
-        updated_body = _replace_section(markdown_body, "Reflections", text.strip())
+        updated_body = _replace_section(
+            markdown_body,
+            "Reflections",
+            _neutralize_heading_lines(text.strip()),
+        )
         atomic_write(target, _dump_day(frontmatter, updated_body))
     scan_journal_days([target])
     return {"date": target_day.isoformat(), "path": str(target.relative_to(vault_dir()))}
@@ -404,6 +409,11 @@ def _local_day_utc_bounds(day: str) -> tuple[str, str]:
 
 def _clean_one_line(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _neutralize_heading_lines(value: str) -> str:
+    """Escape user heading markers so journal section parsing remains structural."""
+    return _USER_HEADING_RE.sub(lambda match: "\\" + match.group(1), value)
 
 
 def _source_suffix(source: str | None) -> str:
