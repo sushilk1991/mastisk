@@ -1,5 +1,6 @@
 """File-first journal day helpers."""
 from mastisk.journal.sync import (
+    JournalFrontmatterError,
     append_log,
     assemble_journal_day,
     ensure_day,
@@ -12,6 +13,7 @@ from mastisk.journal.sync import (
 )
 
 __all__ = [
+    "JournalFrontmatterError",
     "append_log",
     "assemble_journal_day",
     "ensure_day",

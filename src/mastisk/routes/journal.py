@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from mastisk.journal import (
+    JournalFrontmatterError,
     append_log,
     assemble_journal_day,
     list_journal_days,
@@ -58,7 +59,10 @@ async def get_journal_day_endpoint(day: str) -> dict:
 @router.post("/{day}/log", status_code=201)
 async def append_journal_log_endpoint(day: str, req: JournalLogCreate) -> dict:
     valid_day = _validate_day(day)
-    result = append_log(valid_day, req.text, _now_in_capture_timezone())
+    try:
+        result = append_log(valid_day, req.text, _now_in_capture_timezone())
+    except JournalFrontmatterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
         **result,
         "type": "journal",
@@ -69,11 +73,14 @@ async def append_journal_log_endpoint(day: str, req: JournalLogCreate) -> dict:
 @router.patch("/{day}")
 async def patch_journal_day_endpoint(day: str, req: JournalPatch) -> dict:
     valid_day = _validate_day(day)
-    if "mood" in req.model_fields_set or "energy" in req.model_fields_set:
-        set_mood_energy(valid_day, mood=req.mood, energy=req.energy)
-    if "reflections" in req.model_fields_set:
-        set_reflections(valid_day, req.reflections or "")
-    assembled = assemble_journal_day(valid_day)
+    try:
+        if "mood" in req.model_fields_set or "energy" in req.model_fields_set:
+            set_mood_energy(valid_day, mood=req.mood, energy=req.energy)
+        if "reflections" in req.model_fields_set:
+            set_reflections(valid_day, req.reflections or "")
+        assembled = assemble_journal_day(valid_day)
+    except JournalFrontmatterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if assembled is None:
         raise HTTPException(status_code=404, detail="journal day not found")
     return assembled

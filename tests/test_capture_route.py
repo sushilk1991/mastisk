@@ -424,6 +424,52 @@ def test_capture_journal_fallback_uses_capture_default_timezone(
     assert "- 12:00 Late local thought" in file_text
 
 
+def test_capture_journal_rejects_bad_frontmatter_without_rewriting(
+    vault_tmp,
+    data_tmp,
+    db,
+    fake_capture_router,
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\nbearer_token = "test-token"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    path = vault_tmp / "journal" / "2026-06-11.md"
+    path.parent.mkdir()
+    original = (
+        "---\n"
+        "mood: [bad\n"
+        "---\n\n"
+        "## Tasks\n\n"
+        "## Log\n\n"
+        "## Reflections\n"
+    ).encode()
+    path.write_bytes(original)
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="journal",
+        confidence=0.94,
+        body="Should not write",
+    )
+    from mastisk.app import create_app
+
+    with TestClient(create_app()) as client:
+        r = client.post(
+            "/api/capture",
+            json={
+                "text": "journal should not write",
+                "source": "watch",
+                "ts": "2026-06-11T09:00:00-07:00",
+            },
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert r.status_code == 409, r.text
+    assert "frontmatter" in r.json()["detail"]
+    assert path.read_bytes() == original
+
+
 def test_capture_task_routes_to_existing_project_host(
     client_with_token, vault_tmp, fake_capture_router
 ):

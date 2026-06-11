@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from mastisk.agents.notetaker import split_frontmatter
 from mastisk.db.queries import connect
 from mastisk.file_locks import host_file_lock
 from mastisk.paths import journal_dir, vault_dir
@@ -21,6 +20,10 @@ _H2_RE = re.compile(r"(?m)^##\s+(.+?)\s*$")
 _LOG_BULLET_RE = re.compile(r"^\s*-\s+\d{2}:\d{2}\b")
 _USER_HEADING_RE = re.compile(r"(?m)^(#{1,6}\s)")
 _REQUIRED_SECTIONS = ("Tasks", "Log", "Reflections")
+
+
+class JournalFrontmatterError(ValueError):
+    """Raised when a journal day has frontmatter this module cannot preserve."""
 
 
 def ensure_day(day: str | date | datetime) -> Path:
@@ -45,7 +48,7 @@ def append_log(
     line = f"- {_coerce_timestamp(ts).strftime('%H:%M')} {body}{source_suffix}"
     with host_file_lock(target):
         _ensure_day_locked(target)
-        frontmatter, markdown_body = split_frontmatter(target.read_text(encoding="utf-8"))
+        frontmatter, markdown_body = _split_frontmatter(target.read_text(encoding="utf-8"))
         updated_body = _append_to_section(markdown_body, "Log", line)
         atomic_write(target, _dump_day(frontmatter, updated_body))
     scan_journal_days([target])
@@ -61,7 +64,7 @@ def set_reflections(day: str | date | datetime, text: str) -> dict[str, str]:
     target = _day_path(target_day)
     with host_file_lock(target):
         _ensure_day_locked(target)
-        frontmatter, markdown_body = split_frontmatter(target.read_text(encoding="utf-8"))
+        frontmatter, markdown_body = _split_frontmatter(target.read_text(encoding="utf-8"))
         updated_body = _replace_section(
             markdown_body,
             "Reflections",
@@ -81,7 +84,7 @@ def set_mood_energy(
     target = _day_path(target_day)
     with host_file_lock(target):
         _ensure_day_locked(target)
-        frontmatter, markdown_body = split_frontmatter(target.read_text(encoding="utf-8"))
+        frontmatter, markdown_body = _split_frontmatter(target.read_text(encoding="utf-8"))
         if mood is not None:
             frontmatter["mood"] = _clean_scale(mood, "mood")
         if energy is not None:
@@ -143,7 +146,7 @@ def scan_journal_days(paths: list[Path] | None = None) -> dict[str, int]:
 
 
 def parse_journal_file(path: Path) -> dict[str, Any]:
-    frontmatter, body = split_frontmatter(path.read_text(encoding="utf-8"))
+    frontmatter, body = _split_frontmatter(path.read_text(encoding="utf-8"))
     sections = parse_sections(body)
     return {
         "date": path.stem,
@@ -219,7 +222,7 @@ def _ensure_day_locked(path: Path) -> None:
     if not path.exists():
         atomic_write(path, skeleton())
         return
-    frontmatter, body = split_frontmatter(path.read_text(encoding="utf-8"))
+    frontmatter, body = _split_frontmatter(path.read_text(encoding="utf-8"))
     updated = _ensure_required_sections(body)
     if updated != body:
         atomic_write(path, _dump_day(frontmatter, updated))
@@ -274,6 +277,29 @@ def _ensure_section(markdown: str, heading: str) -> str:
     if updated and not updated.endswith("\n\n"):
         updated += "\n"
     return f"{updated}## {heading}\n"
+
+
+def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    if not text.startswith("---\n"):
+        return {}, text
+    parts = text.split("---\n", 2)
+    if len(parts) < 3:
+        raise JournalFrontmatterError(
+            "journal frontmatter is malformed; fix it before mutating"
+        )
+    raw_frontmatter = parts[1]
+    body = parts[2].lstrip("\n")
+    try:
+        parsed = yaml.safe_load(raw_frontmatter) or {}
+    except yaml.YAMLError as exc:
+        raise JournalFrontmatterError(
+            "journal frontmatter is invalid YAML; fix it before mutating"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise JournalFrontmatterError(
+            "journal frontmatter must be a mapping; fix it before mutating"
+        )
+    return parsed, body
 
 
 def _dump_day(frontmatter: dict[str, Any], body: str) -> str:

@@ -308,3 +308,31 @@ def test_journal_route_log_timestamp_uses_capture_default_timezone(
     assert "- 12:00 config tz wins" in (
         vault_tmp / "journal" / "2026-06-11.md"
     ).read_text(encoding="utf-8")
+
+
+def test_journal_route_rejects_bad_frontmatter_without_rewriting(
+    db,
+    vault_tmp,
+    data_tmp,
+):
+    path = vault_tmp / "journal" / "2026-06-11.md"
+    path.parent.mkdir()
+    original = (
+        "---\n"
+        "mood: [bad\n"
+        "---\n\n"
+        "## Tasks\n\n"
+        "## Log\n\n"
+        "## Reflections\n"
+    ).encode()
+    path.write_bytes(original)
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        logged = client.post(
+            "/api/journal/2026-06-11/log",
+            json={"text": "should not write"},
+        )
+
+    assert logged.status_code == 409, logged.text
+    assert "frontmatter" in logged.json()["detail"]
+    assert path.read_bytes() == original

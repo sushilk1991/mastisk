@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from mastisk.agents.reminder_engine import create_task_due_reminder
 from mastisk.capture.router import Capture, route_capture
-from mastisk.journal import append_log
+from mastisk.journal import JournalFrontmatterError, append_log
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import append_project_log, find_project
 from mastisk.routes.notes import persist_note_capture
@@ -84,6 +84,8 @@ async def capture(
     if routed.type == "journal":
         try:
             return _persist_journal_capture(routed, ts=req.ts, needs_triage=needs_triage)
+        except JournalFrontmatterError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception:
             log.exception("capture journal write failed; falling back to raw inbox note")
             return _persist_inbox_fallback(req.text, req.source)
