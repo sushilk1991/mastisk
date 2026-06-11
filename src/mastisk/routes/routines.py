@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from mastisk.routines.sync import (
+    RoutineArchivedError,
     archive_routine,
     completion_dates,
     create_routine_file,
@@ -69,6 +70,8 @@ async def create_routine_endpoint(req: RoutineCreate) -> dict:
 async def toggle_routine_endpoint(slug: str, date: str | None = None) -> dict:
     try:
         updated = toggle_routine_completion(slug, date_value=date)
+    except RoutineArchivedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if updated is None:

@@ -36,6 +36,10 @@ _HHMM_RE = re.compile(r"^\d{2}:\d{2}$")
 _CREATE_ROUTINE_LOCK = threading.Lock()
 
 
+class RoutineArchivedError(RuntimeError):
+    """Raised when a completion write targets an archived routine."""
+
+
 def scan_routines(paths: list[Path] | None = None) -> dict[str, int]:
     routine_paths = paths if paths is not None else _routine_paths()
     seen: set[str] = set()
@@ -188,12 +192,16 @@ def _mutate_routine_completion(
     routine = get_routine(slug, include_archived=True)
     if routine is None:
         return None
+    if routine.get("archived"):
+        raise RoutineArchivedError("routine is archived")
     target_date = _clean_date(date_value or today or local_today())
     if target_date is None:
         raise ValueError("date must be YYYY-MM-DD")
     path = vault_dir() / routine["path"]
     with host_file_lock(path):
         meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
+        if meta.get("archived"):
+            raise RoutineArchivedError("routine is archived")
         all_dates = set(_completion_dates_from_body(body))
         completed = force if force is not None else target_date not in all_dates
         if completed:

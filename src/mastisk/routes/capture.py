@@ -16,7 +16,7 @@ from mastisk.capture.router import Capture, route_capture
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import append_project_log, find_project
 from mastisk.routes.notes import persist_note_capture
-from mastisk.routines.sync import complete_routine_completion, local_today
+from mastisk.routines.sync import RoutineArchivedError, complete_routine_completion, local_today
 from mastisk.settings import read_capture_bearer_token
 from mastisk.tasks.sync import append_task_to_host, journal_host_for_today
 
@@ -84,6 +84,8 @@ async def capture(
             filed = _persist_routine_done_capture(routed, ts=req.ts)
             if filed is not None:
                 return {**filed, "needs_triage": needs_triage}
+        except RoutineArchivedError:
+            return _persist_inbox_fallback(req.text, req.source)
         except Exception:
             log.exception("capture routine_done write failed; falling back to raw inbox note")
             return _persist_inbox_fallback(req.text, req.source)

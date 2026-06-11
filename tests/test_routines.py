@@ -199,6 +199,46 @@ def test_routine_create_retries_slug_when_file_already_exists(vault_tmp, data_tm
     assert (vault_tmp / "routines" / "morning-vitamins-2.md").exists()
 
 
+def test_archived_routine_toggle_is_rejected(vault_tmp, data_tmp, db):
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/routines",
+            json={"name": "Morning Vitamins", "time_of_day": "morning"},
+        )
+        assert created.status_code == 201, created.text
+        archived = client.post("/api/routines/morning-vitamins/archive")
+        assert archived.status_code == 200, archived.text
+
+        toggled = client.post("/api/routines/morning-vitamins/toggle?date=2026-06-11")
+
+        assert toggled.status_code == 409
+        assert toggled.json()["detail"] == "routine is archived"
+        file_text = (vault_tmp / "routines" / "morning-vitamins.md").read_text(
+            encoding="utf-8"
+        )
+        assert "- 2026-06-11" not in file_text
+
+
+def test_file_archived_routine_toggle_is_rejected_before_scan(vault_tmp, data_tmp, db):
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/routines",
+            json={"name": "Morning Vitamins", "time_of_day": "morning"},
+        )
+        assert created.status_code == 201, created.text
+        path = vault_tmp / "routines" / "morning-vitamins.md"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("archived: false", "archived: true"),
+            encoding="utf-8",
+        )
+
+        toggled = client.post("/api/routines/morning-vitamins/toggle?date=2026-06-11")
+
+        assert toggled.status_code == 409
+        assert toggled.json()["detail"] == "routine is archived"
+        assert "- 2026-06-11" not in path.read_text(encoding="utf-8")
+
+
 def test_routine_missed_nudges_dedup_and_respect_windows(db, vault_tmp, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")
