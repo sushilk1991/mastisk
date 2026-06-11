@@ -709,7 +709,7 @@ export function PeopleView({ liveKey }: LiveProps) {
     try {
       const row = await api.peopleApi.get(slug);
       setDetail(row);
-      setFollowUpAt((row.follow_up_at ?? '').slice(0, 16));
+      setFollowUpAt(followUpIsoToDatetimeLocal(row.follow_up_at));
     } catch (e) {
       setDetail(null);
       setErr(errorMessage(e));
@@ -743,10 +743,10 @@ export function PeopleView({ liveKey }: LiveProps) {
   async function saveFollowUp() {
     if (!detail) return;
     const updated = await api.peopleApi.patch(detail.slug, {
-      follow_up_at: followUpAt.trim() || null,
+      follow_up_at: followUpDatetimeLocalToIso(followUpAt),
     });
     setDetail(updated);
-    setFollowUpAt((updated.follow_up_at ?? '').slice(0, 16));
+    setFollowUpAt(followUpIsoToDatetimeLocal(updated.follow_up_at));
     await loadList();
   }
 
@@ -1649,6 +1649,43 @@ function localDatePart(value?: string | null): string {
 
 function localIsoToday(): string {
   return isoFromDate(new Date());
+}
+
+function followUpIsoToDatetimeLocal(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/.exec(value)?.[1] ?? '';
+  }
+  return datetimeLocalParts(date);
+}
+
+function followUpDatetimeLocalToIso(value: string): string | null {
+  const text = value.trim();
+  if (!text) return null;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text;
+  // datetime-local has no zone; treat it as browser-local capture time and
+  // persist an ISO value with that local offset so the instant is stable.
+  return `${datetimeLocalParts(date)}:00${localOffsetSuffix(date)}`;
+}
+
+function datetimeLocalParts(date: Date): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+}
+
+function localOffsetSuffix(date: Date): string {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const absMinutes = Math.abs(offsetMinutes);
+  const hh = String(Math.floor(absMinutes / 60)).padStart(2, '0');
+  const mm = String(absMinutes % 60).padStart(2, '0');
+  return `${sign}${hh}:${mm}`;
 }
 
 function isoFromDate(date: Date): string {
