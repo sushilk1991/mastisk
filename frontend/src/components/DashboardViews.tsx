@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { api, FocusFullError } from '../api';
 import type {
   CalendarToday, CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
-  ChecklistTemplate, NeedsReviewItem, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
+  ChecklistTemplate, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
   RoutineGroups, RoutineProgress, RoutineRow, SlippingItem, TaskRow, TimeOfDay, View,
 } from '../types';
 
@@ -679,6 +679,188 @@ export function JournalView({ liveKey }: LiveProps) {
   );
 }
 
+export function PeopleView({ liveKey }: LiveProps) {
+  const [people, setPeople] = useState<PersonSummary[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [detail, setDetail] = useState<PersonDetail | null>(null);
+  const [newName, setNewName] = useState('');
+  const [interaction, setInteraction] = useState('');
+  const [followUpAt, setFollowUpAt] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+
+  async function loadList() {
+    setErr(null);
+    try {
+      const rows = await api.peopleApi.list();
+      setPeople(rows);
+      setSelected((current) => current || rows[0]?.slug || null);
+    } catch (e) {
+      setErr(errorMessage(e));
+    }
+  }
+
+  async function loadDetail(slug: string | null) {
+    if (!slug) {
+      setDetail(null);
+      setFollowUpAt('');
+      return;
+    }
+    setErr(null);
+    try {
+      const row = await api.peopleApi.get(slug);
+      setDetail(row);
+      setFollowUpAt((row.follow_up_at ?? '').slice(0, 16));
+    } catch (e) {
+      setDetail(null);
+      setErr(errorMessage(e));
+    }
+  }
+
+  useEffect(() => { void loadList(); }, [liveKey]);
+  useEffect(() => { void loadDetail(selected); }, [selected, liveKey]);
+
+  async function createPerson(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+    const created = await api.peopleApi.create({ name });
+    setNewName('');
+    await loadList();
+    setSelected(created.slug);
+  }
+
+  async function addInteraction(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!detail) return;
+    const text = interaction.trim();
+    if (!text) return;
+    const updated = await api.peopleApi.addInteraction(detail.slug, text);
+    setInteraction('');
+    setDetail(updated);
+    await loadList();
+  }
+
+  async function saveFollowUp() {
+    if (!detail) return;
+    const updated = await api.peopleApi.patch(detail.slug, {
+      follow_up_at: followUpAt.trim() || null,
+    });
+    setDetail(updated);
+    setFollowUpAt((updated.follow_up_at ?? '').slice(0, 16));
+    await loadList();
+  }
+
+  async function archiveSelected() {
+    if (!detail) return;
+    await api.peopleApi.delete(detail.slug);
+    const next = people.find((person) => person.slug !== detail.slug)?.slug ?? null;
+    setSelected(next);
+    setDetail(null);
+    await loadList();
+  }
+
+  return (
+    <div className="view dash-view">
+      <div className="view-h">Personal OS</div>
+      <h1 className="view-title">People</h1>
+      {err && <p className="dash-error">{err}</p>}
+      <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createPerson(event), setErr)}>
+        <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Person name"/>
+        <button type="submit">create</button>
+      </form>
+      {people.length === 0 ? (
+        <EmptyLine>No people yet.</EmptyLine>
+      ) : (
+        <div className="dash-split people-split">
+          <div className="dash-list">
+            {people.map((person) => (
+              <button
+                key={person.slug}
+                className={`dash-card project-card ${selected === person.slug ? 'active' : ''}`}
+                onClick={() => setSelected(person.slug)}
+              >
+                <div className="dash-card-title">{person.name}</div>
+                <div className="dash-tags">
+                  {person.birthday_soon && <span className="warn">birthday soon</span>}
+                  {person.birthday && <span>{formatPersonDate(person.birthday)}</span>}
+                  {person.last_interaction_at && <span>last {person.last_interaction_at.slice(0, 10)}</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="dash-panel">
+            {!detail ? <EmptyLine>Select a person.</EmptyLine> : (
+              <>
+                <div className="dash-section-head">
+                  <h2>{detail.name}</h2>
+                  <button className="chip muted" onClick={() => runMutation(archiveSelected, setErr)}>archive</button>
+                </div>
+                <div className="dash-tags">
+                  {detail.birthday && <span>birthday {formatPersonDate(detail.birthday)}</span>}
+                  {detail.anniversary && <span>anniversary {formatPersonDate(detail.anniversary)}</span>}
+                  {detail.last_interaction_at && <span>last interaction {detail.last_interaction_at}</span>}
+                </div>
+
+                <section className="dash-section nested">
+                  <h3 className="dash-mini-h">Follow-up</h3>
+                  <div className="dash-inline-form people-followup">
+                    <input
+                      type="datetime-local"
+                      value={followUpAt}
+                      onChange={(event) => setFollowUpAt(event.target.value)}
+                    />
+                    <button type="button" onClick={() => runMutation(saveFollowUp, setErr)}>save</button>
+                    <button
+                      type="button"
+                      className="muted"
+                      onClick={() => {
+                        setFollowUpAt('');
+                        runMutation(async () => {
+                          if (!detail) return;
+                          const updated = await api.peopleApi.patch(detail.slug, { follow_up_at: null });
+                          setDetail(updated);
+                          await loadList();
+                        }, setErr);
+                      }}
+                    >
+                      clear
+                    </button>
+                  </div>
+                </section>
+
+                <section className="dash-section nested">
+                  <h3 className="dash-mini-h">Facts</h3>
+                  <FactBlock facts={detail.facts}/>
+                </section>
+
+                <SectionBlock title="Notes" body={detail.body}/>
+
+                <section className="dash-section nested">
+                  <h3 className="dash-mini-h">Interactions</h3>
+                  <form className="dash-inline-form" onSubmit={(event) => runMutation(() => addInteraction(event), setErr)}>
+                    <input value={interaction} onChange={(event) => setInteraction(event.target.value)} placeholder="Add interaction"/>
+                    <button type="submit">add</button>
+                  </form>
+                  {detail.interactions.length === 0 ? <EmptyLine>No interactions yet.</EmptyLine> : (
+                    <div className="dash-list compact people-timeline">
+                      {[...detail.interactions].reverse().map((item) => (
+                        <div key={`${item.ts}:${item.text}`} className="dash-row">
+                          <span className="dash-muted">{item.ts}</span>
+                          <b>{item.text}</b>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function InboxTriageView({ liveKey }: LiveProps) {
   const [items, setItems] = useState<CaptureTriageItem[]>([]);
   const [needsReview, setNeedsReview] = useState<NeedsReviewItem[]>([]);
@@ -1332,6 +1514,21 @@ function KeyValueBlock({ values }: { values: Record<string, unknown> }) {
   );
 }
 
+function FactBlock({ facts }: { facts: Record<string, unknown> }) {
+  const rows = Object.entries(facts).filter(([, value]) => value !== null && value !== undefined && value !== '');
+  if (rows.length === 0) return <EmptyLine>No facts yet.</EmptyLine>;
+  return (
+    <div className="kv-block">
+      {rows.map(([key, value]) => (
+        <div key={key}>
+          <span>{key}</span>
+          <b>{formatFactValue(value)}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function LogPreview({ body }: { body: string }) {
   const lines = sectionLines(parseMarkdownSections(body).Log).slice(-6).reverse();
   if (lines.length === 0) return <EmptyLine>No project log entries.</EmptyLine>;
@@ -1407,7 +1604,7 @@ function compareTasksByDue(a: TaskRow, b: TaskRow): number {
 
 function triageTargets(item: CaptureTriageItem): CaptureTriageTarget[] {
   const detected = item.detected_type as CaptureTriageTarget;
-  const common: CaptureTriageTarget[] = ['task', 'journal', 'note', 'project_update', 'routine_done', 'quote', 'content'];
+  const common: CaptureTriageTarget[] = ['task', 'journal', 'note', 'project_update', 'routine_done', 'person', 'quote', 'content'];
   const allowed = common.filter((target) => target !== 'routine_done' || hasRoutineCandidate(item));
   const primary = detected === 'routine_done' && !hasRoutineCandidate(item) ? [] : [detected];
   return [...primary, ...allowed.filter((target) => target !== detected)];
@@ -1488,6 +1685,17 @@ function formatLongDate(value: string): string {
   const date = new Date(`${value}T12:00:00`);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function formatPersonDate(value: string): string {
+  if (/^\d{2}-\d{2}$/.test(value)) return value;
+  return datePart(value);
+}
+
+function formatFactValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map((item) => String(item)).join(', ');
+  if (value && typeof value === 'object') return JSON.stringify(value);
+  return String(value);
 }
 
 function labelTime(value: TimeOfDay): string {

@@ -2,7 +2,7 @@ import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
   BlogPostSummary, CaptureTriageItem, CaptureTriageTarget, Digest, DigestAudit, Domain, Feed,
   FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
-  PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, ReminderRow,
+  PersonDetail, PersonSummary, PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, ReminderRow,
   RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
   SettingsBundle, SettingsPatch, SlippingItem, TaskRow, TranscriptAnchor, JournalDay, JournalDaySummary,
@@ -484,6 +484,33 @@ export const api = {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       }),
+  },
+
+  peopleApi: {
+    list: (): Promise<PersonSummary[]> => j<PersonSummary[]>(`${BASE}/people`),
+    get: (slug: string): Promise<PersonDetail> => j<PersonDetail>(`${BASE}/people/${encodeURIComponent(slug)}`),
+    create: (body: { name: string; birthday?: string | null; anniversary?: string | null; facts?: Record<string, unknown>; body?: string | null }):
+      Promise<PersonDetail> =>
+      j<PersonDetail>(`${BASE}/people`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    patch: (slug: string, body: { birthday?: string | null; anniversary?: string | null; facts?: Record<string, unknown> | null; follow_up_at?: string | null; body?: string | null }):
+      Promise<PersonDetail> =>
+      j<PersonDetail>(`${BASE}/people/${encodeURIComponent(slug)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    addInteraction: (slug: string, text: string, ts?: string | null): Promise<PersonDetail> =>
+      j<PersonDetail>(`${BASE}/people/${encodeURIComponent(slug)}/interactions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text, ts: ts || null }),
+      }),
+    delete: (slug: string): Promise<PersonDetail> =>
+      j<PersonDetail>(`${BASE}/people/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
   },
 
   remindersApi: {

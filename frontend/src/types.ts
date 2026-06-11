@@ -322,7 +322,7 @@ export type View =
   | 'graph' | 'mobile' | 'queue' | 'ingest' | 'lint' | 'settings'
   | 'open_questions'
   | 'notes' | 'note'
-  | 'tasks' | 'projects' | 'routines' | 'journal' | 'inbox_triage'
+  | 'tasks' | 'projects' | 'routines' | 'journal' | 'people' | 'inbox_triage'
   | 'roundtables' | 'roundtable'
   | 'repos' | 'repo'
   | 'blog' | 'blog_post'
@@ -497,6 +497,32 @@ export type RoutineGroups = Record<TimeOfDay, RoutineRow[]>;
 export interface RoutineProgress {
   slug: string;
   completion_dates: string[];
+}
+
+export interface PersonInteraction {
+  ts: string;
+  text: string;
+}
+
+export interface PersonSummary {
+  slug: string;
+  path: string;
+  name: string;
+  birthday: string | null;
+  anniversary: string | null;
+  facts: Record<string, unknown>;
+  follow_up_at: string | null;
+  last_interaction_at: string | null;
+  birthday_soon: boolean;
+  deleted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PersonDetail extends PersonSummary {
+  frontmatter: Record<string, unknown>;
+  body: string;
+  interactions: PersonInteraction[];
 }
 
 export interface ReminderRow {
