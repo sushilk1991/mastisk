@@ -1,8 +1,8 @@
 import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
-  BlogPostSummary, CaptureTriageItem, CaptureTriageTarget, Digest, DigestAudit, Domain, Feed,
+  BlogPostSummary, BookDetail, BookHighlight, BookStatus, BookSummary, CaptureTriageItem, CaptureTriageTarget, Digest, DigestAudit, Domain, Feed,
   FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
-  PersonDetail, PersonSummary, PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, ReminderRow,
+  KindleImportResult, KindleReviewItem, PersonDetail, PersonSummary, PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, QuoteDetail, QuoteSourceType, QuoteSummary, ReminderRow,
   RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
   SettingsBundle, SettingsPatch, SlippingItem, TaskRow, TranscriptAnchor, JournalDay, JournalDaySummary,
@@ -511,6 +511,81 @@ export const api = {
       }),
     delete: (slug: string): Promise<PersonDetail> =>
       j<PersonDetail>(`${BASE}/people/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
+  },
+
+  libraryApi: {
+    books: {
+      list: (status?: string): Promise<BookSummary[]> =>
+        j<BookSummary[]>(status ? `${BASE}/books?status=${encodeURIComponent(status)}` : `${BASE}/books`),
+      get: (slug: string): Promise<BookDetail> =>
+        j<BookDetail>(`${BASE}/books/${encodeURIComponent(slug)}`),
+      create: (body: { title: string; author?: string | null; isbn?: string | null; lookup?: boolean }):
+        Promise<BookDetail> =>
+        j<BookDetail>(`${BASE}/books`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+      patch: (slug: string, body: { status?: BookStatus | string | null; rating?: number | null; started?: string | null; finished?: string | null; format?: string | null; summary?: string | null; cover_url?: string | null; isbn?: string | null; author?: string | null }):
+        Promise<BookDetail> =>
+        j<BookDetail>(`${BASE}/books/${encodeURIComponent(slug)}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+      refresh: (slug: string): Promise<BookDetail> =>
+        j<BookDetail>(`${BASE}/books/${encodeURIComponent(slug)}/refresh-metadata`, { method: 'POST' }),
+      addHighlight: (slug: string, text: string): Promise<BookHighlight> =>
+        j<BookHighlight>(`${BASE}/books/${encodeURIComponent(slug)}/highlights`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text }),
+        }),
+    },
+    quotes: {
+      list: (filters?: { source_type?: string; tag?: string }): Promise<QuoteSummary[]> => {
+        const params = new URLSearchParams();
+        if (filters?.source_type) params.set('source_type', filters.source_type);
+        if (filters?.tag) params.set('tag', filters.tag);
+        const qs = params.toString();
+        return j<QuoteSummary[]>(qs ? `${BASE}/quotes?${qs}` : `${BASE}/quotes`);
+      },
+      get: (id: string): Promise<QuoteDetail> =>
+        j<QuoteDetail>(`${BASE}/quotes/${encodeURIComponent(id)}`),
+      create: (body: { text: string; source_type?: QuoteSourceType | string; source_ref?: string | null; tags?: string[] }):
+        Promise<QuoteDetail> =>
+        j<QuoteDetail>(`${BASE}/quotes`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+      addThought: (id: string, text: string, ts?: string | null): Promise<QuoteDetail> =>
+        j<QuoteDetail>(`${BASE}/quotes/${encodeURIComponent(id)}/thoughts`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text, ts: ts || null }),
+        }),
+    },
+    kindle: {
+      importFile: async (file: File): Promise<KindleImportResult> => {
+        const form = new FormData();
+        form.append('file', file);
+        const r = await fetch(`${BASE}/import/kindle`, { method: 'POST', body: form });
+        if (!r.ok) await throwApiError(r);
+        return r.json() as Promise<KindleImportResult>;
+      },
+      review: (): Promise<KindleReviewItem[]> =>
+        j<KindleReviewItem[]>(`${BASE}/import/kindle/review`),
+      dismiss: (id: number): Promise<KindleReviewItem> =>
+        j<KindleReviewItem>(`${BASE}/import/kindle/review/${id}/dismiss`, { method: 'POST' }),
+      retryAsQuote: (id: number, body: { text?: string | null; source_type?: QuoteSourceType | string; source_ref?: string | null; tags?: string[] } = {}):
+        Promise<KindleReviewItem> =>
+        j<KindleReviewItem>(`${BASE}/import/kindle/review/${id}/retry-as-quote`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+    },
   },
 
   remindersApi: {

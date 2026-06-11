@@ -26,6 +26,7 @@ import { SystemCheckView } from './components/SystemCheckView';
 import { WikiLinkHoverProvider } from './components/WikiLinkHover';
 import { NotesView } from './components/NotesView';
 import { NoteView } from './components/NoteView';
+import { LibraryView } from './components/LibraryView';
 import { NoteCaptureModal } from './components/NoteCaptureModal';
 import { RoundtablesListView } from './components/RoundtablesListView';
 import { RoundtableView } from './components/RoundtableView';
@@ -238,6 +239,14 @@ export function App() {
           />
         )}
         {view === 'note' && currentNote !== null && <NoteView noteId={currentNote} onNavigate={navigate}/>}
+        {view === 'library' && (
+          <LibraryView
+            liveKey={tickKey}
+            initialBookSlug={route.libraryBookSlug}
+            initialQuoteId={route.libraryQuoteId}
+            onNavigate={navigate}
+          />
+        )}
         {view === 'tasks' && <TasksView liveKey={tickKey}/>}
         {view === 'projects' && <ProjectsView liveKey={tickKey}/>}
         {view === 'routines' && <RoutinesView liveKey={tickKey}/>}

@@ -9,6 +9,8 @@ export interface Route {
   repoSlug: string | null;
   blogPostId: number | null;
   tweetThreadId: number | null;
+  libraryBookSlug: string | null;
+  libraryQuoteId: string | null;
   date: string | null;
 }
 
@@ -29,6 +31,7 @@ const VIEW_PATHS: Record<string, View> = {
   '/open-questions': 'open_questions',
   '/settings': 'settings',
   '/notes': 'notes',
+  '/library': 'library',
   '/tasks': 'tasks',
   '/projects': 'projects',
   '/routines': 'routines',
@@ -58,6 +61,7 @@ const PATH_FOR_VIEW: Record<View, string> = {
   settings: '/settings',
   notes: '/notes',
   note: '/notes/',
+  library: '/library',
   tasks: '/tasks',
   projects: '/projects',
   routines: '/routines',
@@ -81,7 +85,8 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function emptyRoute(view: View): Route {
   return {
     view, articleId: null, noteId: null, roundtableId: null, repoSlug: null,
-    blogPostId: null, tweetThreadId: null, date: null,
+    blogPostId: null, tweetThreadId: null, libraryBookSlug: null, libraryQuoteId: null,
+    date: null,
   };
 }
 
@@ -112,6 +117,16 @@ export function parseRoute(pathname: string): Route {
       return { ...emptyRoute('note'), noteId: id };
     }
     return emptyRoute('notes');
+  }
+  if (pathname.startsWith('/library/books/')) {
+    const raw = pathname.slice('/library/books/'.length).split('/')[0];
+    if (raw) return { ...emptyRoute('library'), libraryBookSlug: decodeURIComponent(raw) };
+    return emptyRoute('library');
+  }
+  if (pathname.startsWith('/library/quotes/')) {
+    const raw = pathname.slice('/library/quotes/'.length).split('/')[0];
+    if (raw) return { ...emptyRoute('library'), libraryQuoteId: decodeURIComponent(raw) };
+    return emptyRoute('library');
   }
   if (pathname.startsWith('/roundtables/')) {
     const raw = pathname.slice('/roundtables/'.length).split('/')[0];
@@ -159,6 +174,8 @@ export function routeToPath(view: View, arg?: string | null): string {
   if (view === 'digest' && arg && ISO_DATE.test(arg)) return `/digest/${arg}`;
   if (view === 'digest_audit' && arg && ISO_DATE.test(arg)) return `/digest/audit/${arg}`;
   if (view === 'note' && arg) return `/notes/${arg}`;
+  if (view === 'library' && arg?.startsWith('book:')) return `/library/books/${encodeURIComponent(arg.slice(5))}`;
+  if (view === 'library' && arg?.startsWith('quote:')) return `/library/quotes/${encodeURIComponent(arg.slice(6))}`;
   if (view === 'roundtable' && arg) return `/roundtables/${arg}`;
   if (view === 'repo' && arg) return `/repos/${arg}`;
   if (view === 'blog_post' && arg) return `/blog/${arg}`;
@@ -182,6 +199,8 @@ export function useRoute() {
     else if (view === 'digest' && arg && ISO_DATE.test(arg)) next.date = arg;
     else if (view === 'digest_audit' && arg && ISO_DATE.test(arg)) next.date = arg;
     else if (view === 'note' && arg) next.noteId = Number(arg);
+    else if (view === 'library' && arg?.startsWith('book:')) next.libraryBookSlug = arg.slice(5);
+    else if (view === 'library' && arg?.startsWith('quote:')) next.libraryQuoteId = arg.slice(6);
     else if (view === 'roundtable' && arg) next.roundtableId = Number(arg);
     else if (view === 'repo' && arg) next.repoSlug = arg;
     else if (view === 'blog_post' && arg) next.blogPostId = Number(arg);

@@ -321,7 +321,7 @@ export type View =
   | 'article' | 'today' | 'digest' | 'digest_audit' | 'feed' | 'agents'
   | 'graph' | 'mobile' | 'queue' | 'ingest' | 'lint' | 'settings'
   | 'open_questions'
-  | 'notes' | 'note'
+  | 'notes' | 'note' | 'library'
   | 'tasks' | 'projects' | 'routines' | 'journal' | 'people' | 'inbox_triage'
   | 'roundtables' | 'roundtable'
   | 'repos' | 'repo'
@@ -523,6 +523,88 @@ export interface PersonDetail extends PersonSummary {
   frontmatter: Record<string, unknown>;
   body: string;
   interactions: PersonInteraction[];
+}
+
+export type BookStatus = 'want' | 'reading' | 'finished' | 'abandoned';
+export type QuoteSourceType = 'book' | 'article' | 'podcast' | 'conversation';
+
+export interface BookHighlight {
+  id: number;
+  book_slug: string;
+  position: number;
+  text: string;
+  content_hash: string;
+  quote_id: string | null;
+  created?: boolean;
+}
+
+export interface BookSummary {
+  slug: string;
+  path: string;
+  title: string;
+  author: string | null;
+  cover_url: string | null;
+  status: BookStatus | string;
+  format: string | null;
+  started: string | null;
+  finished: string | null;
+  rating: number | null;
+  isbn: string | null;
+  summary: string | null;
+  highlight_count: number;
+  deleted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface QuoteSummary {
+  id: string;
+  path: string;
+  text: string;
+  content_hash: string;
+  source_type: QuoteSourceType | string;
+  source_ref: string | null;
+  tags: string[];
+  deleted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface QuoteThought {
+  ts: string;
+  text: string;
+}
+
+export interface QuoteDetail extends QuoteSummary {
+  frontmatter: Record<string, unknown>;
+  thoughts: QuoteThought[];
+}
+
+export interface BookDetail extends BookSummary {
+  frontmatter: Record<string, unknown>;
+  body: string;
+  highlights: BookHighlight[];
+  linked_quotes: QuoteSummary[];
+}
+
+export interface KindleImportResult {
+  imported: number;
+  skipped_duplicates: number;
+  review_count: number;
+}
+
+export interface KindleReviewItem {
+  id: number;
+  raw_hash: string;
+  raw_block: string;
+  reason: string;
+  parsed_title: string | null;
+  parsed_author: string | null;
+  parsed_content: string | null;
+  status: string;
+  quote_id: string | null;
+  created_at: string;
+  resolved_at: string | null;
 }
 
 export interface ReminderRow {

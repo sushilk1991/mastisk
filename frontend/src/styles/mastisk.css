@@ -3492,3 +3492,206 @@ a { color: inherit; }
   font-family: var(--serif); font-size: 14px; line-height: 1.55;
   color: var(--fg);
 }
+
+/* Library */
+.library-view .dash-tabs { margin-bottom: 18px; }
+.library-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(320px, 1.35fr);
+  gap: 18px;
+  align-items: start;
+}
+.library-layout.single { grid-template-columns: minmax(0, 1fr); }
+.library-list-pane,
+.library-detail-pane {
+  min-width: 0;
+}
+.library-create {
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 0.85fr) auto auto;
+  margin-bottom: 12px;
+}
+.library-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  font-size: 12px;
+  color: var(--fg-mute);
+}
+.library-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+.library-filter-row button {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg-mute);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.library-filter-row button.active {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.library-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+.library-book-card {
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  gap: 10px;
+  align-items: stretch;
+  min-height: 86px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+  color: var(--fg);
+}
+.library-book-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.library-book-card img,
+.library-cover-placeholder {
+  width: 54px;
+  height: 70px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: var(--bg-sunk);
+}
+.library-cover-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--serif);
+  font-size: 26px;
+  color: var(--fg-mute);
+}
+.library-card-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.library-card-main b,
+.library-quote-card p {
+  overflow-wrap: anywhere;
+}
+.library-card-main em,
+.library-card-main span {
+  font-size: 12px;
+  color: var(--fg-mute);
+  font-style: normal;
+}
+.library-book-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin: 10px 0 14px;
+}
+.library-book-controls select {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.library-summary {
+  color: var(--fg-mute);
+  line-height: 1.5;
+}
+.library-highlight-row,
+.library-thought-row {
+  align-items: start;
+}
+.library-highlight-row > span,
+.library-thought-row > b {
+  overflow-wrap: anywhere;
+}
+.library-quote-create {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.library-quote-create textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 10px;
+  font: inherit;
+}
+.library-quote-create .dash-inline-form {
+  grid-template-columns: 120px minmax(120px, 1fr) minmax(100px, 0.7fr) auto;
+}
+.library-quote-card {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+.library-quote-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.library-quote-detail {
+  margin: 0 0 14px;
+  padding: 0 0 0 14px;
+  border-left: 3px solid var(--accent);
+  font-family: var(--serif);
+  font-size: 20px;
+  line-height: 1.55;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.library-import-form {
+  grid-template-columns: minmax(180px, 1fr) auto;
+  margin-bottom: 12px;
+}
+.library-review-card pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-sunk);
+  border-radius: 6px;
+  padding: 10px;
+  margin: 8px 0;
+}
+
+@media (max-width: 900px) {
+  .library-layout,
+  .library-layout.single {
+    grid-template-columns: 1fr;
+  }
+  .library-create,
+  .library-quote-create .dash-inline-form,
+  .library-import-form {
+    grid-template-columns: 1fr;
+  }
+  .library-book-card {
+    grid-template-columns: 48px 1fr;
+  }
+  .library-book-card img,
+  .library-cover-placeholder {
+    width: 48px;
+    height: 64px;
+  }
+}

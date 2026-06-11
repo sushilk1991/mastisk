@@ -14,6 +14,7 @@ const CRUMB: Record<string, readonly string[]> = {
   ingest:  ['System', 'Sources & ingest'],
   lint:    ['System', 'Health check'],
   settings:['System', 'Settings'],
+  library: ['Personal OS', 'Library'],
   tasks: ['Personal OS', 'Tasks'],
   projects: ['Personal OS', 'Projects'],
   routines: ['Personal OS', 'Routines'],
