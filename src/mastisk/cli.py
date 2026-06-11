@@ -344,6 +344,126 @@ def capture_token(
     )
 
 
+@app.command(name="calendar-connect")
+def calendar_connect(
+    no_browser: bool = typer.Option(False, "--no-browser", help="Print the auth URL without opening a browser."),
+    timeout_seconds: int = typer.Option(180, "--timeout", help="How long to wait for the loopback redirect."),
+) -> None:
+    """Connect read-only Google Calendar using a Desktop app OAuth client.
+
+    Reads ``[calendar].client_id`` and ``[calendar].client_secret`` from
+    config.toml, requests only ``calendar.readonly``, and stores tokens in the
+    local data dir with 0600 permissions.
+    """
+    import webbrowser
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs, urlparse
+
+    from mastisk.google_calendar import (
+        CALENDAR_READONLY_SCOPE,
+        exchange_authorization_code,
+        make_authorization_url,
+        make_pkce_pair,
+        token_file_path,
+        write_calendar_tokens,
+    )
+    from mastisk.settings import get_settings, reload_settings
+
+    ensure_dirs()
+    _ensure_db()
+    reload_settings()
+    calendar = get_settings().calendar
+    if not calendar.client_id or not calendar.client_secret:
+        typer.secho("calendar OAuth client credentials are missing.", fg="red")
+        typer.echo(f"Edit {config_path()} and add:")
+        typer.echo("")
+        typer.echo("[calendar]")
+        typer.echo('client_id = "..."')
+        typer.echo('client_secret = "..."')
+        typer.echo("sync_interval_minutes = 15")
+        typer.echo('calendar_ids = []  # optional extra calendar IDs; primary is always synced')
+        typer.echo("")
+        typer.echo("In Google Cloud Console:")
+        typer.echo("  1. Enable Google Calendar API.")
+        typer.echo("  2. Configure OAuth consent for your own account.")
+        typer.echo("  3. Create OAuth client ID with application type: Desktop app.")
+        typer.echo(f"  4. Keep scopes to: {CALENDAR_READONLY_SCOPE}")
+        raise typer.Exit(1)
+
+    code_verifier, code_challenge = make_pkce_pair()
+    state = os.urandom(16).hex()
+    result: dict[str, str] = {}
+
+    class OAuthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - stdlib callback name
+            params = parse_qs(urlparse(self.path).query)
+            result["code"] = params.get("code", [""])[0]
+            result["state"] = params.get("state", [""])[0]
+            result["error"] = params.get("error", [""])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(
+                b"<html><body><h1>Mastisk Calendar connected.</h1>"
+                b"<p>You can close this tab and return to the terminal.</p></body></html>"
+            )
+
+        def log_message(self, format, *args):  # noqa: A002,N802 - stdlib callback name
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), OAuthHandler)
+    server.timeout = timeout_seconds
+    redirect_uri = f"http://127.0.0.1:{server.server_port}"
+    auth_url = make_authorization_url(
+        client_id=calendar.client_id,
+        redirect_uri=redirect_uri,
+        state=state,
+        code_challenge=code_challenge,
+    )
+
+    typer.secho("Opening Google OAuth consent in your browser.", fg="green")
+    typer.echo(f"Requested scope: {CALENDAR_READONLY_SCOPE}")
+    typer.echo("")
+    typer.echo(auth_url)
+    typer.echo("")
+    if not no_browser:
+        webbrowser.open(auth_url)
+    typer.echo(f"Waiting for redirect on {redirect_uri} ...")
+    server.handle_request()
+
+    if result.get("error"):
+        typer.secho(f"Google returned OAuth error: {result['error']}", fg="red")
+        raise typer.Exit(1)
+    if not result.get("code") or result.get("state") != state:
+        typer.secho("OAuth redirect did not contain a valid code/state.", fg="red")
+        raise typer.Exit(1)
+
+    try:
+        tokens = exchange_authorization_code(
+            client_id=calendar.client_id,
+            client_secret=calendar.client_secret,
+            code=result["code"],
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+        )
+    except Exception as e:
+        typer.secho(f"Token exchange failed: {e}", fg="red")
+        raise typer.Exit(1)
+
+    path = write_calendar_tokens(tokens)
+    typer.secho("Google Calendar connected read-only.", fg="green")
+    typer.echo(f"Tokens: {path} (0600)")
+    typer.echo("")
+    typer.secho("Storage note:", fg="yellow")
+    typer.echo(
+        "Tokens are protected by local file permissions only, not encrypted. "
+        "This matches Mastisk's single-user local Mac trust model for Phase 9; "
+        "Keychain encryption is a later hardening TODO."
+    )
+    typer.echo("")
+    typer.echo("Run `mastisk start` or click force sync in the PWA to populate Today.")
+
+
 @app.command()
 def update(
     check: bool = typer.Option(False, "--check", help="Only show whether updates are available, don't apply"),
@@ -1236,6 +1356,14 @@ listener = 20
 compiler = 100
 linter = 50
 synthesizer = 10
+
+[calendar]
+# Google Cloud OAuth client type: Desktop app. Calendar sync requests only
+# https://www.googleapis.com/auth/calendar.readonly.
+client_id = ""
+client_secret = ""
+sync_interval_minutes = 15
+calendar_ids = []
 '''
 
 

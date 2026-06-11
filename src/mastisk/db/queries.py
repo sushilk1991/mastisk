@@ -129,6 +129,38 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
            ON reminders(kind, entity_id)
            WHERE kind = 'routine_missed' AND deleted_at IS NULL"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS calendar_events (
+             id          TEXT NOT NULL,
+             calendar_id TEXT NOT NULL,
+             summary     TEXT NOT NULL DEFAULT '',
+             start       TEXT NOT NULL,
+             end         TEXT NOT NULL,
+             all_day     INTEGER NOT NULL DEFAULT 0,
+             location    TEXT,
+             status      TEXT,
+             updated_at  TEXT,
+             synced_at   DATETIME NOT NULL,
+             PRIMARY KEY(calendar_id, id)
+           )"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_calendar_events_start
+           ON calendar_events(start, end)"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_calendar_events_calendar
+           ON calendar_events(calendar_id)"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS calendar_state (
+             id             INTEGER PRIMARY KEY CHECK(id = 1),
+             status         TEXT NOT NULL,
+             last_synced_at TEXT,
+             error          TEXT,
+             updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
     _add_column_if_missing(
         conn, "articles", "source_note_id",
         "INTEGER REFERENCES notes(id) ON DELETE SET NULL",

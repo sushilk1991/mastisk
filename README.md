@@ -19,6 +19,7 @@ Mastisk is the assistant that **reads, watches, listens, and thinks for you in t
 - [Running it](#running-it)
 - [Phone setup](#phone-setup)
 - [Connecting your GitHub](#connecting-your-github)
+- [Connecting Google Calendar](#connecting-google-calendar)
 - [Capturing notes](#capturing-notes)
 - [Multi-LLM roundtable](#multi-llm-roundtable)
 - [Shape what the agents produce](#shape-what-the-agents-produce)
@@ -281,6 +282,7 @@ Uninstall (preserves your iCloud vault):
 | **Claude auth** | managed by `claude` CLI | — | required; run `claude login` |
 | **Ollama Cloud API key** | `config.toml` → `ollama_cloud_key` | string | optional; skip to use local Ollama only |
 | **GitHub PAT** | `config.toml` → `[github] pat` (or PWA → Settings → GitHub) | classic PAT, `public_repo` scope | optional but recommended |
+| **Google Calendar OAuth** | `config.toml` → `[calendar] client_id/client_secret`, then `mastisk calendar-connect` | Google Cloud OAuth client type: Desktop app; scope: `https://www.googleapis.com/auth/calendar.readonly` | optional; for read-only Today events |
 | **Tailscale auth** | Tailscale app (menu-bar icon) | — | optional; only if you want phone access |
 | **RSS feeds** | SQLite `rss_feeds` table | URL list | needed for Scout to do anything |
 | **iCloud sync** | macOS Settings → Apple ID → iCloud → iCloud Drive → on | — | required for phone-side vault access |
@@ -322,7 +324,7 @@ A classic PAT with `public_repo` scope gets you 5,000 GitHub API requests/hour. 
 
 - daily budget caps per agent (`[budget]`) — hard limits on how many jobs each agent runs per day
 - model selection (`embed_model`, `summarize_model_heavy`, `summarize_model_cheap`)
-- subsystem-specific config blocks: `[notes]`, `[roundtable]`, `[github]`, `[blog]`
+- subsystem-specific config blocks: `[notes]`, `[roundtable]`, `[github]`, `[blog]`, `[calendar]`
 
 Safe to edit. Mastisk reloads config on the next agent tick — no restart needed.
 
@@ -420,6 +422,42 @@ ideate_model = "claude-sonnet-4-6"
 ### Local repos
 
 You can also point Mastisk at a checkout on your Mac (any git directory). The local-git bridge respects `.gitignore` and a built-in secrets blocklist (`.env`, `*.pem`, `node_modules/`, etc.) so private contents stay private.
+
+---
+
+## Connecting Google Calendar
+
+Calendar is read-only. Mastisk requests only:
+
+```text
+https://www.googleapis.com/auth/calendar.readonly
+```
+
+Setup:
+
+1. In Google Cloud Console, create or select a project.
+2. Enable **Google Calendar API**.
+3. Configure the OAuth consent screen for your own account.
+4. Create **OAuth client ID** with application type **Desktop app**.
+5. Copy the client ID and client secret into `~/Library/Application Support/Mastisk/config.toml`:
+
+```toml
+[calendar]
+client_id = "..."
+client_secret = "..."
+sync_interval_minutes = 15
+calendar_ids = []  # optional; primary is always synced
+```
+
+Then run:
+
+```bash
+mastisk calendar-connect
+```
+
+The command opens a loopback OAuth flow on `127.0.0.1`, exchanges the code for access/refresh tokens, and stores them in the Mastisk data dir as `calendar_tokens.json` with `0600` permissions. Tokens are not encrypted at rest in Phase 9; this is a deliberate local-first deviation from the spec's "encrypted" wording. Keychain-backed storage is the later hardening path.
+
+Mastisk never writes to Google Calendar: the scheduler calls `events.list` with `singleEvents=true`, `orderBy=startTime`, `timeMin`, and `timeMax`, then caches events for the Today view.
 
 ---
 
@@ -597,6 +635,7 @@ mastisk add-youtube <url>   queue a video for Listener
 mastisk add-podcast <url>   queue a podcast (RSS / Apple / direct audio)
 mastisk note [text]         capture a note (opens $EDITOR if no text)
 mastisk capture-token       generate the /api/capture bearer token
+mastisk calendar-connect    connect read-only Google Calendar
 mastisk roundtable [text]   fan a prompt out to all LLM backends + synthesize
 mastisk add-repo <slug>     track a GitHub repo (hourly poll + daily ideation)
 mastisk list-repos          list tracked repos

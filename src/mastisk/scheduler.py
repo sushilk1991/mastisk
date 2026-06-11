@@ -165,6 +165,25 @@ async def start_scheduler():
         log.warning("scheduler: dashboard intelligence registration failed: %s", e)
 
     try:
+        from mastisk.google_calendar import calendar_token_exists, sync_calendar
+        from mastisk.settings import get_settings
+
+        if calendar_token_exists():
+            minutes = get_settings().calendar.sync_interval_minutes
+            sched.add_job(
+                sync_calendar, "interval",
+                minutes=minutes, id="calendar_sync",
+                max_instances=1,
+                next_run_time=datetime.now(UTC) + timedelta(seconds=45),
+                coalesce=True,
+            )
+            log.info("scheduler: calendar_sync registered (%smin tick)", minutes)
+        else:
+            log.info("scheduler: calendar_sync not registered (no token)")
+    except Exception as e:
+        log.warning("scheduler: calendar_sync registration failed: %s", e)
+
+    try:
         from mastisk.agents.reminder_engine import reminder_tick
         from mastisk.settings import get_settings
 

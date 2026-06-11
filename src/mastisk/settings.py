@@ -91,6 +91,14 @@ class DashboardSettings(BaseSettings):
     triage_reminder_days: int = 3
 
 
+class CalendarSettings(BaseSettings):
+    """Read-only Google Calendar cache config."""
+    client_id: str = ""
+    client_secret: str = ""
+    calendar_ids: list[str] = Field(default_factory=list)
+    sync_interval_minutes: int = 15
+
+
 class RoundtableSettings(BaseSettings):
     """Config for the multi-LLM roundtable subsystem.
     See docs/superpowers/specs/2026-04-22-multi-llm-roundtable-design.md §7."""
@@ -254,6 +262,8 @@ class Settings(BaseSettings):
     domains: DomainsSettings = Field(default_factory=DomainsSettings)
 
     dashboard: DashboardSettings = Field(default_factory=DashboardSettings)
+
+    calendar: CalendarSettings = Field(default_factory=CalendarSettings)
 
     roundtable: RoundtableSettings = Field(default_factory=RoundtableSettings)
 
