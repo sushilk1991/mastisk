@@ -109,6 +109,47 @@ def test_append_interaction_updates_file_and_last_interaction(db, vault_tmp):
     assert row["text"] == "Talked about the college move."
 
 
+def test_people_mutations_preserve_unparsed_interaction_lines(db, vault_tmp):
+    from mastisk.people.sync import append_interaction, patch_person, scan_people
+
+    path = vault_tmp / "people" / "anjali-rao.md"
+    path.parent.mkdir(parents=True)
+    original = (
+        "---\n"
+        "name: Anjali Rao\n"
+        "---\n\n"
+        "Met through Mastisk.\n\n"
+        "## Interactions\n"
+        "- 2026-06-10 09:15 Discussed school applications.\n"
+        "- Hand-written bullet without a timestamp.\n"
+        "  - Sub-bullet with context.\n"
+        "Loose prose that should survive.\n"
+    )
+    path.write_text(original, encoding="utf-8")
+    scan_people([path])
+
+    append_interaction(
+        "anjali-rao",
+        "Talked about the college move.",
+        ts="2026-06-11 18:30",
+    )
+
+    after_append = (
+        original
+        + "- 2026-06-11 18:30 Talked about the college move.\n"
+    )
+    assert path.read_text(encoding="utf-8") == after_append
+
+    patch_person("anjali-rao", {"birthday": "09-14"})
+
+    after_patch = after_append.replace(
+        "---\nname: Anjali Rao\n---",
+        "---\nname: Anjali Rao\nbirthday: 09-14\n---",
+        1,
+    )
+    assert path.read_text(encoding="utf-8") == after_patch
+
+
 def test_people_routes_file_first_crud_and_fact_merge(db, vault_tmp, data_tmp):
     with _client(vault_tmp, data_tmp, db) as client:
         created = client.post(

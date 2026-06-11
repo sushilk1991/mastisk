@@ -89,7 +89,7 @@ def scan_people(paths: list[Path] | None = None) -> dict[str, int]:
 def parse_person_file(path: Path) -> dict[str, Any]:
     meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
     name = str(meta.get("name") or path.stem).strip() or path.stem
-    interactions, notes_body = _split_interactions(body)
+    interactions, notes_body, interaction_lines = _split_interactions(body)
     facts = meta.get("facts") if isinstance(meta.get("facts"), dict) else {}
     return {
         "slug": path.stem,
@@ -101,6 +101,7 @@ def parse_person_file(path: Path) -> dict[str, Any]:
         "follow_up_at": _clean_datetime(meta.get("follow_up_at")),
         "archived": bool(meta.get("archived", False)),
         "interactions": interactions,
+        "interaction_lines": interaction_lines,
         "body": notes_body,
         "frontmatter": meta,
     }
@@ -169,7 +170,19 @@ def append_interaction(
             *parsed["interactions"],
             {"ts": _clean_interaction_ts(ts), "text": clean_text},
         ]
-        atomic_write(path, dump_person_file(parsed["frontmatter"], parsed["body"], interactions))
+        interaction_lines = [
+            *parsed.get("interaction_lines", []),
+            _format_interaction_line(interactions[-1]),
+        ]
+        atomic_write(
+            path,
+            dump_person_file(
+                parsed["frontmatter"],
+                parsed["body"],
+                interactions,
+                interaction_lines=interaction_lines,
+            ),
+        )
     scan_people([path])
     return person_payload(slug)
 
@@ -198,7 +211,15 @@ def patch_person(slug: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         if "follow_up_at" in updates:
             meta["follow_up_at"] = _clean_datetime(updates["follow_up_at"])
         body = str(updates["body"]) if "body" in updates and updates["body"] is not None else parsed["body"]
-        atomic_write(path, dump_person_file(meta, body, parsed["interactions"]))
+        atomic_write(
+            path,
+            dump_person_file(
+                meta,
+                body,
+                parsed["interactions"],
+                interaction_lines=parsed.get("interaction_lines", []),
+            ),
+        )
     scan_people([path])
     return person_payload(slug)
 
@@ -212,7 +233,15 @@ def archive_person(slug: str) -> dict[str, Any] | None:
         parsed = parse_person_file(path)
         meta = dict(parsed["frontmatter"])
         meta["archived"] = True
-        atomic_write(path, dump_person_file(meta, parsed["body"], parsed["interactions"]))
+        atomic_write(
+            path,
+            dump_person_file(
+                meta,
+                parsed["body"],
+                parsed["interactions"],
+                interaction_lines=parsed.get("interaction_lines", []),
+            ),
+        )
     scan_people([path])
     _cancel_person_followup(slug, "person archived")
     return person_payload(slug, include_archived=True)
@@ -284,6 +313,8 @@ def dump_person_file(
     meta: dict[str, Any],
     body: str,
     interactions: list[dict[str, str]],
+    *,
+    interaction_lines: list[str] | None = None,
 ) -> str:
     clean = {
         key: value
@@ -301,8 +332,12 @@ def dump_person_file(
     if notes:
         lines.extend(["", notes])
     lines.extend(["", "## Interactions"])
-    for interaction in sorted(interactions, key=lambda item: item["ts"]):
-        lines.append(f"- {interaction['ts']} {interaction['text']}")
+    if interaction_lines is None:
+        interaction_lines = [
+            _format_interaction_line(interaction)
+            for interaction in sorted(interactions, key=lambda item: item["ts"])
+        ]
+    lines.extend(interaction_lines)
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -341,9 +376,10 @@ def _create_person_file_exclusive(name: str, content: str) -> Path:
     raise RuntimeError(f"unable to allocate person slug for {name!r}")
 
 
-def _split_interactions(body: str) -> tuple[list[dict[str, str]], str]:
+def _split_interactions(body: str) -> tuple[list[dict[str, str]], str, list[str]]:
     lines = body.splitlines()
     interactions: list[dict[str, str]] = []
+    interaction_lines: list[str] = []
     notes: list[str] = []
     idx = 0
     while idx < len(lines):
@@ -357,6 +393,7 @@ def _split_interactions(body: str) -> tuple[list[dict[str, str]], str]:
             current = lines[idx]
             if _NEXT_HEADING_RE.match(current):
                 break
+            interaction_lines.append(current)
             match = _INTERACTION_RE.match(current)
             if match:
                 interactions.append(
@@ -367,7 +404,15 @@ def _split_interactions(body: str) -> tuple[list[dict[str, str]], str]:
                 )
             idx += 1
         continue
-    return sorted(interactions, key=lambda item: item["ts"]), "\n".join(notes).strip()
+    return (
+        sorted(interactions, key=lambda item: item["ts"]),
+        "\n".join(notes).strip(),
+        interaction_lines,
+    )
+
+
+def _format_interaction_line(interaction: dict[str, str]) -> str:
+    return f"- {interaction['ts']} {interaction['text']}"
 
 
 def _clean_person_date(value: object) -> str | None:
