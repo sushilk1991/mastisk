@@ -222,12 +222,11 @@ def needs_review_scan(*, today: date | None = None) -> int:
             params = [part for key in candidate_keys for part in key]
             conn.execute(
                 f"""DELETE FROM needs_review
-                        WHERE dismissed_at IS NULL
-                          AND NOT ({clauses})""",
+                        WHERE NOT ({clauses})""",
                 params,
             )
         else:
-            conn.execute("DELETE FROM needs_review WHERE dismissed_at IS NULL")
+            conn.execute("DELETE FROM needs_review")
         for candidate in candidates:
             conn.execute(
                 """INSERT INTO needs_review(entity_type, entity_id, reason, surfaced_at)

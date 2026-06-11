@@ -224,6 +224,59 @@ def test_needs_review_scan_reasons_dismiss_and_triage_age_rule(
     assert len(client.get("/api/needs-review").json()) == 2
 
 
+def test_dismissed_needs_review_resurfaces_after_condition_lapses_and_recurs(
+    db, vault_tmp, data_tmp
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text("[dashboard]\ntriage_reminder_days = 3\n", encoding="utf-8")
+    from mastisk.settings import reload_settings
+    from mastisk.dashboard.intelligence import (
+        dismiss_needs_review,
+        list_needs_review,
+        needs_review_scan,
+    )
+    from mastisk.tasks.sync import append_task_to_host
+
+    reload_settings()
+    task = append_task_to_host(
+        vault_tmp / "journal" / "2026-06-01.md",
+        text="Recurring triage item",
+        uid="recurring-triage",
+        tags=["needs-triage"],
+    )
+    db.execute(
+        "UPDATE tasks SET updated_at = '2026-06-07T09:00:00+00:00' WHERE uid = ?",
+        (task["uid"],),
+    )
+
+    needs_review_scan(today=date(2026, 6, 11))
+    first = list_needs_review()
+    assert [item["entity_id"] for item in first] == [task["uid"]]
+    assert dismiss_needs_review(first[0]["id"]) is not None
+    assert list_needs_review() == []
+
+    db.execute("UPDATE tasks SET needs_triage = 0 WHERE uid = ?", (task["uid"],))
+    needs_review_scan(today=date(2026, 6, 11))
+    tombstone = db.execute(
+        """SELECT id FROM needs_review
+           WHERE entity_type = 'task' AND entity_id = ? AND reason = 'triage_stale'""",
+        (task["uid"],),
+    ).fetchone()
+    assert tombstone is None
+
+    db.execute(
+        """UPDATE tasks
+              SET needs_triage = 1, updated_at = '2026-06-07T09:00:00+00:00'
+            WHERE uid = ?""",
+        (task["uid"],),
+    )
+    needs_review_scan(today=date(2026, 6, 11))
+
+    resurfaced = list_needs_review()
+    assert [item["entity_id"] for item in resurfaced] == [task["uid"]]
+    assert resurfaced[0]["id"] != first[0]["id"]
+
+
 def test_needs_review_triage_age_survives_passive_task_scan(db, vault_tmp, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text("[dashboard]\ntriage_reminder_days = 3\n", encoding="utf-8")
