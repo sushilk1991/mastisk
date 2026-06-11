@@ -254,7 +254,7 @@ def _persist_person_capture(
 ) -> dict | None:
     if needs_triage:
         return None
-    person = find_person(capture.person)
+    person = find_person(capture.person) or find_person(capture.title)
     interaction_ts = _capture_local_datetime(ts).strftime("%Y-%m-%d %H:%M")
     if person is not None:
         updated = append_interaction(person["slug"], capture.body, ts=interaction_ts)

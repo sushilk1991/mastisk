@@ -263,19 +263,29 @@ def get_person(slug: str, *, include_archived: bool = False) -> dict[str, Any] |
 def find_person(ref: str | None) -> dict[str, Any] | None:
     if not ref:
         return None
+    ref = ref.strip()
+    if not ref:
+        return None
     by_slug = get_person(ref)
     if by_slug is not None:
         return by_slug
+    slug_ref = slugify(ref)
+    if slug_ref and slug_ref != ref:
+        by_slug = get_person(slug_ref)
+        if by_slug is not None:
+            return by_slug
+    normalized_ref = _normalize_person_name(ref)
     with connect() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """SELECT * FROM people
-               WHERE lower(name) = lower(?)
-                 AND deleted_at IS NULL
-               ORDER BY updated_at DESC
-               LIMIT 1""",
-            (ref,),
-        ).fetchone()
-    return _person_row(dict(row)) if row else None
+               WHERE deleted_at IS NULL
+               ORDER BY updated_at DESC"""
+        ).fetchall()
+    for row in rows:
+        person = _person_row(dict(row))
+        if _normalize_person_name(str(person.get("name") or "")) == normalized_ref:
+            return person
+    return None
 
 
 def list_people(*, include_archived: bool = False) -> list[dict[str, Any]]:
@@ -424,6 +434,10 @@ def _clean_person_date(value: object) -> str | None:
     if _FULL_DATE_RE.match(text):
         return text
     return None
+
+
+def _normalize_person_name(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().casefold()
 
 
 def _clean_datetime(value: object) -> str | None:

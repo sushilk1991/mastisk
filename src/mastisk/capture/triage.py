@@ -377,7 +377,9 @@ def _file_as_target(item: dict[str, Any], target_type: str) -> None:
     if target_type == "person":
         from mastisk.people.sync import append_interaction, create_person_file, find_person
 
-        person = find_person(_str_or_none(capture.get("person")))
+        person = find_person(_str_or_none(capture.get("person"))) or find_person(
+            _str_or_none(capture.get("title"))
+        )
         if person is not None:
             append_interaction(person["slug"], text)
             return

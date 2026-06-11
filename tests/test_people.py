@@ -340,6 +340,37 @@ def test_capture_person_matched_medium_confidence_queues_triage_before_timeline(
     assert "Might be changing roles." in person_path.read_text(encoding="utf-8")
 
 
+def test_capture_person_title_match_uses_existing_person_before_stubbing(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.people.sync import create_person_file
+
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\nbearer_token = "test-token"\n')
+    create_person_file(name="Anjali Rao")
+    with _client(vault_tmp, data_tmp, db) as client, patch(
+        "mastisk.routes.capture.route_capture", new_callable=AsyncMock
+    ) as router:
+        router.return_value = _capture(
+            person=None,
+            title="ANJALI   RAO",
+            body="Started a new role.",
+            confidence=0.93,
+        )
+        captured = client.post(
+            "/api/capture",
+            json={"text": "Anjali started a new role", "source": "watch"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert captured.status_code == 201, captured.text
+    assert captured.json()["id"] == "anjali-rao"
+    assert not (vault_tmp / "people" / "anjali-rao-2.md").exists()
+    assert "Started a new role." in (
+        vault_tmp / "people" / "anjali-rao.md"
+    ).read_text(encoding="utf-8")
+
+
 def test_triage_person_target_creates_person_from_low_confidence_note(
     db, vault_tmp, data_tmp
 ):
@@ -372,6 +403,43 @@ def test_triage_person_target_creates_person_from_low_confidence_note(
     assert db.execute("SELECT name FROM people WHERE slug = 'priya-shah'").fetchone()[
         "name"
     ] == "Priya Shah"
+
+
+def test_triage_person_title_match_uses_existing_person_before_stubbing(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.people.sync import create_person_file
+    from mastisk.routes.notes import persist_note_capture
+
+    create_person_file(name="Anjali Rao")
+    note = persist_note_capture(
+        body="Anjali started a new role.",
+        source="watch",
+        file_content=(
+            "---\n"
+            "capture:\n"
+            "  type: person\n"
+            "  title: ANJALI   RAO\n"
+            "  person:\n"
+            "  confidence: 0.72\n"
+            "  body: Anjali started a new role.\n"
+            "needs_triage: true\n"
+            "---\n\n"
+            "Anjali started a new role."
+        ),
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        accepted = client.post(
+            f"/api/triage/note:{note['id']}/reclassify",
+            json={"type": "person"},
+        )
+
+    assert accepted.status_code == 200, accepted.text
+    assert not (vault_tmp / "people" / "anjali-rao-2.md").exists()
+    assert "Anjali started a new role." in (
+        vault_tmp / "people" / "anjali-rao.md"
+    ).read_text(encoding="utf-8")
 
 
 def test_birthday_reminders_dedupe_per_person_year_and_parse_yearless(
