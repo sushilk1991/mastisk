@@ -16,6 +16,7 @@ from mastisk.routes import (
     ask,
     blog_route,
     capture,
+    capture_triage,
     digest_route,
     domains,
     feed_route,
@@ -96,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(podcasts_route.router, prefix="/api")
     app.include_router(notes.router)
     app.include_router(capture.router)
+    app.include_router(capture_triage.router)
     app.include_router(domains.router)
     app.include_router(projects.router)
     app.include_router(tasks.router)
