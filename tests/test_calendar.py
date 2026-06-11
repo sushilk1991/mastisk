@@ -388,6 +388,59 @@ def test_calendar_status_transitions_unconfigured_not_synced_connected(
         assert forced.json()["status"]["status"] == "connected"
 
 
+def test_calendar_sync_failure_rolls_back_partial_calendar_writes(data_tmp, db):
+    _write_calendar_config(data_tmp, calendar_ids=["work@example.com"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "www.googleapis.com"
+        if request.url.path.endswith("/primary/events"):
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "primary-1",
+                            "summary": "Primary event",
+                            "start": {"dateTime": "2026-06-12T10:00:00+05:30"},
+                            "end": {"dateTime": "2026-06-12T10:30:00+05:30"},
+                        }
+                    ]
+                },
+            )
+        if request.url.path.endswith("/work@example.com/events"):
+            return httpx.Response(404, json={"error": "bad calendar id"})
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    from mastisk.google_calendar import (
+        CalendarSyncError,
+        calendar_status,
+        sync_calendar,
+        write_calendar_tokens,
+    )
+
+    write_calendar_tokens(
+        {
+            "access_token": "access-ok",
+            "refresh_token": "refresh-ok",
+            "expires_at": 4102444800,
+            "token_type": "Bearer",
+            "scope": "https://www.googleapis.com/auth/calendar.readonly",
+        }
+    )
+
+    with pytest.raises(CalendarSyncError):
+        sync_calendar(
+            now=datetime(2026, 6, 12, 8, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+            http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+
+    assert db.execute("SELECT COUNT(*) AS n FROM calendar_events").fetchone()["n"] == 0
+    status = calendar_status()
+    assert status["status"] == "not_synced"
+    assert status["last_synced_at"] is None
+    assert "bad calendar id" in status["last_error"]
+
+
 def test_calendar_routes_status_force_sync_disconnect_and_sorted_today(
     vault_tmp, data_tmp, db, monkeypatch
 ):
@@ -590,3 +643,18 @@ async def test_scheduler_registers_calendar_sync_only_when_token_exists(
 
     assert with_token.jobs["calendar_sync"]["minutes"] == 7
     assert "scheduler: calendar_sync registered (7min tick)" in caplog.text
+
+
+def test_scheduled_calendar_sync_noops_once_when_token_removed(
+    data_tmp, db, caplog
+):
+    _write_calendar_config(data_tmp)
+    from mastisk import scheduler
+
+    scheduler._calendar_sync_missing_token_logged = False
+
+    with caplog.at_level(logging.INFO, logger="mastisk.scheduler"):
+        scheduler._scheduled_calendar_sync()
+        scheduler._scheduled_calendar_sync()
+
+    assert caplog.text.count("scheduler: calendar_sync skipped (no token)") == 1

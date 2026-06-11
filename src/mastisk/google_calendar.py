@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from mastisk.db.queries import connect, init_schema
+from mastisk.db.queries import connect, init_schema, txn
 from mastisk.paths import data_dir
 from mastisk.settings import get_settings
 
@@ -61,8 +61,10 @@ def write_calendar_tokens(tokens: dict[str, Any], *, replace_connection: bool = 
     if replace_connection:
         _clear_calendar_cache_and_state()
     # Phase 9 deviation from the spec's "encrypted in data dir": tokens are
-    # protected by local single-user file permissions (0600). Keychain-backed
-    # encryption is a later hardening step.
+    # protected by local single-user file permissions (0600). The headless
+    # launchctl daemon would hit Keychain ACL prompts during background sync,
+    # while FileVault covers at-rest disk encryption for this local Mac model.
+    # Keep this plaintext unless the daemon auth flow is redesigned.
     fd, tmp = tempfile.mkstemp(prefix=".calendar_tokens.", suffix=".json", dir=path.parent)
     try:
         os.fchmod(fd, 0o600)
@@ -207,54 +209,43 @@ def sync_calendar(
         calendar_ids = _calendar_ids(settings.calendar.calendar_ids)
         start, end = _sync_window(now_dt, ZoneInfo(settings.capture.default_timezone))
         synced_at = now_dt.isoformat()
-        event_count = 0
+        fetched_rows: dict[str, tuple[list[dict[str, Any]], list[str]]] = {}
 
         client = http_client or httpx.Client(timeout=20.0)
         close = http_client is None
         try:
-            with connect() as conn:
-                _prune_events_before(conn, start)
-                for calendar_id in calendar_ids:
-                    events = _fetch_events(
-                        client=client,
-                        tokens=tokens,
-                        calendar_id=calendar_id,
-                        time_min=start.isoformat(),
-                        time_max=end.isoformat(),
-                    )
-                    seen_ids: list[str] = []
-                    for event in events:
-                        row = _normalize_event(calendar_id, event, synced_at)
-                        if row is None:
-                            continue
-                        seen_ids.append(row["id"])
-                        conn.execute(
-                            """INSERT INTO calendar_events
-                                 (id, calendar_id, summary, start, end, all_day,
-                                  location, status, updated_at, synced_at)
-                               VALUES
-                                 (:id, :calendar_id, :summary, :start, :end, :all_day,
-                                  :location, :status, :updated_at, :synced_at)
-                               ON CONFLICT(calendar_id, id) DO UPDATE SET
-                                 summary=excluded.summary,
-                                 start=excluded.start,
-                                 end=excluded.end,
-                                 all_day=excluded.all_day,
-                                 location=excluded.location,
-                                 status=excluded.status,
-                                 updated_at=excluded.updated_at,
-                                 synced_at=excluded.synced_at""",
-                            row,
-                        )
-                    _prune_missing_events(conn, calendar_id, start, end, seen_ids)
-                    event_count += len(seen_ids)
-            mark_calendar_connected(synced_at)
+            for calendar_id in calendar_ids:
+                events = _fetch_events(
+                    client=client,
+                    tokens=tokens,
+                    calendar_id=calendar_id,
+                    time_min=start.isoformat(),
+                    time_max=end.isoformat(),
+                )
+                rows: list[dict[str, Any]] = []
+                seen_ids: list[str] = []
+                for event in events:
+                    row = _normalize_event(calendar_id, event, synced_at)
+                    if row is None:
+                        continue
+                    rows.append(row)
+                    seen_ids.append(row["id"])
+                fetched_rows[calendar_id] = (rows, seen_ids)
         finally:
             if close:
                 client.close()
+
+        with connect() as conn, txn(conn):
+            _prune_events_before(conn, start)
+            for calendar_id, (rows, seen_ids) in fetched_rows.items():
+                for row in rows:
+                    _upsert_calendar_event(conn, row)
+                _prune_missing_events(conn, calendar_id, start, end, seen_ids)
+            _mark_calendar_connected(conn, synced_at)
     except CalendarSyncError as e:
         mark_calendar_sync_error(str(e), at=now_dt.isoformat())
         raise
+    event_count = sum(len(rows) for rows, _seen_ids in fetched_rows.values())
     return {"calendar_count": len(calendar_ids), "event_count": event_count}
 
 
@@ -308,19 +299,7 @@ def calendar_status() -> dict[str, str | None]:
 def mark_calendar_connected(last_synced_at: str) -> None:
     init_schema()
     with connect() as conn:
-        conn.execute(
-            """INSERT INTO calendar_state
-                 (id, status, last_synced_at, error, last_error, last_error_at, updated_at)
-               VALUES (1, 'connected', ?, NULL, NULL, NULL, CURRENT_TIMESTAMP)
-               ON CONFLICT(id) DO UPDATE SET
-                 status='connected',
-                 last_synced_at=excluded.last_synced_at,
-                 error=NULL,
-                 last_error=NULL,
-                 last_error_at=NULL,
-                 updated_at=CURRENT_TIMESTAMP""",
-            (last_synced_at,),
-        )
+        _mark_calendar_connected(conn, last_synced_at)
 
 
 def mark_calendar_disconnected(error: str) -> None:
@@ -335,6 +314,22 @@ def mark_calendar_disconnected(error: str) -> None:
                  updated_at=CURRENT_TIMESTAMP""",
             (error,),
         )
+
+
+def _mark_calendar_connected(conn, last_synced_at: str) -> None:
+    conn.execute(
+        """INSERT INTO calendar_state
+             (id, status, last_synced_at, error, last_error, last_error_at, updated_at)
+           VALUES (1, 'connected', ?, NULL, NULL, NULL, CURRENT_TIMESTAMP)
+           ON CONFLICT(id) DO UPDATE SET
+             status='connected',
+             last_synced_at=excluded.last_synced_at,
+             error=NULL,
+             last_error=NULL,
+             last_error_at=NULL,
+             updated_at=CURRENT_TIMESTAMP""",
+        (last_synced_at,),
+    )
 
 
 def mark_calendar_sync_error(error: str, *, at: str | None = None) -> None:
@@ -490,6 +485,27 @@ def _normalize_event(
         "updated_at": event.get("updated") if isinstance(event.get("updated"), str) else None,
         "synced_at": synced_at,
     }
+
+
+def _upsert_calendar_event(conn, row: dict[str, Any]) -> None:
+    conn.execute(
+        """INSERT INTO calendar_events
+             (id, calendar_id, summary, start, end, all_day,
+              location, status, updated_at, synced_at)
+           VALUES
+             (:id, :calendar_id, :summary, :start, :end, :all_day,
+              :location, :status, :updated_at, :synced_at)
+           ON CONFLICT(calendar_id, id) DO UPDATE SET
+             summary=excluded.summary,
+             start=excluded.start,
+             end=excluded.end,
+             all_day=excluded.all_day,
+             location=excluded.location,
+             status=excluded.status,
+             updated_at=excluded.updated_at,
+             synced_at=excluded.synced_at""",
+        row,
+    )
 
 
 def _prune_events_before(conn, window_start: datetime) -> None:

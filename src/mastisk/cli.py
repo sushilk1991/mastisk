@@ -38,6 +38,18 @@ def _version_callback(value: bool):
         raise typer.Exit()
 
 
+def _wait_for_oauth_redirect(server, result: dict[str, str], timeout_seconds: int) -> None:
+    import time
+
+    deadline = time.monotonic() + max(timeout_seconds, 0)
+    while not result.get("code") and not result.get("error"):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        server.timeout = min(1.0, remaining)
+        server.handle_request()
+
+
 @app.callback()
 def _main(
     version: bool = typer.Option(
@@ -428,7 +440,7 @@ def calendar_connect(
     if not no_browser:
         webbrowser.open(auth_url)
     typer.echo(f"Waiting for redirect on {redirect_uri} ...")
-    server.handle_request()
+    _wait_for_oauth_redirect(server, result, timeout_seconds)
 
     if result.get("error"):
         typer.secho(f"Google returned OAuth error: {result['error']}", fg="red")
@@ -456,8 +468,9 @@ def calendar_connect(
     typer.secho("Storage note:", fg="yellow")
     typer.echo(
         "Tokens are protected by local file permissions only, not encrypted. "
-        "This matches Mastisk's single-user local Mac trust model for Phase 9; "
-        "Keychain encryption is a later hardening TODO."
+        "This matches Mastisk's single-user local Mac trust model for Phase 9: "
+        "the launchctl daemon would hit Keychain ACL prompts during headless "
+        "background sync, while FileVault covers at-rest disk encryption."
     )
     typer.echo("")
     typer.echo(

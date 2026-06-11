@@ -8,6 +8,21 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 log = logging.getLogger("mastisk.scheduler")
+_calendar_sync_missing_token_logged = False
+
+
+def _scheduled_calendar_sync() -> None:
+    global _calendar_sync_missing_token_logged
+
+    from mastisk.google_calendar import calendar_token_exists, sync_calendar
+
+    if not calendar_token_exists():
+        if not _calendar_sync_missing_token_logged:
+            log.info("scheduler: calendar_sync skipped (no token)")
+            _calendar_sync_missing_token_logged = True
+        return
+    _calendar_sync_missing_token_logged = False
+    sync_calendar()
 
 
 async def start_scheduler():
@@ -165,13 +180,13 @@ async def start_scheduler():
         log.warning("scheduler: dashboard intelligence registration failed: %s", e)
 
     try:
-        from mastisk.google_calendar import calendar_token_exists, sync_calendar
+        from mastisk.google_calendar import calendar_token_exists
         from mastisk.settings import get_settings
 
         if calendar_token_exists():
             minutes = get_settings().calendar.sync_interval_minutes
             sched.add_job(
-                sync_calendar, "interval",
+                _scheduled_calendar_sync, "interval",
                 minutes=minutes, id="calendar_sync",
                 max_instances=1,
                 next_run_time=datetime.now(UTC) + timedelta(seconds=45),

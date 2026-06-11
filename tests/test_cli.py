@@ -138,3 +138,28 @@ def test_capture_token_generates_refuses_and_rotates(cli, data_tmp):
     assert new_token
     assert new_token != token
     assert f"Authorization: Bearer {new_token}" in rotated.output
+
+
+def test_calendar_oauth_loopback_waits_past_speculative_request():
+    from mastisk.cli import _wait_for_oauth_redirect
+
+    result: dict[str, str] = {}
+
+    class FakeServer:
+        timeout: float | int | None = None
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def handle_request(self) -> None:
+            self.calls += 1
+            if self.calls == 2:
+                result["code"] = "oauth-code"
+                result["state"] = "state-ok"
+
+    server = FakeServer()
+
+    _wait_for_oauth_redirect(server, result, timeout_seconds=180)
+
+    assert server.calls == 2
+    assert result["code"] == "oauth-code"
