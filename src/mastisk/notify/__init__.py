@@ -9,6 +9,8 @@ import httpx
 from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.notify")
+PUSHOVER_MESSAGE_LIMIT = 1024
+NTFY_MESSAGE_LIMIT_BYTES = 4096
 
 
 def send(title: str, body: str, url: str | None = None) -> bool:
@@ -19,9 +21,9 @@ def send(title: str, body: str, url: str | None = None) -> bool:
             log.info("notify backend disabled; dropping notification %r", title)
             return False
         if backend == "pushover":
-            return _send_pushover(body=body, url=url)
+            return _send_pushover(title=title, body=body, url=url)
         if backend == "ntfy":
-            return _send_ntfy(title=title, body=body)
+            return _send_ntfy(title=title, body=body, url=url)
         log.warning("unknown notify backend %r; dropping notification %r", settings.backend, title)
         return False
     except Exception as exc:
@@ -29,7 +31,7 @@ def send(title: str, body: str, url: str | None = None) -> bool:
         return False
 
 
-def _send_pushover(*, body: str, url: str | None) -> bool:
+def _send_pushover(*, title: str, body: str, url: str | None) -> bool:
     settings = get_settings().notify
     if not settings.pushover_token or not settings.pushover_user:
         log.warning("pushover notify backend missing token/user")
@@ -37,7 +39,8 @@ def _send_pushover(*, body: str, url: str | None) -> bool:
     payload = {
         "token": settings.pushover_token,
         "user": settings.pushover_user,
-        "message": body,
+        "title": title,
+        "message": body[:PUSHOVER_MESSAGE_LIMIT],
     }
     if url:
         payload["url"] = url
@@ -50,17 +53,20 @@ def _send_pushover(*, body: str, url: str | None) -> bool:
     return True
 
 
-def _send_ntfy(*, title: str, body: str) -> bool:
+def _send_ntfy(*, title: str, body: str, url: str | None) -> bool:
     settings = get_settings().notify
     if not settings.ntfy_topic:
         log.warning("ntfy notify backend missing topic")
         return False
     server = settings.ntfy_server.rstrip("/")
     topic = settings.ntfy_topic.strip("/")
+    headers = {"Title": _header_value(title)}
+    if url:
+        headers["Click"] = url
     response = httpx.post(
         f"{server}/{topic}",
-        content=body.encode("utf-8"),
-        headers={"Title": _header_value(title)},
+        content=_truncate_utf8(body, NTFY_MESSAGE_LIMIT_BYTES),
+        headers=headers,
         timeout=10,
     )
     response.raise_for_status()
@@ -73,3 +79,10 @@ def _header_value(value: str) -> str:
     except UnicodeEncodeError:
         return Header(value, "utf-8").encode()
     return value
+
+
+def _truncate_utf8(value: str, limit: int) -> bytes:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= limit:
+        return encoded
+    return encoded[:limit].decode("utf-8", errors="ignore").encode("utf-8")

@@ -39,6 +39,7 @@ def test_pushover_posts_minimal_documented_payload(data_tmp, monkeypatch):
             "data": {
                 "token": "app-token",
                 "user": "user-key",
+                "title": "Task due",
                 "message": "Call Sam",
                 "url": "mastisk://tasks/abc123",
             },
@@ -70,16 +71,65 @@ def test_ntfy_posts_to_topic_with_title_header(data_tmp, monkeypatch):
 
     from mastisk.notify import send
 
-    assert send("Daily summary", "2 due today") is True
+    assert send("Daily summary", "2 due today", url="https://mastisk.local/reminders/1") is True
     assert calls == [
         {
             "url": "https://ntfy.example/mastisk-test",
             "content": b"2 due today",
-            "headers": {"Title": "Daily summary"},
+            "headers": {
+                "Title": "Daily summary",
+                "Click": "https://mastisk.local/reminders/1",
+            },
             "timeout": 10,
             "kwargs": {},
         }
     ]
+
+
+def test_pushover_truncates_message_before_post(data_tmp, monkeypatch):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[notify]\nbackend = "pushover"\npushover_token = "app-token"\npushover_user = "user-key"\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    calls: list[dict] = []
+
+    def fake_post(url, *, data=None, timeout=None, **kwargs):
+        calls.append({"data": data})
+        return _Response()
+
+    monkeypatch.setattr("mastisk.notify.httpx.post", fake_post)
+
+    from mastisk.notify import send
+
+    assert send("Daily summary", "x" * 1030) is True
+    assert calls[0]["data"]["message"] == "x" * 1024
+
+
+def test_ntfy_truncates_message_before_post(data_tmp, monkeypatch):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[notify]\nbackend = "ntfy"\nntfy_topic = "mastisk-test"\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    calls: list[dict] = []
+
+    def fake_post(url, *, content=None, headers=None, timeout=None, **kwargs):
+        calls.append({"content": content})
+        return _Response()
+
+    monkeypatch.setattr("mastisk.notify.httpx.post", fake_post)
+
+    from mastisk.notify import send
+
+    assert send("Daily summary", "x" * 5000) is True
+    assert calls[0]["content"] == b"x" * 4096
 
 
 def test_ntfy_encodes_non_ascii_title_header(data_tmp, monkeypatch):
