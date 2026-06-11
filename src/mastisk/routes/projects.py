@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from mastisk.projects.sync import (
+    ChecklistTemplateValidationError,
     MilestoneMissingError,
     append_project_milestone,
     append_project_time,
@@ -101,6 +102,8 @@ async def create_project_endpoint(req: ProjectCreate) -> dict:
         return create_project_file(**req.model_dump())
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ChecklistTemplateValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/{slug}")

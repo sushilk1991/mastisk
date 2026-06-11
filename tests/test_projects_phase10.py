@@ -144,6 +144,24 @@ def test_checklist_template_application_creates_mirrored_tasks_with_uids(client,
     ]
 
 
+def test_invalid_checklist_template_returns_422_without_partial_project(client, db, vault_tmp):
+    template = vault_tmp / "templates" / "checklists" / "launch.md"
+    template.parent.mkdir(parents=True)
+    template.write_text("- [ ] Bad due marker 📅 2026-99-99\n", encoding="utf-8")
+
+    created = client.post(
+        "/api/projects",
+        json={"name": "Launch Site", "template": "launch"},
+    )
+
+    assert created.status_code == 422
+    assert "line 1" in created.json()["detail"]
+    assert "Bad due marker" in created.json()["detail"]
+    assert not (vault_tmp / "projects" / "launch-site.md").exists()
+    row = db.execute("SELECT COUNT(*) AS n FROM projects").fetchone()
+    assert row["n"] == 0
+
+
 def test_time_entry_scan_route_and_totals(client, db, vault_tmp):
     from mastisk.projects.sync import scan_projects
 

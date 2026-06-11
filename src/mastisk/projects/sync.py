@@ -34,6 +34,15 @@ class MilestoneMissingError(RuntimeError):
     """Raised when a milestone position is not present in the project file."""
 
 
+class ChecklistTemplateValidationError(ValueError):
+    """Raised when a checklist template task cannot be safely copied."""
+
+    def __init__(self, line_number: int, line: str, reason: str) -> None:
+        super().__init__(
+            f"invalid checklist template line {line_number}: {line.strip()} ({reason})"
+        )
+
+
 def scan_projects(paths: list[Path] | None = None) -> dict[str, int]:
     project_paths = paths if paths is not None else _project_paths()
     seen: set[str] = set()
@@ -595,29 +604,39 @@ def _task_lines_from_template(name: str) -> list[str]:
     path = _checklist_template_path(name)
     if path is None or not path.exists():
         raise FileNotFoundError(f"checklist template not found: {name}")
-    return [
-        format_task_line(
-            spec["text"],
-            due=spec.get("due"),
-            scheduled=spec.get("scheduled"),
-            recurrence=spec.get("recurrence"),
-            priority=spec.get("priority"),
-            tags=spec.get("tags", []),
-            links=spec.get("links", []),
-            uid=generate_uid(),
-        )
-        for spec in _template_task_specs(path)
-    ]
+    lines = []
+    for line_number, raw_line, spec in _iter_template_task_specs(path):
+        try:
+            lines.append(
+                format_task_line(
+                    spec["text"],
+                    due=spec.get("due"),
+                    scheduled=spec.get("scheduled"),
+                    recurrence=spec.get("recurrence"),
+                    priority=spec.get("priority"),
+                    tags=spec.get("tags", []),
+                    links=spec.get("links", []),
+                    uid=generate_uid(),
+                )
+            )
+        except ValueError as exc:
+            raise ChecklistTemplateValidationError(line_number, raw_line, str(exc)) from exc
+    return lines
 
 
-def _template_task_specs(path: Path) -> list[dict[str, Any]]:
-    specs = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+def _iter_template_task_specs(path: Path):
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         parsed = parse_task_line(line)
         if parsed is None or parsed["checked"]:
             continue
-        specs.append(parsed)
-    return specs
+        yield line_number, line, parsed
+
+
+def _template_task_specs(path: Path) -> list[dict[str, Any]]:
+    return [
+        spec
+        for _line_number, _raw_line, spec in _iter_template_task_specs(path)
+    ]
 
 
 def _checklist_template_path(name: str) -> Path | None:
