@@ -27,3 +27,13 @@ def test_system_rail_surfaces_persistent_calendar_sync_errors() -> None:
     assert "last_error" in source
     assert "loadCalendarStatus({ clearError: false })" in source
     assert "calendar?.last_error" in source
+
+
+def test_today_calendar_not_synced_has_sync_affordance() -> None:
+    source = (ROOT / "frontend/src/components/DashboardViews.tsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "status === 'not_synced'" in source
+    assert "calendarBusy" in source
+    assert "onSync" in source

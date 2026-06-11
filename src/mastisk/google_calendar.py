@@ -287,6 +287,14 @@ def calendar_status() -> dict[str, str | None]:
             "last_error": state.get("last_error"),
             "last_error_at": state.get("last_error_at"),
         }
+    if not state.get("last_synced_at"):
+        return {
+            "status": "not_synced",
+            "last_synced_at": None,
+            "error": state.get("error"),
+            "last_error": state.get("last_error"),
+            "last_error_at": state.get("last_error_at"),
+        }
     return {
         "status": "connected",
         "last_synced_at": state.get("last_synced_at"),
@@ -335,8 +343,12 @@ def mark_calendar_sync_error(error: str, *, at: str | None = None) -> None:
         conn.execute(
             """INSERT INTO calendar_state
                  (id, status, last_error, last_error_at, updated_at)
-               VALUES (1, 'connected', ?, ?, CURRENT_TIMESTAMP)
+               VALUES (1, 'not_synced', ?, ?, CURRENT_TIMESTAMP)
                ON CONFLICT(id) DO UPDATE SET
+                 status=CASE
+                   WHEN calendar_state.last_synced_at IS NULL THEN 'not_synced'
+                   ELSE calendar_state.status
+                 END,
                  last_error=excluded.last_error,
                  last_error_at=excluded.last_error_at,
                  updated_at=CURRENT_TIMESTAMP""",

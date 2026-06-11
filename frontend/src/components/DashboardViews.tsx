@@ -46,6 +46,7 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [calendar, setCalendar] = useState<CalendarToday | null>(null);
   const [calendarErr, setCalendarErr] = useState<string | null>(null);
+  const [calendarBusy, setCalendarBusy] = useState(false);
   const [entry, setEntry] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
@@ -95,6 +96,20 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
     return () => window.removeEventListener('mastisk-calendar-sync', reload);
   }, [today, liveKey]);
 
+  async function syncCalendar() {
+    setCalendarBusy(true);
+    setCalendarErr(null);
+    try {
+      await api.calendar.sync();
+      window.dispatchEvent(new Event('mastisk-calendar-sync'));
+      await loadCalendarToday();
+    } catch (e) {
+      setCalendarErr(errorMessage(e));
+    } finally {
+      setCalendarBusy(false);
+    }
+  }
+
   async function appendLog(e: FormEvent) {
     e.preventDefault();
     const text = entry.trim();
@@ -127,7 +142,12 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
 
       <div className="dash-grid dash-grid-2">
         <FocusPanel focus={focus} today={today} onChanged={load}/>
-        <CalendarPanel calendar={calendar} calendarErr={calendarErr}/>
+        <CalendarPanel
+          calendar={calendar}
+          calendarErr={calendarErr}
+          calendarBusy={calendarBusy}
+          onSync={syncCalendar}
+        />
       </div>
 
       {resurface && <ResurfaceCard item={resurface}/>}
@@ -806,7 +826,17 @@ function ResurfaceCard({ item }: { item: ResurfaceItem }) {
   );
 }
 
-function CalendarPanel({ calendar, calendarErr }: { calendar: CalendarToday | null; calendarErr: string | null }) {
+function CalendarPanel({
+  calendar,
+  calendarErr,
+  calendarBusy,
+  onSync,
+}: {
+  calendar: CalendarToday | null;
+  calendarErr: string | null;
+  calendarBusy: boolean;
+  onSync: () => Promise<void>;
+}) {
   const status = calendar?.status.status ?? 'loading';
   const events = calendar?.events ?? [];
   return (
@@ -821,6 +851,13 @@ function CalendarPanel({ calendar, calendarErr }: { calendar: CalendarToday | nu
         <EmptyLine>Loading calendar.</EmptyLine>
       ) : status === 'unconfigured' ? (
         <EmptyLine>Connect Google Calendar with <code>mastisk calendar-connect</code>.</EmptyLine>
+      ) : status === 'not_synced' ? (
+        <div className="dash-list compact">
+          <EmptyLine>Calendar not synced yet.</EmptyLine>
+          <button className="chip" disabled={calendarBusy} onClick={() => void onSync()}>
+            {calendarBusy ? 'syncing' : 'sync now'}
+          </button>
+        </div>
       ) : status === 'disconnected' ? (
         <p className="dash-error">{calendar.status.error || 'Calendar OAuth expired.'}</p>
       ) : events.length === 0 ? (

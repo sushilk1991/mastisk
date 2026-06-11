@@ -338,6 +338,48 @@ def test_calendar_sync_failure_persists_last_error_without_disconnect(
     assert healed.json()["last_error_at"] is None
 
 
+def test_calendar_status_transitions_unconfigured_not_synced_connected(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    _write_calendar_config(data_tmp)
+    from mastisk.google_calendar import write_calendar_tokens
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        assert client.get("/api/calendar/status").json()["status"] == "unconfigured"
+
+        write_calendar_tokens(
+            {
+                "access_token": "access-ok",
+                "refresh_token": "refresh-ok",
+                "expires_at": 4102444800,
+                "token_type": "Bearer",
+                "scope": "https://www.googleapis.com/auth/calendar.readonly",
+            }
+        )
+        not_synced = client.get("/api/calendar/status")
+        assert not_synced.status_code == 200
+        assert not_synced.json()["status"] == "not_synced"
+        assert not_synced.json()["last_synced_at"] is None
+
+        today = client.get("/api/calendar/today?date=2026-06-12")
+        assert today.status_code == 200
+        assert today.json()["status"]["status"] == "not_synced"
+        assert today.json()["events"] == []
+
+        from mastisk.routes import calendar_route
+
+        def fake_sync_calendar():
+            from mastisk.google_calendar import mark_calendar_connected
+
+            mark_calendar_connected("2026-06-12T08:00:00+05:30")
+            return {"event_count": 0, "calendar_count": 1}
+
+        monkeypatch.setattr(calendar_route, "sync_calendar", fake_sync_calendar)
+        forced = client.post("/api/calendar/sync")
+        assert forced.status_code == 200, forced.text
+        assert forced.json()["status"]["status"] == "connected"
+
+
 def test_calendar_routes_status_force_sync_disconnect_and_sorted_today(
     vault_tmp, data_tmp, db, monkeypatch
 ):
@@ -488,7 +530,7 @@ def test_calendar_reconnect_does_not_show_old_cache_until_new_sync(
         today = client.get("/api/calendar/today?date=2026-06-12")
 
     assert today.status_code == 200, today.text
-    assert today.json()["status"]["status"] == "connected"
+    assert today.json()["status"]["status"] == "not_synced"
     assert today.json()["events"] == []
 
 

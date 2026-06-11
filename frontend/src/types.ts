@@ -473,7 +473,7 @@ export interface ReminderRow {
 }
 
 export interface CalendarStatus {
-  status: 'connected' | 'disconnected' | 'unconfigured' | string;
+  status: 'connected' | 'disconnected' | 'not_synced' | 'unconfigured' | string;
   last_synced_at: string | null;
   error: string | null;
   last_error: string | null;
