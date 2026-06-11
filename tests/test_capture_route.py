@@ -1,6 +1,8 @@
 """Integration tests for the /api/capture ingress."""
 from __future__ import annotations
 
+import asyncio
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -135,7 +137,9 @@ def test_capture_persists_note_with_watch_source(client_with_token, vault_tmp):
     assert body["needs_triage"] is False
     file_path = vault_tmp / body["destination"]
     assert file_path.exists()
-    assert "water the plants" in file_path.read_text()
+    file_text = file_path.read_text()
+    assert "water the plants" in file_text
+    assert not file_text.startswith("---\n")
 
     from mastisk.db.queries import connect, get_note
 
@@ -282,3 +286,44 @@ def test_capture_rejects_blank_text(client_with_token):
         headers={"Authorization": "Bearer test-token"},
     )
     assert r.status_code == 422
+
+
+def test_notetaker_skips_routed_typed_capture_without_classifying(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.93,
+        body="call Sam",
+        due="2026-06-10T14:00:00-07:00",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "remind me to call Sam tomorrow 2pm", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert r.status_code == 201, r.text
+    file_path = vault_tmp / r.json()["destination"]
+    before = file_path.read_text()
+    assert "capture:" in before
+    assert "type: task" in before
+
+    from mastisk.agents.notetaker import Notetaker
+
+    notetaker = Notetaker()
+    stat = file_path.stat()
+    notetaker._stability_cache[str(file_path.resolve())] = (
+        stat.st_mtime,
+        stat.st_size,
+        time.time() - 31,
+    )
+    with patch(
+        "mastisk.agents.notetaker.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+    ) as classify_mock:
+        asyncio.run(notetaker.run_once())
+
+    classify_mock.assert_not_called()
+    assert file_path.read_text() == before

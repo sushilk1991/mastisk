@@ -234,6 +234,14 @@ class Notetaker(Agent):
             else:
                 if row["classification"] is not None:
                     return
+                try:
+                    body = path.read_text(encoding="utf-8")
+                except Exception as e:
+                    log.warning("notetaker: can't read %s: %s", path, e)
+                    return
+                if has_typed_capture_frontmatter(body):
+                    log.info("notetaker: routed capture %s already typed, skipping", path)
+                    return
                 note_id = row["id"]
 
         # Enqueue outside any transaction. `enqueue` opens its own connection.
@@ -264,6 +272,9 @@ class Notetaker(Agent):
             return
 
         body_on_disk = file_path.read_text(encoding="utf-8")
+        if has_typed_capture_frontmatter(body_on_disk):
+            log.info("notetaker: note %s is already routed, skipping classifier", note_id)
+            return
         body_core = strip_frontmatter(body_on_disk)
         sha_after = hashlib.sha256(body_core.encode("utf-8")).hexdigest()
 
@@ -342,7 +353,7 @@ class Notetaker(Agent):
         new_rel_path = str(new_path.relative_to(vault_dir()))
 
         # Write frontmatter + preserved body atomically to the new location.
-        write_frontmatter(new_path, body_core, frontmatter)
+        write_frontmatter(new_path, body_on_disk, frontmatter)
 
         # Remove the old inbox file and drop the stability-cache entry.
         if file_path.resolve() != new_path.resolve():
@@ -406,12 +417,36 @@ def strip_frontmatter(text: str) -> str:
     Idempotent if no frontmatter is present. Returns the body with any leading
     blank line after the closing fence removed so the caller can re-embed.
     """
+    _frontmatter, body = split_frontmatter(text)
+    return body
+
+
+def split_frontmatter(text: str) -> tuple[dict, str]:
+    """Return ``(frontmatter, body)`` for a markdown file."""
     if not text.startswith("---\n"):
-        return text
+        return {}, text
     parts = text.split("---\n", 2)
-    if len(parts) >= 3:
-        return parts[2].lstrip("\n")
-    return text
+    if len(parts) < 3:
+        return {}, text
+    raw_frontmatter = parts[1]
+    body = parts[2].lstrip("\n")
+    try:
+        parsed = yaml.safe_load(raw_frontmatter) or {}
+    except yaml.YAMLError:
+        return {}, body
+    if not isinstance(parsed, dict):
+        return {}, body
+    return parsed, body
+
+
+def has_typed_capture_frontmatter(text: str) -> bool:
+    """True when frontmatter marks a routed non-note capture."""
+    frontmatter, _body = split_frontmatter(text)
+    capture = frontmatter.get("capture")
+    if not isinstance(capture, dict):
+        return False
+    capture_type = capture.get("type")
+    return isinstance(capture_type, str) and capture_type not in {"note", "inbox"}
 
 
 def write_frontmatter(path: Path, body_text: str, frontmatter: dict) -> None:
@@ -420,9 +455,10 @@ def write_frontmatter(path: Path, body_text: str, frontmatter: dict) -> None:
     ``body_text`` is treated as the core body; any pre-existing frontmatter in
     it is stripped before re-embedding so the operation is idempotent.
     """
-    body_core = strip_frontmatter(body_text)
+    existing_frontmatter, body_core = split_frontmatter(body_text)
+    merged_frontmatter = {**existing_frontmatter, **frontmatter}
     fm_yaml = yaml.safe_dump(
-        frontmatter, sort_keys=False, default_flow_style=False, allow_unicode=True
+        merged_frontmatter, sort_keys=False, default_flow_style=False, allow_unicode=True
     ).strip()
     content = f"---\n{fm_yaml}\n---\n\n{body_core}"
 

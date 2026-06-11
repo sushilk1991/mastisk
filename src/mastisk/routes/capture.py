@@ -80,17 +80,22 @@ async def capture(
         source=req.source,
         slug_text=req.text,
     )
-    body_for_file = _body_with_capture_frontmatter(routed, needs_triage=needs_triage)
-    try:
-        atomic_write(vault_dir() / row["path"], body_for_file)
-    except Exception:
-        log.exception("capture frontmatter write failed; clean inbox note is preserved")
+    if _has_typed_capture_metadata(routed):
+        body_for_file = _body_with_capture_frontmatter(routed, needs_triage=needs_triage)
+        try:
+            atomic_write(vault_dir() / row["path"], body_for_file)
+        except Exception:
+            log.exception("capture frontmatter write failed; clean inbox note is preserved")
     return {
         "id": row["id"],
         "type": routed.type,
         "destination": row["path"],
         "needs_triage": needs_triage,
     }
+
+
+def _has_typed_capture_metadata(capture: Capture) -> bool:
+    return capture.type not in {"note", "inbox"}
 
 
 def _body_with_capture_frontmatter(capture: Capture, *, needs_triage: bool) -> str:

@@ -74,16 +74,22 @@ def test_write_frontmatter_preserves_body(tmp_path):
     assert text.endswith("the body\nline 2")
 
 
-def test_write_frontmatter_replaces_existing(tmp_path):
+def test_write_frontmatter_merges_existing_unknown_keys(tmp_path):
     from mastisk.agents.notetaker import write_frontmatter
     p = tmp_path / "note.md"
-    # Pre-existing frontmatter should be stripped, not nested.
-    write_frontmatter(p, "---\nold: true\n---\n\nactual body", {"new": True})
+    write_frontmatter(
+        p,
+        "---\ncapture:\n  type: task\nneeds_triage: true\nold: true\n---\n\nactual body",
+        {"new": True},
+    )
     text = p.read_text()
     # Only one frontmatter block.
     assert text.count("---\n") == 2  # opening + closing of the single block
+    assert "capture:" in text
+    assert "type: task" in text
+    assert "needs_triage: true" in text
     assert "new: true" in text
-    assert "old: true" not in text
+    assert "old: true" in text
     assert text.endswith("actual body")
 
 
