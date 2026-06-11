@@ -132,6 +132,26 @@ def test_ntfy_truncates_message_before_post(data_tmp, monkeypatch):
     assert calls[0]["content"] == b"x" * 4096
 
 
+def test_backend_http_error_returns_false(data_tmp, monkeypatch):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[notify]\nbackend = "pushover"\npushover_token = "app-token"\npushover_user = "user-key"\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+
+    def fake_post(url, *, data=None, timeout=None, **kwargs):
+        return _Response(status_code=500)
+
+    monkeypatch.setattr("mastisk.notify.httpx.post", fake_post)
+
+    from mastisk.notify import send
+
+    assert send("Task due", "Call Sam") is False
+
+
 def test_ntfy_encodes_non_ascii_title_header(data_tmp, monkeypatch):
     cfg = data_tmp / "config.toml"
     cfg.write_text(
