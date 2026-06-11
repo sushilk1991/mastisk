@@ -210,6 +210,64 @@ def test_needs_review_scan_reasons_dismiss_and_triage_age_rule(
     assert len(client.get("/api/needs-review").json()) == 2
 
 
+def test_needs_review_triage_age_survives_passive_task_scan(db, vault_tmp, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text("[dashboard]\ntriage_reminder_days = 3\n", encoding="utf-8")
+    from mastisk.settings import reload_settings
+    from mastisk.tasks.sync import append_task_to_host, scan_task_hosts
+
+    reload_settings()
+    task = append_task_to_host(
+        vault_tmp / "journal" / "2026-06-01.md",
+        text="Passive scan should not refresh triage age",
+        uid="passive-triage",
+        tags=["needs-triage"],
+    )
+    db.execute(
+        "UPDATE tasks SET updated_at = '2026-06-07T09:00:00+00:00' WHERE uid = ?",
+        (task["uid"],),
+    )
+
+    scan_task_hosts([vault_tmp / task["host_path"]])
+
+    from mastisk.dashboard.intelligence import needs_review_scan
+
+    needs_review_scan(today=date(2026, 6, 11))
+    rows = db.execute(
+        "SELECT entity_id, reason FROM needs_review WHERE dismissed_at IS NULL"
+    ).fetchall()
+    assert [dict(row) for row in rows] == [
+        {"entity_id": "passive-triage", "reason": "triage_stale"}
+    ]
+
+
+def test_needs_review_clears_when_triage_item_is_resolved(client, db, vault_tmp, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text("[dashboard]\ntriage_reminder_days = 3\n", encoding="utf-8")
+    from mastisk.settings import reload_settings
+    from mastisk.tasks.sync import append_task_to_host
+
+    reload_settings()
+    task = append_task_to_host(
+        vault_tmp / "journal" / "2026-06-01.md",
+        text="Resolve triage card",
+        uid="resolve-triage",
+        tags=["needs-triage"],
+    )
+    db.execute(
+        "UPDATE tasks SET updated_at = '2026-06-07T09:00:00+00:00' WHERE uid = ?",
+        (task["uid"],),
+    )
+    from mastisk.dashboard.intelligence import needs_review_scan
+
+    needs_review_scan(today=date(2026, 6, 11))
+    assert any(item["entity_id"] == task["uid"] for item in client.get("/api/needs-review").json())
+
+    resolved = client.post(f"/api/triage/task:{task['uid']}/reclassify", json={"type": "dismiss"})
+    assert resolved.status_code == 200, resolved.text
+    assert not any(item["entity_id"] == task["uid"] for item in client.get("/api/needs-review").json())
+
+
 def test_daily_summary_includes_needs_review_count_when_nonzero():
     from mastisk.agents.reminder_engine import compose_daily_summary
 
@@ -275,3 +333,24 @@ def test_activity_bumps_task_edits_project_task_capture_and_journal_project_log(
         (project["slug"],),
     ).fetchone()["last_activity_at"]
     assert journal_bump != "2026-06-01T09:00:00+00:00"
+
+
+def test_slipping_cache_invalidates_on_task_activity(db, vault_tmp):
+    from mastisk.dashboard.intelligence import list_slipping, slipping_scan
+    from mastisk.tasks.sync import append_task_to_host, rewrite_task
+
+    task = append_task_to_host(
+        vault_tmp / "journal" / "2026-06-01.md",
+        text="Stale until touched",
+        uid="slip-touch",
+    )
+    db.execute(
+        "UPDATE tasks SET last_activity_at = '2026-06-01T09:00:00+00:00' WHERE uid = ?",
+        (task["uid"],),
+    )
+    slipping_scan(now=datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    assert [item["entity_id"] for item in list_slipping()] == [task["uid"]]
+
+    rewrite_task(task["uid"], due="2026-06-20")
+
+    assert list_slipping() == []

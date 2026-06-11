@@ -280,6 +280,25 @@ def dismiss_needs_review(item_id: int) -> dict[str, Any] | None:
             return _needs_review_row(conn, dict(row))
 
 
+def clear_needs_review(
+    entity_type: str,
+    entity_id: str,
+    *,
+    reason: str | None = None,
+) -> int:
+    clauses = ["entity_type = ?", "entity_id = ?", "dismissed_at IS NULL"]
+    params: list[Any] = [entity_type, entity_id]
+    if reason is not None:
+        clauses.append("reason = ?")
+        params.append(reason)
+    with connect() as conn:
+        cur = conn.execute(
+            f"DELETE FROM needs_review WHERE {' AND '.join(clauses)}",
+            tuple(params),
+        )
+        return cur.rowcount or 0
+
+
 @dataclass(frozen=True)
 class _NeedsReviewCandidate:
     entity_type: str

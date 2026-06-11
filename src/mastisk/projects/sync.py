@@ -150,6 +150,10 @@ def append_project_log(slug: str, body: str, *, at: datetime | None = None) -> d
             "UPDATE projects SET last_activity_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE slug = ?",
             (slug,),
         )
+        conn.execute(
+            "DELETE FROM slipping WHERE entity_type = 'project' AND entity_id = ?",
+            (slug,),
+        )
     return get_project(slug)
 
 

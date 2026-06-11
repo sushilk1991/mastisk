@@ -96,8 +96,25 @@ def scan_task_hosts(
                                WHEN tasks.status IS NOT excluded.status THEN CURRENT_TIMESTAMP
                                ELSE COALESCE(tasks.last_activity_at, CURRENT_TIMESTAMP)
                              END,
-                             deleted_at=NULL,
-                             updated_at=CURRENT_TIMESTAMP""",
+                             updated_at=CASE
+                               WHEN tasks.host_path IS NOT excluded.host_path
+                                 OR tasks.line_number IS NOT excluded.line_number
+                                 OR tasks.text IS NOT excluded.text
+                                 OR tasks.checked IS NOT excluded.checked
+                                 OR tasks.status IS NOT excluded.status
+                                 OR tasks.due IS NOT excluded.due
+                                 OR tasks.scheduled IS NOT excluded.scheduled
+                                 OR tasks.priority IS NOT excluded.priority
+                                 OR tasks.domain IS NOT excluded.domain
+                                 OR tasks.project IS NOT excluded.project
+                                 OR tasks.recurrence IS NOT excluded.recurrence
+                                 OR tasks.tags_json IS NOT excluded.tags_json
+                                 OR tasks.links_json IS NOT excluded.links_json
+                                 OR tasks.needs_triage IS NOT excluded.needs_triage
+                               THEN CURRENT_TIMESTAMP
+                               ELSE tasks.updated_at
+                             END,
+                             deleted_at=NULL""",
                         (
                             uid,
                             rel_path,
@@ -388,6 +405,10 @@ def _bump_task_activity(uid: str) -> None:
                WHERE uid = ?""",
             (uid,),
         )
+        conn.execute(
+            "DELETE FROM slipping WHERE entity_type = 'task' AND entity_id = ?",
+            (uid,),
+        )
 
 
 def _bump_project_activity(slug: str) -> None:
@@ -397,5 +418,9 @@ def _bump_project_activity(slug: str) -> None:
                SET last_activity_at = CURRENT_TIMESTAMP,
                    updated_at = CURRENT_TIMESTAMP
                WHERE slug = ? AND deleted_at IS NULL""",
+            (slug,),
+        )
+        conn.execute(
+            "DELETE FROM slipping WHERE entity_type = 'project' AND entity_id = ?",
             (slug,),
         )

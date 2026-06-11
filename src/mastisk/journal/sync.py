@@ -380,6 +380,10 @@ def _bump_projects_for_journal_day(day: str) -> None:
                    WHERE slug = ? AND deleted_at IS NULL""",
                 (row["project"],),
             )
+            conn.execute(
+                "DELETE FROM slipping WHERE entity_type = 'project' AND entity_id = ?",
+                (row["project"],),
+            )
 
 
 def _task_row(row: dict[str, Any]) -> dict[str, Any]:

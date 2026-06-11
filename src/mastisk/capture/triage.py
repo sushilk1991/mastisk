@@ -83,8 +83,10 @@ def reclassify_triage_item(item_id: str, target_type: CaptureTriageType) -> dict
             if snapshot is not None:
                 _restore_source_file_snapshot(snapshot)
             raise
+        _clear_needs_review_for_item(item)
     else:
         _clear_triage_marker(item, target_type=target_type)
+        _clear_needs_review_for_item(item)
     return {
         "ok": True,
         "id": item_id,
@@ -131,6 +133,18 @@ def _source_path_for_item(item: dict[str, Any]) -> Path | None:
     if kind in {"journal", "project_update", "note"}:
         return vault_dir() / str(source.get("path") or "")
     return None
+
+
+def _clear_needs_review_for_item(item: dict[str, Any]) -> None:
+    try:
+        from mastisk.dashboard.intelligence import clear_needs_review
+    except Exception:
+        return
+    source = item.get("source") if isinstance(item.get("source"), dict) else {}
+    if item.get("kind") == "task" and source.get("uid"):
+        clear_needs_review("task", str(source["uid"]), reason="triage_stale")
+    elif item.get("kind") == "note" and source.get("note_id") is not None:
+        clear_needs_review("note", str(source["note_id"]), reason="triage_stale")
 
 
 def _restore_source_file_snapshot(snapshot: _SourceFileSnapshot) -> None:
