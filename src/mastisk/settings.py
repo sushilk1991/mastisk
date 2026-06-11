@@ -235,6 +235,19 @@ def _load_toml_if_present() -> dict:
         return tomllib.load(f)
 
 
+def read_capture_bearer_token() -> str | None:
+    """Read the capture bearer token directly from config.toml."""
+    p = config_path()
+    if not p.exists():
+        return None
+    with p.open("rb") as f:
+        capture = tomllib.load(f).get("capture")
+    if not isinstance(capture, dict):
+        return None
+    token = capture.get("bearer_token")
+    return token if isinstance(token, str) else None
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     # Dev-mode: load .env from cwd if present

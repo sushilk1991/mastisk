@@ -54,6 +54,26 @@ def test_capture_503_when_unconfigured(client_no_token):
     assert r.status_code == 503
 
 
+def test_capture_reads_token_file_changes_after_startup(client_no_token, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\nbearer_token = "runtime-token"\n')
+
+    created = client_no_token.post(
+        "/api/capture",
+        json={"text": "written after startup", "source": "watch"},
+        headers={"Authorization": "Bearer runtime-token"},
+    )
+    assert created.status_code == 201, created.text
+
+    cfg.write_text('[capture]\nbearer_token = "rotated-token"\n')
+    old = client_no_token.post(
+        "/api/capture",
+        json={"text": "old token should fail", "source": "watch"},
+        headers={"Authorization": "Bearer runtime-token"},
+    )
+    assert old.status_code == 401
+
+
 def test_capture_persists_note_with_watch_source(client_with_token, vault_tmp):
     r = client_with_token.post(
         "/api/capture",

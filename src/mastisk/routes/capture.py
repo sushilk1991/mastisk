@@ -12,14 +12,14 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from mastisk.routes.notes import persist_note_capture
-from mastisk.settings import get_settings
+from mastisk.settings import read_capture_bearer_token
 
 router = APIRouter(prefix="/api/capture", tags=["capture"])
 
 
 def require_capture_token(authorization: str | None) -> None:
     """Bearer-token gate for the ingress."""
-    token = get_settings().capture.bearer_token
+    token = read_capture_bearer_token()
     if not token:
         raise HTTPException(
             status_code=503,
