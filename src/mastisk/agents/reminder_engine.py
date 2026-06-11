@@ -11,6 +11,7 @@ from mastisk.db.queries import connect
 from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.reminder_engine")
+FIRING_STALE_AFTER = timedelta(minutes=10)
 
 
 def reminder_tick(*, now: datetime | None = None, ensure_daily_summary: bool = True) -> int:
@@ -20,6 +21,7 @@ def reminder_tick(*, now: datetime | None = None, ensure_daily_summary: bool = T
     row, only one can move it to ``firing`` and call the notifier.
     """
     now_dt = _coerce_datetime(now)
+    _reclaim_stale_firing_reminders(now_dt)
     if _notify_backend_disabled():
         log.info("reminder_tick skipped: notify backend disabled")
         return 0
@@ -44,7 +46,12 @@ def reminder_tick(*, now: datetime | None = None, ensure_daily_summary: bool = T
     for row in rows:
         if not _claim_reminder(row["id"], now_iso):
             continue
-        _fire_claimed(row, now_dt)
+        try:
+            _fire_claimed(row, now_dt)
+        except Exception as exc:
+            log.exception("reminder %s failed unexpectedly after claim", row["id"])
+            _restore_claimed_reminder(row["id"], exc)
+            continue
         fired += 1
     return fired
 
@@ -58,7 +65,8 @@ def reclaim_firing_reminders() -> int:
     with connect() as conn:
         cur = conn.execute(
             """UPDATE reminders
-               SET status = 'pending'
+               SET status = 'pending',
+                   fired_at = NULL
                WHERE status = 'firing' AND deleted_at IS NULL"""
         )
         return cur.rowcount
@@ -219,15 +227,46 @@ def _claim_reminder(reminder_id: int, now_iso: str) -> bool:
     with connect() as conn:
         cur = conn.execute(
             """UPDATE reminders
-               SET status = 'firing'
+               SET status = 'firing',
+                   fired_at = ?,
+                   last_error = NULL
                WHERE id = ?
                  AND status = 'pending'
                  AND deleted_at IS NULL
                  AND fire_at <= ?
                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)""",
-            (reminder_id, now_iso, now_iso),
+            (now_iso, reminder_id, now_iso, now_iso),
         )
         return cur.rowcount == 1
+
+
+def _reclaim_stale_firing_reminders(now_dt: datetime) -> int:
+    cutoff = _utc_iso(now_dt - FIRING_STALE_AFTER)
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE reminders
+               SET status = 'pending',
+                   fired_at = NULL,
+                   last_error = 'reclaimed stale firing claim'
+               WHERE status = 'firing'
+                 AND deleted_at IS NULL
+                 AND fired_at IS NOT NULL
+                 AND fired_at <= ?""",
+            (cutoff,),
+        )
+        return cur.rowcount
+
+
+def _restore_claimed_reminder(reminder_id: int, exc: Exception) -> None:
+    with connect() as conn:
+        conn.execute(
+            """UPDATE reminders
+               SET status = 'pending',
+                   fired_at = NULL,
+                   last_error = ?
+               WHERE id = ? AND status = 'firing' AND deleted_at IS NULL""",
+            (f"unexpected error while firing: {exc}", reminder_id),
+        )
 
 
 def _fire_claimed(row: dict, now_dt: datetime) -> None:
@@ -274,6 +313,7 @@ def _handle_notify_failure(row: dict, now_dt: datetime) -> None:
                 """UPDATE reminders
                    SET status = 'notify_failed',
                        attempts = ?,
+                       fired_at = NULL,
                        next_attempt_at = NULL,
                        last_error = ?
                    WHERE id = ?""",
@@ -296,6 +336,7 @@ def _handle_notify_failure(row: dict, now_dt: datetime) -> None:
             """UPDATE reminders
                SET status = 'pending',
                    attempts = ?,
+                   fired_at = NULL,
                    next_attempt_at = ?,
                    last_error = ?
                WHERE id = ?""",
@@ -311,8 +352,9 @@ def _sync_pending_task_due_reminder(row: dict) -> bool:
             cur = conn.execute(
                 """UPDATE reminders
                    SET status = 'cancelled',
-                       next_attempt_at = NULL,
-                       last_error = ?
+                   fired_at = NULL,
+                   next_attempt_at = NULL,
+                   last_error = ?
                    WHERE id = ? AND status = 'pending' AND deleted_at IS NULL""",
                 (reason, row["id"]),
             )
@@ -409,6 +451,7 @@ def _reschedule_claimed(row: dict, target: dict) -> None:
                    lead_minutes = ?,
                    title = 'Task due',
                    body = ?,
+                   fired_at = NULL,
                    next_attempt_at = NULL,
                    last_error = NULL
                WHERE id = ? AND status = 'firing' AND deleted_at IS NULL""",

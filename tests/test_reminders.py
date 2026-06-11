@@ -48,6 +48,24 @@ def _insert_reminder(
     return int(cur.lastrowid)
 
 
+def _insert_custom_reminder(
+    db,
+    *,
+    fire_at: str = "2026-06-11T09:00:00+00:00",
+    status: str = "pending",
+    title: str = "Reminder",
+    body: str = "Check this",
+    fired_at: str | None = None,
+) -> int:
+    cur = db.execute(
+        """INSERT INTO reminders
+           (fire_at, kind, status, title, body, fired_at)
+           VALUES (?, 'custom', ?, ?, ?, ?)""",
+        (fire_at, status, title, body, fired_at),
+    )
+    return int(cur.lastrowid)
+
+
 def test_reminder_tick_claims_due_row_once_with_overlapping_ticks(db, data_tmp, monkeypatch):
     _configure_notify(data_tmp)
     reminder_id = _insert_reminder(db)
@@ -250,6 +268,64 @@ def test_reclaim_firing_reminders_returns_orphaned_claims_to_pending(db):
     assert reclaim_firing_reminders() == 1
     row = db.execute("SELECT status FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
     assert row["status"] == "pending"
+
+
+def test_reminder_tick_restores_claim_and_continues_after_unexpected_exception(
+    db, data_tmp, monkeypatch
+):
+    _configure_notify(data_tmp)
+    broken_id = _insert_custom_reminder(db, title="Broken", body="boom")
+    ok_id = _insert_custom_reminder(db, title="OK", body="ship it")
+    sent: list[str] = []
+
+    def fake_send(title: str, body: str, url: str | None = None) -> bool:
+        if title == "Broken":
+            raise RuntimeError("notifier exploded")
+        sent.append(body)
+        return True
+
+    monkeypatch.setattr("mastisk.agents.reminder_engine.notify.send", fake_send)
+
+    from mastisk.agents.reminder_engine import reminder_tick
+
+    reminder_tick(now=datetime(2026, 6, 11, 9, 0, tzinfo=UTC), ensure_daily_summary=False)
+
+    broken = db.execute(
+        "SELECT status, last_error FROM reminders WHERE id = ?",
+        (broken_id,),
+    ).fetchone()
+    ok = db.execute("SELECT status FROM reminders WHERE id = ?", (ok_id,)).fetchone()
+    assert dict(broken) == {
+        "status": "pending",
+        "last_error": "unexpected error while firing: notifier exploded",
+    }
+    assert ok["status"] == "sent"
+    assert sent == ["ship it"]
+
+
+def test_reminder_tick_reclaims_stale_firing_rows_on_later_tick(db, data_tmp, monkeypatch):
+    _configure_notify(data_tmp)
+    stale_claimed_at = datetime(2026, 6, 11, 8, 0, tzinfo=UTC).isoformat()
+    reminder_id = _insert_custom_reminder(
+        db,
+        fire_at=(datetime(2026, 6, 11, 10, 0, tzinfo=UTC)).isoformat(),
+        status="firing",
+        fired_at=stale_claimed_at,
+    )
+    monkeypatch.setattr(
+        "mastisk.agents.reminder_engine.notify.send",
+        lambda *args, **kwargs: pytest.fail("future reclaimed row should not fire"),
+    )
+
+    from mastisk.agents.reminder_engine import reminder_tick
+
+    reminder_tick(now=datetime(2026, 6, 11, 8, 11, tzinfo=UTC), ensure_daily_summary=False)
+
+    row = db.execute(
+        "SELECT status, fired_at FROM reminders WHERE id = ?",
+        (reminder_id,),
+    ).fetchone()
+    assert dict(row) == {"status": "pending", "fired_at": None}
 
 
 def test_reminder_tick_creates_missed_daily_summary_row_after_summary_time(
