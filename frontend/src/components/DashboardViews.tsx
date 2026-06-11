@@ -1,0 +1,855 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
+import { api } from '../api';
+import type {
+  CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
+  Priority, ProjectDetail, ProjectSummary, ReminderRow, RoutineGroups, RoutineProgress,
+  RoutineRow, TaskRow, TimeOfDay, View,
+} from '../types';
+
+interface LiveProps {
+  liveKey: string;
+}
+
+interface NavProps {
+  onNavigate: (view: View, id?: string) => void;
+}
+
+const TIME_GROUPS: TimeOfDay[] = ['morning', 'afternoon', 'evening', 'anytime'];
+const TASK_GROUPS = ['overdue', 'today', 'upcoming', 'someday'] as const;
+const PRIORITIES: { value: '' | 'high' | 'medium' | 'low'; label: string }[] = [
+  { value: '', label: '-' },
+  { value: 'high', label: 'high' },
+  { value: 'medium', label: 'medium' },
+  { value: 'low', label: 'low' },
+];
+
+export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
+  const today = localIsoToday();
+  const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [routines, setRoutines] = useState<RoutineGroups | null>(null);
+  const [journal, setJournal] = useState<JournalDay | null>(null);
+  const [reminders, setReminders] = useState<ReminderRow[]>([]);
+  const [entry, setEntry] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+
+  async function load() {
+    setErr(null);
+    try {
+      const [taskRows, routineRows, reminderRows] = await Promise.all([
+        api.tasks.list({ status: 'open' }),
+        api.routinesApi.list(false),
+        api.remindersApi.list(),
+      ]);
+      setTasks(taskRows);
+      setRoutines(routineRows);
+      setReminders(reminderRows);
+      try {
+        setJournal(await api.journalApi.get(today));
+      } catch {
+        setJournal(null);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed');
+    }
+  }
+
+  useEffect(() => { void load(); }, [today, liveKey]);
+
+  async function appendLog(e: FormEvent) {
+    e.preventDefault();
+    const text = entry.trim();
+    if (!text) return;
+    setEntry('');
+    await api.journalApi.appendLog(today, text);
+    await load();
+  }
+
+  const dueTasks = tasks
+    .filter((task) => task.status === 'open' && task.due && datePart(task.due) <= today)
+    .sort(compareTasksByDue);
+  const pendingReminders = reminders.filter((r) => r.status === 'pending' && localDatePart(r.fire_at) <= today);
+  const firedToday = reminders.filter((r) => ['sent', 'late', 'notify_failed'].includes(r.status) && localDatePart(r.fired_at || r.fire_at) === today);
+  const logLines = sectionLines(journal?.sections?.Log).slice(-4);
+
+  return (
+    <div className="view dash-view">
+      <div className="view-h">Personal OS</div>
+      <h1 className="view-title">Today</h1>
+      <p className="view-sub">{formatLongDate(today)}</p>
+
+      {err && <p className="dash-error">{err}</p>}
+
+      <div className="dash-grid dash-grid-2">
+        <QuietPlaceholder title="Top-3 focus" phase="Phase 8" />
+        <QuietPlaceholder title="Calendar" phase="Phase 9" />
+      </div>
+
+      <section className="dash-section">
+        <div className="dash-section-head">
+          <h2>Due now</h2>
+          <button className="chip" onClick={() => onNavigate('tasks')}>all tasks</button>
+        </div>
+        {dueTasks.length === 0 ? (
+          <EmptyLine>No due or overdue open tasks.</EmptyLine>
+        ) : (
+          <div className="dash-list">
+            {dueTasks.map((task) => (
+              <TaskLine key={task.uid} task={task} today={today} onChanged={load}/>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="dash-section">
+        <div className="dash-section-head">
+          <h2>Routines</h2>
+          <button className="chip" onClick={() => onNavigate('routines')}>all routines</button>
+        </div>
+        {!routines || allRoutines(routines).length === 0 ? (
+          <EmptyLine>No routines yet.</EmptyLine>
+        ) : (
+          TIME_GROUPS.map((group) => routines[group]?.length ? (
+            <RoutineGroup key={group} label={group} routines={routines[group]} onChanged={load}/>
+          ) : null)
+        )}
+      </section>
+
+      <section className="dash-section">
+        <div className="dash-section-head">
+          <h2>Journal log</h2>
+          <button className="chip" onClick={() => onNavigate('journal')}>timeline</button>
+        </div>
+        {logLines.length === 0 ? (
+          <EmptyLine>No journal entries today.</EmptyLine>
+        ) : (
+          <div className="dash-list compact">
+            {logLines.map((line, idx) => <div key={`${line}-${idx}`} className="dash-row">{line}</div>)}
+          </div>
+        )}
+        <form className="dash-inline-form" onSubmit={appendLog}>
+          <input value={entry} onChange={(e) => setEntry(e.target.value)} placeholder="Append to today's log" />
+          <button type="submit">Add</button>
+        </form>
+      </section>
+
+      <section className="dash-section">
+        <div className="dash-section-head">
+          <h2>Reminders</h2>
+        </div>
+        {[...pendingReminders, ...firedToday].length === 0 ? (
+          <EmptyLine>No pending or fired reminders today.</EmptyLine>
+        ) : (
+          <div className="dash-strip">
+            {[...pendingReminders, ...firedToday].slice(0, 8).map((reminder) => (
+              <div key={reminder.id} className={`dash-pill ${reminder.status === 'late' ? 'warn' : ''}`}>
+                <span>{formatTime(reminder.fire_at)}</span>
+                <b>{reminder.title || reminder.kind}</b>
+                <em>{reminder.status}</em>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+export function TasksView({ liveKey }: LiveProps) {
+  const today = localIsoToday();
+  const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [domains, setDomains] = useState<Domain[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [status, setStatus] = useState('open');
+  const [domain, setDomain] = useState('');
+  const [project, setProject] = useState('');
+  const [dueWindow, setDueWindow] = useState('all');
+  const [err, setErr] = useState<string | null>(null);
+
+  async function load() {
+    setErr(null);
+    try {
+      const [taskRows, domainRows, projectRows] = await Promise.all([
+        api.tasks.list(status === 'all' ? {} : { status }),
+        api.domainsApi.list(),
+        api.projectsApi.list(),
+      ]);
+      setTasks(taskRows);
+      setDomains(domainRows);
+      setProjects(projectRows);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed');
+    }
+  }
+
+  useEffect(() => { void load(); }, [status, liveKey]);
+
+  const filtered = useMemo(() => tasks
+    .filter((task) => !domain || task.domain === domain)
+    .filter((task) => !project || task.project === project)
+    .filter((task) => dueWindow === 'all' || taskBucket(task, today) === dueWindow)
+    .sort(compareTasksByDue), [tasks, domain, project, dueWindow, today]);
+  const grouped = groupTasks(filtered, today);
+
+  return (
+    <div className="view dash-view">
+      <div className="view-h">Personal OS</div>
+      <h1 className="view-title">Tasks</h1>
+      <div className="dash-filters">
+        <Select label="Status" value={status} onChange={setStatus} options={[
+          ['open', 'open'], ['done', 'done'], ['all', 'all'],
+        ]}/>
+        <Select label="Domain" value={domain} onChange={setDomain} options={[
+          ['', 'all domains'], ...domains.map((d) => [d.slug, d.name] as [string, string]),
+        ]}/>
+        <Select label="Project" value={project} onChange={setProject} options={[
+          ['', 'all projects'], ...projects.map((p) => [p.slug, p.name] as [string, string]),
+        ]}/>
+        <Select label="Due" value={dueWindow} onChange={setDueWindow} options={[
+          ['all', 'all'], ['overdue', 'overdue'], ['today', 'today'], ['upcoming', 'upcoming'], ['someday', 'someday'],
+        ]}/>
+      </div>
+      {err && <p className="dash-error">{err}</p>}
+      {filtered.length === 0 ? (
+        <EmptyLine>No tasks match these filters.</EmptyLine>
+      ) : TASK_GROUPS.map((group) => (
+        <TaskGroup key={group} title={group} tasks={grouped[group]} today={today} onChanged={load}/>
+      ))}
+    </div>
+  );
+}
+
+export function ProjectsView({ liveKey }: LiveProps) {
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ProjectDetail | null>(null);
+  const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function loadList() {
+    setErr(null);
+    try {
+      const rows = await api.projectsApi.list();
+      setProjects(rows);
+      setSelected((current) => current || rows[0]?.slug || null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed');
+    }
+  }
+
+  async function loadDetail(slug: string | null) {
+    if (!slug) {
+      setDetail(null);
+      setTasks([]);
+      return;
+    }
+    const [projectDetail, openTasks] = await Promise.all([
+      api.projectsApi.get(slug),
+      api.tasks.list({ status: 'open', project: slug }),
+    ]);
+    setDetail(projectDetail);
+    setTasks(openTasks);
+  }
+
+  useEffect(() => { void loadList(); }, [liveKey]);
+  useEffect(() => { void loadDetail(selected).catch((e) => setErr(e instanceof Error ? e.message : 'failed')); }, [selected, liveKey]);
+
+  async function patchStatus(status: string) {
+    if (!detail) return;
+    await api.projectsApi.patch(detail.slug, { status });
+    await loadList();
+    await loadDetail(detail.slug);
+  }
+
+  return (
+    <div className="view dash-view">
+      <div className="view-h">Personal OS</div>
+      <h1 className="view-title">Projects</h1>
+      {err && <p className="dash-error">{err}</p>}
+      {projects.length === 0 ? (
+        <EmptyLine>No projects yet.</EmptyLine>
+      ) : (
+        <div className="dash-split">
+          <div className="dash-list">
+            {projects.map((project) => (
+              <button
+                key={project.slug}
+                className={`dash-card project-card ${selected === project.slug ? 'active' : ''}`}
+                onClick={() => setSelected(project.slug)}
+              >
+                <div className="dash-card-title">{project.name}</div>
+                <div className="dash-tags">
+                  <span>{project.type}</span>
+                  {project.domain && <span>{project.domain}</span>}
+                  <span>{project.status}</span>
+                  <span>{project.open_task_count} open</span>
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="dash-panel">
+            {!detail ? <EmptyLine>Select a project.</EmptyLine> : (
+              <>
+                <div className="dash-section-head">
+                  <h2>{detail.name}</h2>
+                  <select value={detail.status} onChange={(e) => void patchStatus(e.target.value)}>
+                    {['active', 'paused', 'someday', 'done'].map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <KeyValueBlock values={detail.frontmatter}/>
+                <h3 className="dash-mini-h">Open tasks</h3>
+                {tasks.length === 0 ? <EmptyLine>No open tasks in this project.</EmptyLine> : (
+                  <div className="dash-list compact">
+                    {tasks.map((task) => <TaskLine key={task.uid} task={task} today={localIsoToday()} onChanged={() => loadDetail(detail.slug)}/>)}
+                  </div>
+                )}
+                <h3 className="dash-mini-h">Recent log</h3>
+                <LogPreview body={detail.body}/>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function RoutinesView({ liveKey }: LiveProps) {
+  const [active, setActive] = useState<RoutineGroups | null>(null);
+  const [archived, setArchived] = useState<RoutineGroups | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function load() {
+    setErr(null);
+    try {
+      const [activeRows, archivedRows] = await Promise.all([
+        api.routinesApi.list(false),
+        api.routinesApi.list(true),
+      ]);
+      setActive(activeRows);
+      setArchived(archivedRows);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed');
+    }
+  }
+
+  useEffect(() => { void load(); }, [liveKey]);
+
+  const archivedOnly = archived ? allRoutines(archived).filter((r) => r.archived) : [];
+
+  return (
+    <div className="view dash-view">
+      <div className="view-h">Personal OS</div>
+      <h1 className="view-title">Routines</h1>
+      {err && <p className="dash-error">{err}</p>}
+      {!active || allRoutines(active).length === 0 ? (
+        <EmptyLine>No active routines yet.</EmptyLine>
+      ) : TIME_GROUPS.map((group) => active[group]?.length ? (
+        <section className="dash-section" key={group}>
+          <h2>{labelTime(group)}</h2>
+          <div className="routine-grid">
+            {active[group].map((routine) => <RoutineCard key={routine.slug} routine={routine} liveKey={liveKey} onChanged={load}/>)}
+          </div>
+        </section>
+      ) : null)}
+
+      <section className="dash-section">
+        <button className="dash-collapse" onClick={() => setShowArchived((v) => !v)}>
+          Archived routines ({archivedOnly.length})
+        </button>
+        {showArchived && (
+          <div className="dash-list compact">
+            {archivedOnly.length === 0 ? <EmptyLine>No archived routines.</EmptyLine> : archivedOnly.map((routine) => (
+              <div className="dash-row" key={routine.slug}>
+                <span>{routine.name}</span>
+                <span className="dash-muted">{labelTime(routine.time_of_day)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+export function JournalView({ liveKey }: LiveProps) {
+  const today = localIsoToday();
+  const [days, setDays] = useState<JournalDaySummary[]>([]);
+  const [selected, setSelected] = useState<string>(today);
+  const [detail, setDetail] = useState<JournalDay | null>(null);
+  const [entry, setEntry] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+
+  async function loadDays() {
+    setErr(null);
+    try {
+      const rows = await api.journalApi.list(60);
+      setDays(rows);
+      if (!selected && rows[0]) setSelected(rows[0].date);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed');
+    }
+  }
+
+  async function loadDetail(day: string) {
+    try {
+      setDetail(await api.journalApi.get(day));
+    } catch {
+      setDetail(null);
+    }
+  }
+
+  useEffect(() => { void loadDays(); }, [liveKey]);
+  useEffect(() => { void loadDetail(selected); }, [selected, liveKey]);
+
+  async function appendLog(e: FormEvent) {
+    e.preventDefault();
+    const text = entry.trim();
+    if (!text) return;
+    setEntry('');
+    await api.journalApi.appendLog(selected, text);
+    await loadDays();
+    await loadDetail(selected);
+  }
+
+  async function setScale(kind: 'mood' | 'energy', value: number | null) {
+    const updated = await api.journalApi.patch(selected, { [kind]: value });
+    setDetail(updated);
+    await loadDays();
+  }
+
+  return (
+    <div className="view dash-view">
+      <div className="view-h">Personal OS</div>
+      <h1 className="view-title">Journal</h1>
+      {err && <p className="dash-error">{err}</p>}
+      <div className="dash-split journal-split">
+        <div className="dash-list">
+          {days.length === 0 ? <EmptyLine>No journal days yet.</EmptyLine> : days.map((day) => (
+            <button
+              key={day.date}
+              className={`dash-card journal-day ${selected === day.date ? 'active' : ''}`}
+              onClick={() => setSelected(day.date)}
+            >
+              <b>{formatLongDate(day.date)}</b>
+              <span>{day.log_count} log entries</span>
+              <div className="dash-tags">
+                {day.mood && <span>mood {day.mood}</span>}
+                {day.energy && <span>energy {day.energy}</span>}
+                {day.has_reflections && <span>reflections</span>}
+              </div>
+            </button>
+          ))}
+        </div>
+        <div className="dash-panel">
+          <div className="dash-section-head">
+            <h2>{formatLongDate(selected)}</h2>
+            <button className="chip" onClick={() => setSelected(today)}>today</button>
+          </div>
+          <ScaleSetter label="Mood" value={detail?.mood ?? null} onSet={(v) => void setScale('mood', v)}/>
+          <ScaleSetter label="Energy" value={detail?.energy ?? null} onSet={(v) => void setScale('energy', v)}/>
+          <form className="dash-inline-form" onSubmit={appendLog}>
+            <input value={entry} onChange={(e) => setEntry(e.target.value)} placeholder="Append to log" />
+            <button type="submit">Add</button>
+          </form>
+          {!detail ? (
+            <EmptyLine>No entries for this day yet.</EmptyLine>
+          ) : (
+            <>
+              <SectionBlock title="Log" body={detail.sections.Log}/>
+              <SectionBlock title="Tasks" body={detail.sections.Tasks}/>
+              <SectionBlock title="Reflections" body={detail.sections.Reflections}/>
+              <h3 className="dash-mini-h">Day assembly</h3>
+              <div className="dash-list compact">
+                {detail.tasks.slice(0, 8).map((task) => <TaskLine key={task.uid} task={task} today={selected} onChanged={() => loadDetail(selected)}/>)}
+                {detail.routine_completions.map((routine) => (
+                  <div className="dash-row" key={`${routine.routine_id}-${routine.date}`}>
+                    <span>{routine.name}</span>
+                    <span className="dash-muted">{labelTime(routine.time_of_day)}</span>
+                  </div>
+                ))}
+                {detail.tasks.length === 0 && detail.routine_completions.length === 0 && (
+                  <EmptyLine>No tasks or routine completions assembled for this day.</EmptyLine>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function InboxTriageView({ liveKey }: LiveProps) {
+  const [items, setItems] = useState<CaptureTriageItem[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function load() {
+    setErr(null);
+    try {
+      setItems(await api.captureTriage.list());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed');
+    }
+  }
+
+  useEffect(() => { void load(); }, [liveKey]);
+
+  async function act(item: CaptureTriageItem, type: CaptureTriageTarget) {
+    setBusy(item.id);
+    try {
+      await api.captureTriage.reclassify(item.id, type);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="view dash-view">
+      <div className="view-h">Personal OS</div>
+      <h1 className="view-title">Inbox triage</h1>
+      {err && <p className="dash-error">{err}</p>}
+      {items.length === 0 ? (
+        <EmptyLine>No captures need triage.</EmptyLine>
+      ) : (
+        <div className="dash-list">
+          {items.map((item) => (
+            <div className="dash-card triage-card" key={item.id}>
+              <div className="dash-row-main">
+                <b>{item.original_text}</b>
+                <span className="dash-muted">
+                  {item.detected_type}
+                  {typeof item.confidence === 'number' ? ` · ${Math.round(item.confidence * 100)}%` : ''}
+                </span>
+              </div>
+              <div className="dash-tags">
+                {triageTargets(item).map((target) => (
+                  <button
+                    key={target}
+                    className={`chip ${target === item.detected_type ? 'active' : ''}`}
+                    disabled={busy === item.id}
+                    onClick={() => void act(item, target)}
+                  >
+                    {target === item.detected_type ? `accept ${target}` : target}
+                  </button>
+                ))}
+                <button className="chip muted" disabled={busy === item.id} onClick={() => void act(item, 'dismiss')}>
+                  dismiss
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskGroup({ title, tasks, today, onChanged }: { title: string; tasks: TaskRow[]; today: string; onChanged: () => void }) {
+  if (tasks.length === 0) return null;
+  return (
+    <section className="dash-section">
+      <h2>{title}</h2>
+      <div className="dash-list">
+        {tasks.map((task) => <TaskLine key={task.uid} task={task} today={today} onChanged={onChanged}/>)}
+      </div>
+    </section>
+  );
+}
+
+function TaskLine({ task, today, onChanged }: { task: TaskRow; today: string; onChanged: () => void }) {
+  const [due, setDue] = useState(task.due ?? '');
+  const [priority, setPriority] = useState<Priority>(task.priority);
+  useEffect(() => {
+    setDue(task.due ?? '');
+    setPriority(task.priority);
+  }, [task.due, task.priority]);
+  const bucket = taskBucket(task, today);
+
+  async function savePatch(next: { due?: string | null; priority?: Priority }) {
+    await api.tasks.patch(task.uid, next);
+    onChanged();
+  }
+
+  return (
+    <div className={`dash-card task-line ${task.checked ? 'done' : ''}`}>
+      <button className="task-check" onClick={() => api.tasks.toggle(task.uid).then(onChanged)} aria-label="Toggle task">
+        {task.checked ? 'x' : ''}
+      </button>
+      <div className="dash-row-main">
+        <b>{task.text}</b>
+        <span className="dash-muted">
+          {task.due ? `${formatDue(task.due)}${bucket === 'overdue' ? ' · overdue' : ''}` : 'no due date'}
+          {task.project ? ` · ${task.project}` : ''}
+        </span>
+        <div className="dash-tags">
+          {task.priority && <span>{task.priority}</span>}
+          {task.recurrence && <span>recurs</span>}
+          {task.needs_triage && <span className="warn">needs triage</span>}
+          {task.recurrence_unparsed && <span className="warn">recurrence unparsed</span>}
+        </div>
+      </div>
+      <div className="task-edit">
+        <input
+          value={due}
+          placeholder="due"
+          onChange={(e) => setDue(e.target.value)}
+          onBlur={() => { if ((task.due ?? '') !== due) void savePatch({ due: due.trim() || null }); }}
+        />
+        <select
+          value={priority ?? ''}
+          onChange={(e) => {
+            const next = (e.target.value || null) as Priority;
+            setPriority(next);
+            void savePatch({ priority: next });
+          }}
+        >
+          {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function RoutineGroup({ label, routines, onChanged }: { label: TimeOfDay; routines: RoutineRow[]; onChanged: () => void }) {
+  return (
+    <div className="routine-group">
+      <h3 className="dash-mini-h">{labelTime(label)}</h3>
+      <div className="dash-list compact">
+        {routines.map((routine) => (
+          <div key={routine.slug} className="dash-row">
+            <button className={`mini-toggle ${routine.completed_today ? 'on' : ''}`} onClick={() => api.routinesApi.toggle(routine.slug).then(onChanged)}>
+              {routine.completed_today ? 'done' : 'mark'}
+            </button>
+            <span>{routine.name}</span>
+            <span className="dash-muted">streak {routine.streak.current}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RoutineCard({ routine, liveKey, onChanged }: { routine: RoutineRow; liveKey: string; onChanged: () => void }) {
+  const [progress, setProgress] = useState<RoutineProgress | null>(null);
+  useEffect(() => {
+    api.routinesApi.progress(routine.slug, 30).then(setProgress).catch(() => setProgress(null));
+  }, [routine.slug, liveKey]);
+
+  return (
+    <div className="dash-card routine-card">
+      <div className="dash-section-head">
+        <h3>{routine.name}</h3>
+        <button className={`mini-toggle ${routine.completed_today ? 'on' : ''}`} onClick={() => api.routinesApi.toggle(routine.slug).then(onChanged)}>
+          {routine.completed_today ? 'done' : 'today'}
+        </button>
+      </div>
+      {routine.description && <p>{routine.description}</p>}
+      <div className="dash-tags">
+        <span>current {routine.streak.current}</span>
+        <span>longest {routine.streak.longest}</span>
+        <span>{Math.round(routine.streak.rate_30d * 100)}% / 30d</span>
+        {routine.streak.fixed && <span>{routine.streak.fixed.days_done}/{routine.streak.fixed.target_days}</span>}
+      </div>
+      <ProgressBars dates={progress?.completion_dates ?? []}/>
+      {routine.streak.fixed && (
+        <div className="routine-fixed">
+          <div style={{ width: `${routine.streak.fixed.target_days ? (routine.streak.fixed.days_done / routine.streak.fixed.target_days) * 100 : 0}%` }}/>
+        </div>
+      )}
+      <button className="chip muted" onClick={() => api.routinesApi.archive(routine.slug).then(onChanged)}>archive</button>
+    </div>
+  );
+}
+
+function ProgressBars({ dates }: { dates: string[] }) {
+  const set = new Set(dates);
+  const days = lastNDays(30);
+  return (
+    <div className="routine-bars" aria-label="30-day completion graph">
+      {days.map((day) => <span key={day} className={set.has(day) ? 'on' : ''} title={day}/>)}
+    </div>
+  );
+}
+
+function KeyValueBlock({ values }: { values: Record<string, unknown> }) {
+  const rows = Object.entries(values).filter(([, value]) => value !== null && value !== undefined && value !== '');
+  if (rows.length === 0) return <EmptyLine>No frontmatter fields.</EmptyLine>;
+  return (
+    <div className="kv-block">
+      {rows.map(([key, value]) => (
+        <div key={key}>
+          <span>{key}</span>
+          <b>{String(value)}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LogPreview({ body }: { body: string }) {
+  const lines = sectionLines(parseMarkdownSections(body).Log).slice(-6).reverse();
+  if (lines.length === 0) return <EmptyLine>No project log entries.</EmptyLine>;
+  return <div className="dash-list compact">{lines.map((line, idx) => <div key={`${line}-${idx}`} className="dash-row">{line}</div>)}</div>;
+}
+
+function SectionBlock({ title, body }: { title: string; body?: string }) {
+  const lines = sectionLines(body);
+  return (
+    <section className="dash-section nested">
+      <h3 className="dash-mini-h">{title}</h3>
+      {lines.length === 0 ? <EmptyLine>No {title.toLowerCase()} yet.</EmptyLine> : (
+        <div className="dash-list compact">{lines.map((line, idx) => <div key={`${line}-${idx}`} className="dash-row">{line}</div>)}</div>
+      )}
+    </section>
+  );
+}
+
+function ScaleSetter({ label, value, onSet }: { label: string; value: number | null; onSet: (value: number | null) => void }) {
+  return (
+    <div className="scale-setter">
+      <span>{label}</span>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} className={value === n ? 'active' : ''} onClick={() => onSet(value === n ? null : n)}>{n}</button>
+      ))}
+    </div>
+  );
+}
+
+function QuietPlaceholder({ title, phase }: { title: string; phase: string }) {
+  return (
+    <div className="dash-placeholder">
+      <span>{title}</span>
+      <b>{phase}</b>
+    </div>
+  );
+}
+
+function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: [string, string][] }) {
+  return (
+    <label>
+      <span>{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function EmptyLine({ children }: { children: ReactNode }) {
+  return <p className="dash-empty">{children}</p>;
+}
+
+function allRoutines(groups: RoutineGroups): RoutineRow[] {
+  return TIME_GROUPS.flatMap((group) => groups[group] ?? []);
+}
+
+function groupTasks(tasks: TaskRow[], today: string): Record<typeof TASK_GROUPS[number], TaskRow[]> {
+  return {
+    overdue: tasks.filter((task) => taskBucket(task, today) === 'overdue'),
+    today: tasks.filter((task) => taskBucket(task, today) === 'today'),
+    upcoming: tasks.filter((task) => taskBucket(task, today) === 'upcoming'),
+    someday: tasks.filter((task) => taskBucket(task, today) === 'someday'),
+  };
+}
+
+function taskBucket(task: TaskRow, today: string): typeof TASK_GROUPS[number] {
+  const due = datePart(task.due);
+  if (!due) return 'someday';
+  if (due < today && task.status === 'open') return 'overdue';
+  if (due === today) return 'today';
+  return 'upcoming';
+}
+
+function compareTasksByDue(a: TaskRow, b: TaskRow): number {
+  const ad = a.due ?? '9999-99-99';
+  const bd = b.due ?? '9999-99-99';
+  return ad.localeCompare(bd) || a.text.localeCompare(b.text);
+}
+
+function triageTargets(item: CaptureTriageItem): CaptureTriageTarget[] {
+  const detected = item.detected_type as CaptureTriageTarget;
+  const common: CaptureTriageTarget[] = ['task', 'journal', 'note', 'project_update', 'routine_done', 'quote', 'content'];
+  return [detected, ...common.filter((target) => target !== detected)];
+}
+
+function parseMarkdownSections(markdown: string): Record<string, string> {
+  const lines = markdown.split(/\r?\n/);
+  const sections: Record<string, string[]> = {};
+  let current = '';
+  for (const line of lines) {
+    const match = /^##\s+(.+?)\s*$/.exec(line);
+    if (match) {
+      current = match[1].trim();
+      sections[current] = sections[current] || [];
+      continue;
+    }
+    if (current) sections[current].push(line);
+  }
+  return Object.fromEntries(Object.entries(sections).map(([key, value]) => [key, value.join('\n').trim()]));
+}
+
+function sectionLines(body?: string): string[] {
+  return (body ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function datePart(value?: string | null): string {
+  if (!value) return '';
+  return value.slice(0, 10);
+}
+
+function localDatePart(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return datePart(value);
+  return isoFromDate(date);
+}
+
+function localIsoToday(): string {
+  return isoFromDate(new Date());
+}
+
+function isoFromDate(date: Date): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function lastNDays(n: number): string[] {
+  const today = new Date();
+  const days: string[] = [];
+  for (let i = n - 1; i >= 0; i -= 1) {
+    const day = new Date(today);
+    day.setDate(today.getDate() - i);
+    days.push(isoFromDate(day));
+  }
+  return days;
+}
+
+function formatDue(value: string): string {
+  const day = datePart(value);
+  const time = value.includes('T') ? value.slice(11, 16) : '';
+  return time ? `${day} ${time}` : day;
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(11, 16) || value;
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatLongDate(value: string): string {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function labelTime(value: TimeOfDay): string {
+  return value;
+}

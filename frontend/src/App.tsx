@@ -39,6 +39,9 @@ import { TweetThreadsView } from './components/TweetThreadsView';
 import { TweetThreadView } from './components/TweetThreadView';
 import { PodcastsListView } from './components/PodcastsListView';
 import { PodcastView } from './components/PodcastView';
+import {
+  InboxTriageView, JournalView, ProjectsView, RoutinesView, TasksView, TodayView,
+} from './components/DashboardViews';
 
 export function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -217,6 +220,7 @@ export function App() {
       <main className="main">
         {view === 'article' && article && <ArticleView article={article} onAsk={openAsk} onNavigate={navigate}/>}
         {view === 'article' && !article && <Loading/>}
+        {view === 'today' && <TodayView liveKey={tickKey} onNavigate={navigate}/>}
         {view === 'digest' && digest && <DigestView digest={digest} onNavigate={navigate} onAsk={openAsk}/>}
         {view === 'digest' && !digest && <Loading/>}
         {view === 'digest_audit' && <DigestAuditView date={currentDate ?? undefined} onNavigate={navigate}/>}
@@ -234,6 +238,11 @@ export function App() {
           />
         )}
         {view === 'note' && currentNote !== null && <NoteView noteId={currentNote} onNavigate={navigate}/>}
+        {view === 'tasks' && <TasksView liveKey={tickKey}/>}
+        {view === 'projects' && <ProjectsView liveKey={tickKey}/>}
+        {view === 'routines' && <RoutinesView liveKey={tickKey}/>}
+        {view === 'journal' && <JournalView liveKey={tickKey}/>}
+        {view === 'inbox_triage' && <InboxTriageView liveKey={tickKey}/>}
         {view === 'roundtables' && <RoundtablesListView onNavigate={navigate}/>}
         {view === 'roundtable' && currentRoundtable !== null && (
           <RoundtableView roundtableId={currentRoundtable} onNavigate={navigate}/>
