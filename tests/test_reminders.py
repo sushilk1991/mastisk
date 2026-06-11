@@ -32,6 +32,7 @@ def client(vault_tmp, data_tmp, db):
 def _insert_reminder(
     db,
     *,
+    entity_id: str = "abc123",
     fire_at: str = "2026-06-11T09:00:00+00:00",
     status: str = "pending",
     attempts: int = 0,
@@ -41,8 +42,8 @@ def _insert_reminder(
     cur = db.execute(
         """INSERT INTO reminders
            (entity_type, entity_id, fire_at, lead_minutes, kind, status, attempts, title, body)
-           VALUES ('task', 'abc123', ?, 15, 'task_due', ?, ?, ?, ?)""",
-        (fire_at, status, attempts, title, body),
+           VALUES ('task', ?, ?, 15, 'task_due', ?, ?, ?, ?)""",
+        (entity_id, fire_at, status, attempts, title, body),
     )
     return int(cur.lastrowid)
 
@@ -175,6 +176,70 @@ def test_task_due_reminder_cancels_if_task_is_already_done(db, data_tmp, monkeyp
     row = db.execute("SELECT status, last_error FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
     assert row["status"] == "cancelled"
     assert row["last_error"] == "task is not open"
+
+
+def test_task_due_reminder_reschedules_at_fire_time_when_due_moved_later(
+    db, data_tmp, monkeypatch
+):
+    _configure_notify(data_tmp)
+    db.execute(
+        """INSERT INTO tasks
+           (uid, host_path, line_number, text, checked, status, due,
+            reminder_lead_minutes, tags_json, links_json)
+           VALUES ('abc123', 'journal/2026-06-11.md', 1, 'Call Sam later', 0, 'open',
+                   '2026-06-11T10:00:00+00:00', 15, '[]', '[]')"""
+    )
+    reminder_id = _insert_reminder(
+        db,
+        fire_at="2026-06-11T09:00:00+00:00",
+        body="Old task text",
+    )
+    monkeypatch.setattr(
+        "mastisk.agents.reminder_engine.notify.send",
+        lambda *args, **kwargs: pytest.fail("future task reminder should reschedule"),
+    )
+
+    from mastisk.agents.reminder_engine import reminder_tick
+
+    reminder_tick(now=datetime(2026, 6, 11, 9, 0, tzinfo=UTC), ensure_daily_summary=False)
+
+    row = db.execute(
+        "SELECT status, fire_at, body, fired_at FROM reminders WHERE id = ?",
+        (reminder_id,),
+    ).fetchone()
+    assert row["status"] == "pending"
+    assert row["fire_at"] == "2026-06-11T09:45:00+00:00"
+    assert row["body"] == "Call Sam later"
+    assert row["fired_at"] is None
+
+
+def test_task_due_reminder_cancels_if_due_was_removed_before_fire(
+    db, data_tmp, monkeypatch
+):
+    _configure_notify(data_tmp)
+    db.execute(
+        """INSERT INTO tasks
+           (uid, host_path, line_number, text, checked, status, due,
+            reminder_lead_minutes, tags_json, links_json)
+           VALUES ('abc123', 'journal/2026-06-11.md', 1, 'Call Sam', 0, 'open',
+                   NULL, 15, '[]', '[]')"""
+    )
+    reminder_id = _insert_reminder(db)
+    monkeypatch.setattr(
+        "mastisk.agents.reminder_engine.notify.send",
+        lambda *args, **kwargs: pytest.fail("task without due should not notify"),
+    )
+
+    from mastisk.agents.reminder_engine import reminder_tick
+
+    reminder_tick(now=datetime(2026, 6, 11, 9, 0, tzinfo=UTC), ensure_daily_summary=False)
+
+    row = db.execute(
+        "SELECT status, last_error FROM reminders WHERE id = ?",
+        (reminder_id,),
+    ).fetchone()
+    assert row["status"] == "cancelled"
+    assert row["last_error"] == "task due removed"
 
 
 def test_reclaim_firing_reminders_returns_orphaned_claims_to_pending(db):

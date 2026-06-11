@@ -115,6 +115,84 @@ def test_task_routes_create_filter_toggle_and_patch_file_first(client, vault_tmp
     assert "🔽" in host_text
 
 
+def test_task_patch_due_reschedules_pending_task_due_reminder(
+    client, db, data_tmp, vault_tmp
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+    from mastisk.tasks.sync import append_task_to_host
+
+    reload_settings()
+    task = append_task_to_host(
+        vault_tmp / "journal" / "2026-06-11.md",
+        text="Call Sam",
+        due="2099-01-01T09:00:00",
+        uid="patch1",
+        reminder_lead_minutes=15,
+    )
+    db.execute(
+        """INSERT INTO reminders
+           (entity_type, entity_id, fire_at, lead_minutes, kind, status, title, body)
+           VALUES ('task', ?, '2099-01-01T08:45:00+00:00', 15,
+                   'task_due', 'pending', 'Task due', 'Call Sam')""",
+        (task["uid"],),
+    )
+
+    patched = client.patch(
+        f"/api/tasks/{task['uid']}",
+        json={"due": "2099-01-01T10:00:00"},
+    )
+
+    assert patched.status_code == 200, patched.text
+    row = db.execute(
+        "SELECT status, fire_at, body FROM reminders WHERE entity_id = ?",
+        (task["uid"],),
+    ).fetchone()
+    assert dict(row) == {
+        "status": "pending",
+        "fire_at": "2099-01-01T04:15:00+00:00",
+        "body": "Call Sam",
+    }
+
+
+def test_task_patch_due_removed_cancels_pending_task_due_reminder(
+    client, db, data_tmp, vault_tmp
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+    from mastisk.tasks.sync import append_task_to_host
+
+    reload_settings()
+    task = append_task_to_host(
+        vault_tmp / "journal" / "2026-06-11.md",
+        text="Call Sam",
+        due="2099-01-01T09:00:00",
+        uid="patch2",
+        reminder_lead_minutes=15,
+    )
+    db.execute(
+        """INSERT INTO reminders
+           (entity_type, entity_id, fire_at, lead_minutes, kind, status, title, body)
+           VALUES ('task', ?, '2099-01-01T08:45:00+00:00', 15,
+                   'task_due', 'pending', 'Task due', 'Call Sam')""",
+        (task["uid"],),
+    )
+
+    patched = client.patch(f"/api/tasks/{task['uid']}", json={"due": None})
+
+    assert patched.status_code == 200, patched.text
+    row = db.execute(
+        "SELECT status, last_error FROM reminders WHERE entity_id = ?",
+        (task["uid"],),
+    ).fetchone()
+    assert dict(row) == {
+        "status": "cancelled",
+        "last_error": "task due removed",
+    }
+
+
 def test_task_routes_validate_due_and_emit_time_marker(client, vault_tmp):
     invalid = client.post("/api/tasks", json={"text": "Bad date", "due": "someday"})
     assert invalid.status_code == 422

@@ -93,6 +93,28 @@ def create_task_due_reminder(
         return int(cur.lastrowid)
 
 
+def reconcile_task_due_reminders(task_uid: str) -> int:
+    """Refresh pending task_due reminders from the current task mirror row."""
+    with connect() as conn:
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM reminders
+                   WHERE entity_type = 'task'
+                     AND entity_id = ?
+                     AND kind = 'task_due'
+                     AND status = 'pending'
+                     AND deleted_at IS NULL""",
+                (task_uid,),
+            )
+        ]
+    changed = 0
+    for row in rows:
+        if _sync_pending_task_due_reminder(row):
+            changed += 1
+    return changed
+
+
 def create_custom_reminder(
     *,
     fire_at: str,
@@ -209,10 +231,10 @@ def _claim_reminder(reminder_id: int, now_iso: str) -> bool:
 
 
 def _fire_claimed(row: dict, now_dt: datetime) -> None:
-    cancel_reason = _task_due_cancel_reason(row)
-    if cancel_reason is not None:
-        _cancel_claimed(row, cancel_reason)
+    refreshed = _refresh_claimed_task_due_reminder(row, now_dt)
+    if refreshed is None:
         return
+    row = refreshed
 
     title, body, url = _notification_content(row)
     if notify.send(title, body, url=url):
@@ -282,6 +304,118 @@ def _handle_notify_failure(row: dict, now_dt: datetime) -> None:
     log.warning("reminder %s notify failed; retrying at %s", row["id"], _utc_iso(next_at))
 
 
+def _sync_pending_task_due_reminder(row: dict) -> bool:
+    target, reason = _task_due_target(row)
+    if reason is not None:
+        with connect() as conn:
+            cur = conn.execute(
+                """UPDATE reminders
+                   SET status = 'cancelled',
+                       next_attempt_at = NULL,
+                       last_error = ?
+                   WHERE id = ? AND status = 'pending' AND deleted_at IS NULL""",
+                (reason, row["id"]),
+            )
+            return cur.rowcount == 1
+    assert target is not None
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE reminders
+               SET fire_at = ?,
+                   lead_minutes = ?,
+                   title = 'Task due',
+                   body = ?,
+                   next_attempt_at = NULL,
+                   last_error = NULL
+               WHERE id = ? AND status = 'pending' AND deleted_at IS NULL""",
+            (target["fire_at"], target["lead_minutes"], target["body"], row["id"]),
+        )
+        return cur.rowcount == 1
+
+
+def _refresh_claimed_task_due_reminder(row: dict, now_dt: datetime) -> dict | None:
+    target, reason = _task_due_target(row)
+    if reason is not None:
+        _cancel_claimed(row, reason)
+        return None
+    if target is None:
+        return row
+    if _parse_datetime(target["fire_at"]) > now_dt:
+        _reschedule_claimed(row, target)
+        return None
+    refreshed = {
+        **row,
+        "fire_at": target["fire_at"],
+        "lead_minutes": target["lead_minutes"],
+        "title": "Task due",
+        "body": target["body"],
+    }
+    with connect() as conn:
+        conn.execute(
+            """UPDATE reminders
+               SET fire_at = ?,
+                   lead_minutes = ?,
+                   title = 'Task due',
+                   body = ?,
+                   last_error = NULL
+               WHERE id = ? AND status = 'firing' AND deleted_at IS NULL""",
+            (target["fire_at"], target["lead_minutes"], target["body"], row["id"]),
+        )
+    return refreshed
+
+
+def _task_due_target(row: dict) -> tuple[dict | None, str | None]:
+    if row.get("kind") != "task_due" or row.get("entity_type") != "task":
+        return None, None
+    with connect() as conn:
+        task = conn.execute(
+            """SELECT status, no_reminder, deleted_at, due, reminder_lead_minutes, text
+               FROM tasks WHERE uid = ?""",
+            (row.get("entity_id"),),
+        ).fetchone()
+    if task is None:
+        return None, "task missing"
+    if task["deleted_at"] is not None:
+        return None, "task deleted"
+    if task["no_reminder"]:
+        return None, "task no_reminder"
+    if task["status"] != "open":
+        return None, "task is not open"
+    if not task["due"]:
+        return None, "task due removed"
+    lead_minutes = task["reminder_lead_minutes"]
+    if lead_minutes is None:
+        lead_minutes = row.get("lead_minutes")
+    if lead_minutes is None:
+        return None, "task reminder lead removed"
+    try:
+        due_dt = _parse_datetime(task["due"])
+    except ValueError:
+        return None, "task due unparsable"
+    fire_at = due_dt - timedelta(minutes=int(lead_minutes))
+    return {
+        "fire_at": _utc_iso(fire_at),
+        "lead_minutes": int(lead_minutes),
+        "body": task["text"],
+    }, None
+
+
+def _reschedule_claimed(row: dict, target: dict) -> None:
+    with connect() as conn:
+        conn.execute(
+            """UPDATE reminders
+               SET status = 'pending',
+                   fire_at = ?,
+                   lead_minutes = ?,
+                   title = 'Task due',
+                   body = ?,
+                   next_attempt_at = NULL,
+                   last_error = NULL
+               WHERE id = ? AND status = 'firing' AND deleted_at IS NULL""",
+            (target["fire_at"], target["lead_minutes"], target["body"], row["id"]),
+        )
+
+
 def _cancel_claimed(row: dict, reason: str) -> None:
     with connect() as conn:
         conn.execute(
@@ -300,25 +434,6 @@ def _cancel_claimed(row: dict, reason: str) -> None:
             kind="reminder",
             payload={"kind": row["kind"], "entity_id": row["entity_id"], "reason": reason},
         )
-
-
-def _task_due_cancel_reason(row: dict) -> str | None:
-    if row.get("kind") != "task_due" or row.get("entity_type") != "task":
-        return None
-    with connect() as conn:
-        task = conn.execute(
-            "SELECT status, no_reminder, deleted_at FROM tasks WHERE uid = ?",
-            (row.get("entity_id"),),
-        ).fetchone()
-    if task is None:
-        return None
-    if task["deleted_at"] is not None:
-        return "task deleted"
-    if task["no_reminder"]:
-        return "task no_reminder"
-    if task["status"] != "open":
-        return "task is not open"
-    return None
 
 
 def _notification_content(row: dict) -> tuple[str, str, str | None]:

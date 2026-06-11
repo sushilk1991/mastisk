@@ -35,6 +35,46 @@ def test_task_scan_soft_deletes_tasks_removed_from_file(db, vault_tmp):
     assert row["deleted_at"] is not None
 
 
+def test_task_scan_due_change_reschedules_pending_task_due_reminder(db, data_tmp, vault_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+    from mastisk.tasks.sync import scan_task_hosts
+
+    reload_settings()
+    host = vault_tmp / "journal" / "2026-06-11.md"
+    host.parent.mkdir(parents=True)
+    host.write_text(
+        "## Tasks\n- [ ] call Sam 📅 2099-01-01 ⏰ 09:00 🆔 scan1\n",
+        encoding="utf-8",
+    )
+    scan_task_hosts([host])
+    db.execute(
+        "UPDATE tasks SET reminder_lead_minutes = 15 WHERE uid = 'scan1'"
+    )
+    db.execute(
+        """INSERT INTO reminders
+           (entity_type, entity_id, fire_at, lead_minutes, kind, status, title, body)
+           VALUES ('task', 'scan1', '2099-01-01T08:45:00+00:00', 15,
+                   'task_due', 'pending', 'Task due', 'call Sam')"""
+    )
+
+    host.write_text(
+        "## Tasks\n- [ ] call Sam later 📅 2099-01-01 ⏰ 10:00 🆔 scan1\n",
+        encoding="utf-8",
+    )
+    scan_task_hosts([host])
+
+    row = db.execute(
+        "SELECT status, fire_at, body FROM reminders WHERE entity_id = 'scan1'",
+    ).fetchone()
+    assert dict(row) == {
+        "status": "pending",
+        "fire_at": "2099-01-01T04:15:00+00:00",
+        "body": "call Sam later",
+    }
+
+
 def test_task_scan_reassigns_duplicate_uid_in_later_host(db, vault_tmp):
     from mastisk.tasks.sync import scan_task_hosts
 

@@ -118,6 +118,7 @@ def scan_task_hosts(
                             uid,
                         ),
                     )
+                    _reconcile_task_due_reminders(uid)
                     upserted += 1
         _soft_delete_disappeared(conn, scanned_hosts, seen)
     return {"upserted": upserted, "assigned": assigned}
@@ -337,3 +338,9 @@ def _soft_delete_disappeared(conn, scanned_hosts: list[str], seen: set[str]) -> 
         sql += f" AND uid NOT IN ({uid_placeholders})"
         params.extend(seen)
     conn.execute(sql, tuple(params))
+
+
+def _reconcile_task_due_reminders(uid: str) -> None:
+    from mastisk.agents.reminder_engine import reconcile_task_due_reminders
+
+    reconcile_task_due_reminders(uid)

@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from mastisk.agents.reminder_engine import reconcile_task_due_reminders
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import get_project
 from mastisk.tasks.parser import normalize_date_or_datetime
@@ -103,6 +104,8 @@ async def toggle_task_endpoint(uid: str) -> dict:
         raise HTTPException(status_code=404, detail="task line not found; mirror refreshed") from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="task not found")
+    if "due" in req.model_fields_set:
+        reconcile_task_due_reminders(uid)
     return updated
 
 
