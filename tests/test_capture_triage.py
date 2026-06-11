@@ -22,6 +22,17 @@ def test_capture_triage_frontend_client_stays_outside_capture_tunnel_scope():
     assert "/capture/triage" not in api_source
 
 
+def test_capture_triage_frontend_hides_routine_done_without_candidate():
+    view_source = Path("frontend/src/components/DashboardViews.tsx").read_text(
+        encoding="utf-8"
+    )
+    api_source = Path("frontend/src/api.ts").read_text(encoding="utf-8")
+
+    assert "function hasRoutineCandidate" in view_source
+    assert "target !== 'routine_done' || hasRoutineCandidate(item)" in view_source
+    assert "await throwApiError(r)" in api_source
+
+
 def test_capture_triage_lists_persisted_triage_shapes(db, vault_tmp, data_tmp):
     from mastisk.journal import append_log
     from mastisk.projects.sync import append_project_log, create_project_file
@@ -184,3 +195,68 @@ def test_capture_triage_reclassifies_typed_note_to_note_in_place(
     note_text = (vault_tmp / note["path"]).read_text(encoding="utf-8")
     assert "needs_triage: false" in note_text
     assert "type: note" in note_text
+
+
+def test_capture_triage_routine_done_without_candidate_returns_422_and_keeps_marker(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.routes.notes import persist_note_capture
+
+    note = persist_note_capture(
+        body="did something routine-ish",
+        source="watch",
+        file_content=(
+            "---\n"
+            "capture:\n"
+            "  type: note\n"
+            "  confidence: 0.58\n"
+            "  body: did something routine-ish\n"
+            "needs_triage: true\n"
+            "---\n\n"
+            "did something routine-ish"
+        ),
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        r = client.post(
+            f"/api/triage/note:{note['id']}/reclassify",
+            json={"type": "routine_done"},
+        )
+
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"] == "routine_done requires a routine candidate"
+    note_text = (vault_tmp / note["path"]).read_text(encoding="utf-8")
+    assert "needs_triage: true" in note_text
+
+
+def test_capture_triage_routine_done_unknown_candidate_returns_422_and_keeps_marker(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.routes.notes import persist_note_capture
+
+    note = persist_note_capture(
+        body="did my missing routine",
+        source="watch",
+        file_content=(
+            "---\n"
+            "capture:\n"
+            "  type: routine_done\n"
+            "  routine: missing-routine\n"
+            "  confidence: 0.58\n"
+            "  body: did my missing routine\n"
+            "needs_triage: true\n"
+            "---\n\n"
+            "did my missing routine"
+        ),
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        r = client.post(
+            f"/api/triage/note:{note['id']}/reclassify",
+            json={"type": "routine_done"},
+        )
+
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"] == "routine not found: missing-routine"
+    note_text = (vault_tmp / note["path"]).read_text(encoding="utf-8")
+    assert "needs_triage: true" in note_text

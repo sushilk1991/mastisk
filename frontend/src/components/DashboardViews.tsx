@@ -775,7 +775,14 @@ function compareTasksByDue(a: TaskRow, b: TaskRow): number {
 function triageTargets(item: CaptureTriageItem): CaptureTriageTarget[] {
   const detected = item.detected_type as CaptureTriageTarget;
   const common: CaptureTriageTarget[] = ['task', 'journal', 'note', 'project_update', 'routine_done', 'quote', 'content'];
-  return [detected, ...common.filter((target) => target !== detected)];
+  const allowed = common.filter((target) => target !== 'routine_done' || hasRoutineCandidate(item));
+  const primary = detected === 'routine_done' && !hasRoutineCandidate(item) ? [] : [detected];
+  return [...primary, ...allowed.filter((target) => target !== detected)];
+}
+
+function hasRoutineCandidate(item: CaptureTriageItem): boolean {
+  const routine = item.capture.routine;
+  return typeof routine === 'string' && routine.trim().length > 0;
 }
 
 function parseMarkdownSections(markdown: string): Record<string, string> {

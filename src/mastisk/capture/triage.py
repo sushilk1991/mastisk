@@ -17,7 +17,7 @@ from mastisk.journal import append_log, scan_journal_days
 from mastisk.paths import journal_dir, projects_dir, vault_dir
 from mastisk.projects.sync import append_project_log, find_project, get_project
 from mastisk.routes.notes import atomic_write, persist_note_capture
-from mastisk.routines.sync import complete_routine_completion
+from mastisk.routines.sync import RoutineArchivedError, complete_routine_completion
 from mastisk.settings import get_settings
 from mastisk.tasks.sync import (
     append_task_to_host,
@@ -34,6 +34,10 @@ _H2_RE = re.compile(r"^##\s+(.+?)\s*$")
 _JOURNAL_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{2}:\d{2}\s+")
 _PROJECT_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+")
 _NOTE_SHAPED_TARGETS = {"note", "inbox", "person", "quote", "inventory", "content"}
+
+
+class TriageReclassifyError(ValueError):
+    """Raised when a triage item cannot be filed as the requested target."""
 
 
 def list_triage_items(limit: int = 100) -> list[dict[str, Any]]:
@@ -58,9 +62,7 @@ def reclassify_triage_item(item_id: str, target_type: CaptureTriageType) -> dict
     item = get_triage_item(item_id)
     if item is None:
         return None
-    if target_type not in {"dismiss", item["detected_type"]} and not _is_note_in_place_reclassify(
-        item, target_type
-    ):
+    if _should_file_as_target(item, target_type):
         _file_as_target(item, target_type)
     _clear_triage_marker(item, target_type=target_type)
     return {
@@ -72,6 +74,21 @@ def reclassify_triage_item(item_id: str, target_type: CaptureTriageType) -> dict
 
 def _is_note_in_place_reclassify(item: dict[str, Any], target_type: str) -> bool:
     return item.get("kind") == "note" and target_type in _NOTE_SHAPED_TARGETS
+
+
+def _should_file_as_target(item: dict[str, Any], target_type: str) -> bool:
+    if target_type == "dismiss":
+        return False
+    kind = item.get("kind")
+    if target_type == "task" and kind == "task":
+        return False
+    if target_type == "journal" and kind == "journal":
+        return False
+    if target_type == "project_update" and kind == "project_update":
+        return False
+    if _is_note_in_place_reclassify(item, target_type):
+        return False
+    return True
 
 
 def _task_items() -> list[dict[str, Any]]:
@@ -283,8 +300,14 @@ def _file_as_target(item: dict[str, Any], target_type: str) -> None:
         return
     if target_type == "routine_done":
         routine = _str_or_none(capture.get("routine"))
-        if routine:
-            complete_routine_completion(routine)
+        if not routine:
+            raise TriageReclassifyError("routine_done requires a routine candidate")
+        try:
+            updated = complete_routine_completion(routine)
+        except RoutineArchivedError as exc:
+            raise TriageReclassifyError(str(exc)) from exc
+        if updated is None:
+            raise TriageReclassifyError(f"routine not found: {routine}")
         return
     if target_type in {"note", "inbox"}:
         persist_note_capture(body=text, source="pwa")

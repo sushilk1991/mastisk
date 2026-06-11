@@ -6,7 +6,11 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from mastisk.capture.triage import list_triage_items, reclassify_triage_item
+from mastisk.capture.triage import (
+    TriageReclassifyError,
+    list_triage_items,
+    reclassify_triage_item,
+)
 
 # Localhost/tailnet trust model: triage can read vault contents and mutate
 # files, so it must never live under /api/capture, the internet-tunneled ingress.
@@ -43,7 +47,10 @@ async def reclassify_capture_triage_endpoint(
     item_id: str,
     req: TriageReclassify,
 ) -> dict:
-    result = reclassify_triage_item(item_id, req.type)
+    try:
+        result = reclassify_triage_item(item_id, req.type)
+    except TriageReclassifyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail="triage item not found")
     return result

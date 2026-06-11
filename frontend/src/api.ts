@@ -33,7 +33,7 @@ async function throwApiError(r: Response): Promise<never> {
 
 async function j<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init);
-  if (!r.ok) throw new Error(`${url} → ${r.status}`);
+  if (!r.ok) await throwApiError(r);
   return r.json() as Promise<T>;
 }
 
