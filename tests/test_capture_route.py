@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -375,6 +377,51 @@ def test_capture_journal_appends_clean_body_to_today_log(
     assert body["destination"] == "journal/2026-06-11.md"
     file_text = (vault_tmp / body["destination"]).read_text(encoding="utf-8")
     assert "- 13:05 Felt steady after lunch" in file_text
+
+
+def test_capture_journal_fallback_uses_capture_default_timezone(
+    vault_tmp,
+    data_tmp,
+    db,
+    fake_capture_router,
+    monkeypatch,
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\nbearer_token = "test-token"\ndefault_timezone = "America/Los_Angeles"\n',
+        encoding="utf-8",
+    )
+    from mastisk.routes import capture as capture_route
+    from mastisk.settings import reload_settings
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 6, 12, 0, 30, tzinfo=ZoneInfo("Asia/Kolkata"))
+            return value.astimezone(tz) if tz is not None else value
+
+    reload_settings()
+    monkeypatch.setattr(capture_route, "datetime", FixedDateTime)
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="journal",
+        confidence=0.94,
+        body="Late local thought",
+    )
+    from mastisk.app import create_app
+
+    with TestClient(create_app()) as client:
+        r = client.post(
+            "/api/capture",
+            json={"text": "journal late local thought", "source": "watch"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["destination"] == "journal/2026-06-11.md"
+    file_text = (vault_tmp / body["destination"]).read_text(encoding="utf-8")
+    assert "- 12:00 Late local thought" in file_text
 
 
 def test_capture_task_routes_to_existing_project_host(

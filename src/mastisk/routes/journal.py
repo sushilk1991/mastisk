@@ -58,7 +58,7 @@ async def get_journal_day_endpoint(day: str) -> dict:
 @router.post("/{day}/log", status_code=201)
 async def append_journal_log_endpoint(day: str, req: JournalLogCreate) -> dict:
     valid_day = _validate_day(day)
-    result = append_log(valid_day, req.text, datetime.now().astimezone())
+    result = append_log(valid_day, req.text, _now_in_capture_timezone())
     return {
         **result,
         "type": "journal",
@@ -94,3 +94,8 @@ def _validate_day(value: str) -> str:
 def _tomorrow() -> date:
     tz = ZoneInfo(get_settings().capture.default_timezone)
     return datetime.now(tz).date() + timedelta(days=1)
+
+
+def _now_in_capture_timezone() -> datetime:
+    tz = ZoneInfo(get_settings().capture.default_timezone)
+    return datetime.now(tz)

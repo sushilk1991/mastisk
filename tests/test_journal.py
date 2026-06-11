@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
@@ -275,3 +276,35 @@ def test_journal_routes_append_patch_assemble_and_validate_dates(db, vault_tmp, 
         timeline = client.get("/api/journal?limit=1")
     assert timeline.status_code == 200, timeline.text
     assert timeline.json()[0]["date"] == "2026-06-11"
+
+
+def test_journal_route_log_timestamp_uses_capture_default_timezone(
+    db,
+    vault_tmp,
+    data_tmp,
+    monkeypatch,
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n', encoding="utf-8")
+    from mastisk.routes import journal as journal_route
+    from mastisk.settings import reload_settings
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 6, 12, 0, 30, tzinfo=ZoneInfo("Asia/Kolkata"))
+            return value.astimezone(tz) if tz is not None else value
+
+    reload_settings()
+    monkeypatch.setattr(journal_route, "datetime", FixedDateTime)
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        logged = client.post(
+            "/api/journal/2026-06-11/log",
+            json={"text": "config tz wins"},
+        )
+
+    assert logged.status_code == 201, logged.text
+    assert "- 12:00 config tz wins" in (
+        vault_tmp / "journal" / "2026-06-11.md"
+    ).read_text(encoding="utf-8")

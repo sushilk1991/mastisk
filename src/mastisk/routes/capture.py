@@ -6,6 +6,7 @@ import logging
 import re
 from datetime import datetime
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 import yaml
 from fastapi import APIRouter, Header, HTTPException
@@ -18,7 +19,7 @@ from mastisk.paths import vault_dir
 from mastisk.projects.sync import append_project_log, find_project
 from mastisk.routes.notes import persist_note_capture
 from mastisk.routines.sync import RoutineArchivedError, complete_routine_completion, local_today
-from mastisk.settings import read_capture_bearer_token
+from mastisk.settings import get_settings, read_capture_bearer_token
 from mastisk.tasks.sync import append_task_to_host, journal_host_for_today
 
 router = APIRouter(prefix="/api/capture", tags=["capture"])
@@ -165,7 +166,7 @@ def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: boo
 
 
 def _persist_journal_capture(capture: Capture, *, ts: str | None, needs_triage: bool) -> dict:
-    at = _parse_client_datetime(ts) or datetime.now().astimezone()
+    at = _capture_local_datetime(ts)
     body = (
         f"{capture.body.rstrip()} #needs-triage"
         if needs_triage and "#needs-triage" not in capture.body
@@ -244,6 +245,15 @@ def _parse_client_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _capture_local_datetime(value: str | None) -> datetime:
+    tz = ZoneInfo(get_settings().capture.default_timezone)
+    parsed = _parse_client_datetime(value)
+    current = parsed or datetime.now(tz)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=tz)
+    return current.astimezone(tz)
 
 
 def _has_typed_capture_metadata(capture: Capture) -> bool:
