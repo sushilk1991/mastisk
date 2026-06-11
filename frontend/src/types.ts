@@ -360,8 +360,42 @@ export interface TaskRow {
   no_reminder?: boolean;
   review_at?: string | null;
   recurrence_unparsed: boolean;
+  position?: number;
+  focused?: boolean;
+  deleted_at?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface SlippingItem {
+  entity_type: 'task' | 'project' | string;
+  entity_id: string;
+  title: string;
+  subtitle: string;
+  domain: string | null;
+  stale_since: string;
+  computed_at: string;
+  link: string;
+}
+
+export interface ResurfaceItem {
+  kind: 'note' | string;
+  id: number | string;
+  title: string;
+  excerpt: string;
+  link: string;
+}
+
+export interface NeedsReviewItem {
+  id: number;
+  entity_type: string;
+  entity_id: string;
+  reason: string;
+  surfaced_at: string;
+  dismissed_at: string | null;
+  title: string;
+  excerpt: string;
+  link: string;
 }
 
 export interface ProjectSummary {

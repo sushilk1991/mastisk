@@ -1353,6 +1353,109 @@ a { color: inherit; }
   display: flex; align-items: center; justify-content: center;
   font-family: var(--mono);
 }
+.task-title-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+.focus-star {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--bg-sunk);
+  color: var(--fg-faint);
+  font-size: 13px;
+  line-height: 1;
+}
+.focus-star.on {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+  background: var(--accent-soft);
+}
+.focus-panel {
+  padding: 14px;
+}
+.focus-panel .dash-section-head {
+  margin-bottom: 8px;
+}
+.focus-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.focus-slot {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-height: 42px;
+}
+.focus-index {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--bg-sunk);
+  border: 1px solid var(--line-soft);
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.focus-task-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+.focus-task-row.done {
+  opacity: 0.65;
+}
+.focus-task-row b,
+.resurface-card a {
+  color: var(--fg);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.focus-task-row span,
+.focus-task-row em,
+.resurface-card p {
+  display: block;
+  margin-top: 2px;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-style: normal;
+}
+.focus-swap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+  align-items: center;
+}
+.focus-swap span {
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.focus-swap button,
+.slipping-pill button {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--fg-mute);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 7px;
+}
+.focus-swap button.muted {
+  opacity: 0.7;
+}
 .task-edit {
   display: flex; gap: 6px; align-items: center;
 }
@@ -1426,6 +1529,16 @@ a { color: inherit; }
 }
 .dash-pill b { color: var(--fg); font-weight: 500; }
 .dash-pill em { font-style: normal; color: var(--fg-faint); }
+.slipping-pill {
+  gap: 7px;
+}
+.slipping-pill button {
+  margin-left: 2px;
+}
+.resurface-card {
+  margin: 0 0 24px;
+  padding: 14px 16px;
+}
 .routine-group { margin-top: 10px; }
 .routine-grid {
   display: grid;
@@ -1500,6 +1613,30 @@ a { color: inherit; }
   color: var(--accent);
 }
 .chip.muted { opacity: 0.75; }
+.dash-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 14px 0 18px;
+}
+.dash-tabs button {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--bg-sunk);
+  color: var(--fg-mute);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 5px 10px;
+}
+.dash-tabs button.active {
+  border-color: var(--accent-soft);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.dash-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .triage-card {
   display: flex; flex-direction: column; gap: 10px;
 }

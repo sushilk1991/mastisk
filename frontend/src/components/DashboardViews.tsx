@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { api } from '../api';
+import { api, FocusFullError } from '../api';
 import type {
   CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
-  Priority, ProjectDetail, ProjectSummary, ReminderRow, RoutineGroups, RoutineProgress,
-  RoutineRow, TaskRow, TimeOfDay, View,
+  NeedsReviewItem, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
+  RoutineGroups, RoutineProgress, RoutineRow, SlippingItem, TaskRow, TimeOfDay, View,
 } from '../types';
 
 interface LiveProps {
@@ -38,6 +38,9 @@ function runMutation(action: () => Promise<void>, setErr: ErrorSetter): void {
 export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const today = localIsoToday();
   const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [focus, setFocus] = useState<TaskRow[]>([]);
+  const [slipping, setSlipping] = useState<SlippingItem[]>([]);
+  const [resurface, setResurface] = useState<ResurfaceItem | null>(null);
   const [routines, setRoutines] = useState<RoutineGroups | null>(null);
   const [journal, setJournal] = useState<JournalDay | null>(null);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
@@ -47,14 +50,20 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   async function load() {
     setErr(null);
     try {
-      const [taskRows, routineRows, reminderRows] = await Promise.all([
+      const [taskRows, routineRows, reminderRows, focusRows, slippingRows, resurfaceItem] = await Promise.all([
         api.tasks.list({ status: 'open' }),
         api.routinesApi.list(false),
         api.remindersApi.list(),
+        api.focus.list(today),
+        api.slipping.list(),
+        api.resurface.get(today),
       ]);
       setTasks(taskRows);
       setRoutines(routineRows);
       setReminders(reminderRows);
+      setFocus(focusRows);
+      setSlipping(slippingRows);
+      setResurface(resurfaceItem);
       try {
         setJournal(await api.journalApi.get(today));
       } catch {
@@ -87,6 +96,7 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const pendingReminders = reminders.filter((r) => r.status === 'pending' && localDatePart(r.fire_at) <= today);
   const firedToday = reminders.filter((r) => ['sent', 'late', 'notify_failed'].includes(r.status) && localDatePart(r.fired_at || r.fire_at) === today);
   const logLines = sectionLines(journal?.sections?.Log).slice(-4);
+  const focusedUids = new Set(focus.map((task) => task.uid).filter(Boolean));
 
   return (
     <div className="view dash-view">
@@ -97,9 +107,11 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
       {err && <p className="dash-error">{err}</p>}
 
       <div className="dash-grid dash-grid-2">
-        <QuietPlaceholder title="Top-3 focus" phase="Phase 8" />
+        <FocusPanel focus={focus} today={today} onChanged={load}/>
         <QuietPlaceholder title="Calendar" phase="Phase 9" />
       </div>
+
+      {resurface && <ResurfaceCard item={resurface}/>}
 
       <section className="dash-section">
         <div className="dash-section-head">
@@ -111,11 +123,20 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
         ) : (
           <div className="dash-list">
             {dueTasks.map((task) => (
-              <TaskLine key={task.uid} task={task} today={today} onChanged={load}/>
+              <TaskLine
+                key={task.uid}
+                task={task}
+                today={today}
+                onChanged={load}
+                focusDate={today}
+                focused={focusedUids.has(task.uid)}
+              />
             ))}
           </div>
         )}
       </section>
+
+      {slipping.length > 0 && <SlippingRail items={slipping} onChanged={load}/>}
 
       <section className="dash-section">
         <div className="dash-section-head">
@@ -174,6 +195,7 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
 export function TasksView({ liveKey }: LiveProps) {
   const today = localIsoToday();
   const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [focus, setFocus] = useState<TaskRow[]>([]);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [status, setStatus] = useState('open');
@@ -190,7 +212,9 @@ export function TasksView({ liveKey }: LiveProps) {
         api.domainsApi.list(),
         api.projectsApi.list(),
       ]);
+      const focusRows = await api.focus.list(today);
       setTasks(taskRows);
+      setFocus(focusRows);
       setDomains(domainRows);
       setProjects(projectRows);
     } catch (e) {
@@ -206,6 +230,7 @@ export function TasksView({ liveKey }: LiveProps) {
     .filter((task) => dueWindow === 'all' || taskBucket(task, today) === dueWindow)
     .sort(compareTasksByDue), [tasks, domain, project, dueWindow, today]);
   const grouped = groupTasks(filtered, today);
+  const focusedUids = new Set(focus.map((task) => task.uid).filter(Boolean));
 
   return (
     <div className="view dash-view">
@@ -229,7 +254,15 @@ export function TasksView({ liveKey }: LiveProps) {
       {filtered.length === 0 ? (
         <EmptyLine>No tasks match these filters.</EmptyLine>
       ) : TASK_GROUPS.map((group) => (
-        <TaskGroup key={group} title={group} tasks={grouped[group]} today={today} onChanged={load}/>
+        <TaskGroup
+          key={group}
+          title={group}
+          tasks={grouped[group]}
+          today={today}
+          onChanged={load}
+          focusDate={today}
+          focusedUids={focusedUids}
+        />
       ))}
     </div>
   );
@@ -519,13 +552,20 @@ export function JournalView({ liveKey }: LiveProps) {
 
 export function InboxTriageView({ liveKey }: LiveProps) {
   const [items, setItems] = useState<CaptureTriageItem[]>([]);
+  const [needsReview, setNeedsReview] = useState<NeedsReviewItem[]>([]);
+  const [tab, setTab] = useState<'triage' | 'review'>('triage');
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   async function load() {
     setErr(null);
     try {
-      setItems(await api.captureTriage.list());
+      const [triageRows, reviewRows] = await Promise.all([
+        api.captureTriage.list(),
+        api.needsReview.list(),
+      ]);
+      setItems(triageRows);
+      setNeedsReview(reviewRows);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
     }
@@ -546,12 +586,62 @@ export function InboxTriageView({ liveKey }: LiveProps) {
     }
   }
 
+  async function dismissReview(item: NeedsReviewItem) {
+    setBusy(`review:${item.id}`);
+    setErr(null);
+    try {
+      await api.needsReview.dismiss(item.id);
+      await load();
+    } catch (e) {
+      setErr(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="view dash-view">
       <div className="view-h">Personal OS</div>
       <h1 className="view-title">Inbox triage</h1>
+      <div className="dash-tabs">
+        <button className={tab === 'triage' ? 'active' : ''} onClick={() => setTab('triage')}>
+          Triage {items.length}
+        </button>
+        <button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}>
+          Needs review {needsReview.length}
+        </button>
+      </div>
       {err && <p className="dash-error">{err}</p>}
-      {items.length === 0 ? (
+      {tab === 'review' ? (
+        needsReview.length === 0 ? (
+          <EmptyLine>No items need review.</EmptyLine>
+        ) : (
+          <div className="dash-list">
+            {needsReview.map((item) => (
+              <div className="dash-card triage-card" key={item.id}>
+                <div className="dash-row-main">
+                  <b>{item.title}</b>
+                  {item.excerpt && <span className="dash-muted">{item.excerpt}</span>}
+                </div>
+                <div className="dash-tags">
+                  <span>{formatReviewReason(item.reason)}</span>
+                  <span>{item.entity_type}</span>
+                </div>
+                <div className="dash-actions">
+                  <a className="chip" href={item.link}>review</a>
+                  <button
+                    className="chip muted"
+                    disabled={busy === `review:${item.id}`}
+                    onClick={() => void dismissReview(item)}
+                  >
+                    dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : items.length === 0 ? (
         <EmptyLine>No captures need triage.</EmptyLine>
       ) : (
         <div className="dash-list">
@@ -587,31 +677,184 @@ export function InboxTriageView({ liveKey }: LiveProps) {
   );
 }
 
-function TaskGroup({ title, tasks, today, onChanged }: { title: string; tasks: TaskRow[]; today: string; onChanged: ChangeHandler }) {
-  if (tasks.length === 0) return null;
+function FocusPanel({ focus, today, onChanged }: { focus: TaskRow[]; today: string; onChanged: ChangeHandler }) {
+  const byPosition = new Map(focus.map((task, idx) => [task.position ?? idx + 1, task]));
   return (
-    <section className="dash-section">
-      <h2>{title}</h2>
-      <div className="dash-list">
-        {tasks.map((task) => <TaskLine key={task.uid} task={task} today={today} onChanged={onChanged}/>)}
+    <section className="dash-card focus-panel">
+      <div className="dash-section-head">
+        <h2>Top-3 focus</h2>
+        <span className="dash-muted">{focus.length}/3</span>
+      </div>
+      <div className="focus-slots">
+        {[1, 2, 3].map((position) => {
+          const task = byPosition.get(position);
+          return (
+            <div key={position} className="focus-slot">
+              <span className="focus-index">{position}</span>
+              {task ? (
+                <FocusTaskRow task={task} today={today} onChanged={onChanged}/>
+              ) : (
+                <p className="dash-empty">No focus task.</p>
+              )}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
 }
 
-function TaskLine({ task, today, onChanged }: { task: TaskRow; today: string; onChanged: ChangeHandler }) {
+function FocusTaskRow({ task, today, onChanged }: { task: TaskRow; today: string; onChanged: ChangeHandler }) {
+  const bucket = taskBucket(task, today);
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <div className={`focus-task-row ${task.checked ? 'done' : ''}`}>
+      <button
+        className="focus-star on"
+        onClick={() => runMutation(async () => {
+          await api.focus.remove(today, task.uid);
+          await onChanged();
+        }, setErr)}
+        aria-label="Remove from daily focus"
+        title="Remove from daily focus"
+      >
+        ★
+      </button>
+      <div>
+        <b>{task.text}</b>
+        <span>
+          {task.status === 'done' ? 'done' : task.due ? formatDue(task.due) : 'no due date'}
+          {bucket === 'overdue' ? ' · overdue' : ''}
+        </span>
+        {err && <em>{err}</em>}
+      </div>
+    </div>
+  );
+}
+
+function SlippingRail({ items, onChanged }: { items: SlippingItem[]; onChanged: ChangeHandler }) {
+  const [err, setErr] = useState<string | null>(null);
+  async function act(item: SlippingItem, kind: 'snooze' | 'mute') {
+    setErr(null);
+    try {
+      if (kind === 'snooze') {
+        await api.slipping.snooze(item.entity_type, item.entity_id, 7);
+      } else {
+        await api.slipping.mute(item.entity_type, item.entity_id);
+      }
+      await onChanged();
+    } catch (e) {
+      setErr(errorMessage(e));
+    }
+  }
+  return (
+    <section className="dash-section slipping-rail">
+      <div className="dash-section-head">
+        <h2>Slipping</h2>
+        <span className="dash-muted">{items.length}</span>
+      </div>
+      {err && <p className="dash-error">{err}</p>}
+      <div className="dash-strip">
+        {items.map((item) => (
+          <div className="dash-pill slipping-pill" key={`${item.entity_type}:${item.entity_id}`}>
+            <b>{item.title}</b>
+            <span>{item.stale_since}</span>
+            {item.domain && <em>{item.domain}</em>}
+            <button onClick={() => void act(item, 'snooze')}>1w</button>
+            <button onClick={() => void act(item, 'mute')}>mute</button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ResurfaceCard({ item }: { item: ResurfaceItem }) {
+  return (
+    <section className="dash-card resurface-card">
+      <div className="dash-section-head">
+        <h2>Resurfacing</h2>
+        <span className="dash-muted">{item.kind}</span>
+      </div>
+      <a href={item.link}>{item.title}</a>
+      {item.excerpt && <p>{item.excerpt}</p>}
+    </section>
+  );
+}
+
+function TaskGroup({
+  title, tasks, today, onChanged, focusDate, focusedUids,
+}: {
+  title: string;
+  tasks: TaskRow[];
+  today: string;
+  onChanged: ChangeHandler;
+  focusDate?: string;
+  focusedUids?: Set<string>;
+}) {
+  if (tasks.length === 0) return null;
+  return (
+    <section className="dash-section">
+      <h2>{title}</h2>
+      <div className="dash-list">
+        {tasks.map((task) => (
+          <TaskLine
+            key={task.uid}
+            task={task}
+            today={today}
+            onChanged={onChanged}
+            focusDate={focusDate}
+            focused={focusedUids?.has(task.uid) ?? false}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TaskLine({
+  task, today, onChanged, focusDate, focused = false,
+}: {
+  task: TaskRow;
+  today: string;
+  onChanged: ChangeHandler;
+  focusDate?: string;
+  focused?: boolean;
+}) {
   const [due, setDue] = useState(task.due ?? '');
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [err, setErr] = useState<string | null>(null);
+  const [swapFocus, setSwapFocus] = useState<TaskRow[] | null>(null);
   useEffect(() => {
     setDue(task.due ?? '');
     setPriority(task.priority);
-  }, [task.due, task.priority]);
+    setSwapFocus(null);
+  }, [task.due, task.priority, task.uid, focused]);
   const bucket = taskBucket(task, today);
 
   async function savePatch(next: { due?: string | null; priority?: Priority }) {
     await api.tasks.patch(task.uid, next);
     await onChanged();
+  }
+
+  async function toggleFocus(replaceUid?: string) {
+    if (!focusDate) return;
+    setErr(null);
+    try {
+      if (focused && !replaceUid) {
+        await api.focus.remove(focusDate, task.uid);
+      } else {
+        await api.focus.add(focusDate, task.uid, replaceUid);
+      }
+      setSwapFocus(null);
+      await onChanged();
+    } catch (e) {
+      if (e instanceof FocusFullError) {
+        setSwapFocus(e.focus);
+        return;
+      }
+      setErr(errorMessage(e));
+    }
   }
 
   return (
@@ -627,7 +870,19 @@ function TaskLine({ task, today, onChanged }: { task: TaskRow; today: string; on
         {task.checked ? 'x' : ''}
       </button>
       <div className="dash-row-main">
-        <b>{task.text}</b>
+        <div className="task-title-line">
+          {focusDate && (
+            <button
+              className={`focus-star ${focused ? 'on' : ''}`}
+              onClick={() => void toggleFocus()}
+              aria-label={focused ? 'Remove from daily focus' : 'Add to daily focus'}
+              title={focused ? 'Remove from daily focus' : 'Add to daily focus'}
+            >
+              {focused ? '★' : '☆'}
+            </button>
+          )}
+          <b>{task.text}</b>
+        </div>
         <span className="dash-muted">
           {task.due ? `${formatDue(task.due)}${bucket === 'overdue' ? ' · overdue' : ''}` : 'no due date'}
           {task.project ? ` · ${task.project}` : ''}
@@ -639,6 +894,17 @@ function TaskLine({ task, today, onChanged }: { task: TaskRow; today: string; on
           {task.recurrence_unparsed && <span className="warn">recurrence unparsed</span>}
         </div>
         {err && <span className="dash-error">{err}</span>}
+        {swapFocus && (
+          <div className="focus-swap">
+            <span>Replace focus:</span>
+            {swapFocus.map((focusedTask) => (
+              <button key={focusedTask.uid} onClick={() => void toggleFocus(focusedTask.uid)}>
+                {focusedTask.text}
+              </button>
+            ))}
+            <button className="muted" onClick={() => setSwapFocus(null)}>cancel</button>
+          </div>
+        )}
       </div>
       <div className="task-edit">
         <input
@@ -933,4 +1199,8 @@ function formatLongDate(value: string): string {
 
 function labelTime(value: TimeOfDay): string {
   return value;
+}
+
+function formatReviewReason(value: string): string {
+  return value.replace(/_/g, ' ');
 }

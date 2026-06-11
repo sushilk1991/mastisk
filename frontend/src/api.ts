@@ -3,10 +3,11 @@ import type {
   BlogPostSummary, CaptureTriageItem, CaptureTriageTarget, Digest, DigestAudit, Domain, Feed,
   FeedTick, AgentInfo, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
   PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, ReminderRow,
-  RepoDetail, RepoIdeasResponse, RepoSummary, RoutineGroups, RoutineProgress, RoutineRow,
+  RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
-  SettingsBundle, SettingsPatch, TaskRow, TranscriptAnchor, JournalDay, JournalDaySummary,
+  SettingsBundle, SettingsPatch, SlippingItem, TaskRow, TranscriptAnchor, JournalDay, JournalDaySummary,
   SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem,
+  NeedsReviewItem,
 } from './types';
 
 const BASE = '/api';
@@ -22,6 +23,15 @@ export class ApiError extends Error {
   }
 }
 
+export class FocusFullError extends Error {
+  focus: TaskRow[];
+  constructor(focus: TaskRow[]) {
+    super('daily focus already has three tasks');
+    this.name = 'FocusFullError';
+    this.focus = focus;
+  }
+}
+
 async function throwApiError(r: Response): Promise<never> {
   let detail = `${r.status} ${r.statusText}`.trim();
   try {
@@ -29,6 +39,21 @@ async function throwApiError(r: Response): Promise<never> {
     if (body && typeof body.detail === 'string' && body.detail) detail = body.detail;
   } catch { /* fall back to status */ }
   throw new ApiError(detail, r.status, detail);
+}
+
+async function focusResponse(r: Response): Promise<TaskRow[]> {
+  if (r.status === 409) {
+    try {
+      const body = await r.json() as { detail?: { error?: string; focus?: TaskRow[] } };
+      if (body.detail?.error === 'focus_full' && Array.isArray(body.detail.focus)) {
+        throw new FocusFullError(body.detail.focus);
+      }
+    } catch (e) {
+      if (e instanceof FocusFullError) throw e;
+    }
+  }
+  if (!r.ok) await throwApiError(r);
+  return r.json() as Promise<TaskRow[]>;
 }
 
 async function j<T>(url: string, init?: RequestInit): Promise<T> {
@@ -333,6 +358,54 @@ export const api = {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       }),
+  },
+
+  focus: {
+    list: (day: string): Promise<TaskRow[]> =>
+      j<TaskRow[]>(`${BASE}/focus/${encodeURIComponent(day)}`),
+    add: (day: string, taskUid: string, replaceUid?: string): Promise<TaskRow[]> =>
+      fetch(`${BASE}/focus/${encodeURIComponent(day)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ task_uid: taskUid, replace_uid: replaceUid ?? null }),
+      }).then(focusResponse),
+    remove: (day: string, taskUid: string): Promise<TaskRow[]> =>
+      j<TaskRow[]>(`${BASE}/focus/${encodeURIComponent(day)}/${encodeURIComponent(taskUid)}`, {
+        method: 'DELETE',
+      }),
+  },
+
+  slipping: {
+    list: (): Promise<SlippingItem[]> => j<SlippingItem[]>(`${BASE}/slipping`),
+    snooze: (entityType: string, entityId: string, days = 7): Promise<{ ok: boolean }> =>
+      j<{ ok: boolean }>(
+        `${BASE}/slipping/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/snooze`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ days }),
+        },
+      ),
+    mute: (entityType: string, entityId: string): Promise<{ ok: boolean }> =>
+      j<{ ok: boolean }>(
+        `${BASE}/slipping/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/mute`,
+        { method: 'POST' },
+      ),
+  },
+
+  resurface: {
+    get: async (day: string): Promise<ResurfaceItem | null> => {
+      const r = await fetch(`${BASE}/resurface/${encodeURIComponent(day)}`);
+      if (r.status === 204) return null;
+      if (!r.ok) await throwApiError(r);
+      return r.json() as Promise<ResurfaceItem>;
+    },
+  },
+
+  needsReview: {
+    list: (): Promise<NeedsReviewItem[]> => j<NeedsReviewItem[]>(`${BASE}/needs-review`),
+    dismiss: (id: number): Promise<NeedsReviewItem> =>
+      j<NeedsReviewItem>(`${BASE}/needs-review/${id}/dismiss`, { method: 'POST' }),
   },
 
   projectsApi: {
