@@ -134,8 +134,6 @@ def persist_note_capture(
             atomic_write(actual_path, file_content if file_content is not None else body)
         except Exception:
             conn.execute("ROLLBACK")
-            with contextlib.suppress(FileNotFoundError):
-                actual_path.unlink()
             raise
         conn.execute("COMMIT")
     return dict(row)

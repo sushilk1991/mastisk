@@ -1,7 +1,7 @@
 """Integration tests for /api/notes routes."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,7 +32,7 @@ def test_post_notes_creates_file_and_row(client, vault_tmp):
 def test_persist_note_capture_keeps_both_files_on_slug_collision(db, vault_tmp):
     from mastisk.routes.notes import persist_note_capture
 
-    ts = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    ts = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 
     first = persist_note_capture(
         body="first body",
@@ -53,6 +53,36 @@ def test_persist_note_capture_keeps_both_files_on_slug_collision(db, vault_tmp):
     assert second_path.exists()
     assert first_path.read_text(encoding="utf-8") == "first body"
     assert second_path.read_text(encoding="utf-8") == "second body"
+
+
+def test_persist_note_capture_write_failure_preserves_existing_manual_file(
+    db, vault_tmp, monkeypatch
+):
+    from mastisk.paths import notes_inbox_dir
+    from mastisk.routes import notes
+    from mastisk.routes.notes import persist_note_capture
+
+    ts = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    existing = notes_inbox_dir() / "030405-same-title.md"
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_text("manual file", encoding="utf-8")
+
+    def fail_write(target, content):
+        raise OSError("simulated write failure")
+
+    monkeypatch.setattr(notes, "atomic_write", fail_write)
+
+    with pytest.raises(OSError):
+        persist_note_capture(
+            body="new body",
+            source="cli",
+            slug_text="same title",
+            ts=ts,
+        )
+
+    assert existing.read_text(encoding="utf-8") == "manual file"
+    rows = db.execute("SELECT * FROM notes").fetchall()
+    assert rows == []
 
 
 def test_post_notes_rejects_empty_text(client):
