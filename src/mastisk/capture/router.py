@@ -1,6 +1,7 @@
 """Phase-2 capture intent router."""
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 from typing import Literal
@@ -41,6 +42,7 @@ _CAPTURE_TYPES = {
     "inbox",
 }
 _PRIORITIES = {"high", "medium", "low"}
+log = logging.getLogger("mastisk.capture.router")
 
 
 class Capture(BaseModel):
@@ -167,10 +169,12 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     settings = get_settings()
     fixed_intent = detect_command_intent(text)
     hint_intent = detect_command_hint(text)
+    timezone = settings.capture.default_timezone
+    request_ts = _parse_request_ts(ts, timezone)
     prompt = _PROMPT.format(
         identity=Agent.load_identity(),
         source=source,
-        ts=ts or "",
+        ts=request_ts.isoformat() if request_ts is not None else "",
         fixed_intent=fixed_intent or "null",
         hint_intent=hint_intent or "null",
         text=text,
@@ -191,15 +195,14 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     capture = Capture(**payload)
     capture.command_detected = fixed_intent is not None
 
-    timezone = settings.capture.default_timezone
     if capture.type == "task" or capture.due is not None:
-        capture.due = resolve_datetime(text, ts, timezone, model_iso=capture.due)
+        capture.due = resolve_datetime(text, request_ts, timezone, model_iso=capture.due)
     else:
         capture.due = None
     if capture.scheduled is not None:
-        capture.scheduled = normalize_model_datetime(capture.scheduled, ts, timezone)
+        capture.scheduled = normalize_model_datetime(capture.scheduled, request_ts, timezone)
     if capture.review_at is not None:
-        capture.review_at = normalize_model_datetime(capture.review_at, ts, timezone)
+        capture.review_at = normalize_model_datetime(capture.review_at, request_ts, timezone)
 
     capture.no_reminder = capture.no_reminder or bool(_NO_REMINDER_RE.search(text))
     explicit_lead = _extract_explicit_lead_minutes(text)
@@ -211,7 +214,7 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
         capture.type == "task"
         and capture.due
         and "T" in capture.due
-        and _is_future_datetime(capture.due, ts, timezone)
+        and _is_future_datetime(capture.due, request_ts, timezone)
     ):
         capture.reminder_lead_minutes = settings.reminders.default_lead_minutes
 
@@ -275,18 +278,31 @@ def _extract_explicit_lead_minutes(text: str) -> int | None:
     return amount
 
 
-def _is_future_datetime(value: str, ts: str | datetime | None, timezone: str) -> bool:
+def _parse_request_ts(ts: str | None, timezone: str) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        log.warning("capture router: invalid client timestamp %r; using server time", ts)
+        return None
+    tz = ZoneInfo(timezone)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=tz)
+    return parsed.astimezone(tz)
+
+
+def _is_future_datetime(
+    value: str,
+    request_ts: datetime | None,
+    timezone: str,
+) -> bool:
     try:
         due = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return False
     tz = ZoneInfo(timezone)
     due = due.replace(tzinfo=tz) if due.tzinfo is None else due.astimezone(tz)
-    if isinstance(ts, datetime):
-        base = ts
-    elif ts:
-        base = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    else:
-        base = datetime.now(tz)
+    base = request_ts or datetime.now(tz)
     base = base.replace(tzinfo=tz) if base.tzinfo is None else base.astimezone(tz)
     return due > base

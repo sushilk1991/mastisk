@@ -178,6 +178,30 @@ async def test_route_capture_uses_configured_router_timeout(data_tmp):
 
 
 @pytest.mark.asyncio
+async def test_invalid_client_ts_is_logged_and_treated_as_server_time(data_tmp, caplog):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="journal", due=None))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as run_mock:
+        capture = await route_capture("felt focused", source="watch", ts="not-a-date")
+
+    assert capture.type == "journal"
+    assert run_mock.call_count == 1
+    prompt = run_mock.call_args.args[0]
+    assert "timestamp: \n" in prompt
+    assert "invalid client timestamp" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_did_my_hint_does_not_force_intent_or_skip_gates(data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
