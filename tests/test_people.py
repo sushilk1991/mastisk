@@ -329,6 +329,70 @@ def test_birthday_reminders_dedupe_per_person_year_and_parse_yearless(
     }
 
 
+def test_anniversary_reminder_uses_separate_yearly_key(db, vault_tmp, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "UTC"\n'
+        '[reminders]\ndaily_summary_time = "07:30"\n',
+        encoding="utf-8",
+    )
+    from mastisk.people.sync import create_person_file
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_person_file(name="Anjali Rao", anniversary="2012-06-11")
+
+    from mastisk.agents.reminder_engine import people_dates_tick
+
+    assert people_dates_tick(now=datetime(2026, 6, 11, 8, 0, tzinfo=UTC)) == 1
+    row = db.execute(
+        "SELECT entity_id, title FROM reminders WHERE kind = 'followup'"
+    ).fetchone()
+    assert dict(row) == {
+        "entity_id": "anniversary:anjali-rao:2026",
+        "title": "Anniversary today: Anjali Rao",
+    }
+
+
+def test_reminder_tick_continues_when_people_dates_tick_fails(
+    db, data_tmp, monkeypatch, caplog
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[notify]\nbackend = "ntfy"\nntfy_topic = "test"\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    db.execute(
+        """INSERT INTO reminders
+           (fire_at, kind, status, title, body)
+           VALUES ('2026-06-11T09:00:00+00:00', 'custom', 'pending', 'Reminder', 'Ship it')"""
+    )
+    sent: list[str] = []
+    from mastisk.agents import reminder_engine
+
+    monkeypatch.setattr(
+        reminder_engine,
+        "people_dates_tick",
+        lambda *, now=None: (_ for _ in ()).throw(RuntimeError("people boom")),
+    )
+    monkeypatch.setattr(
+        "mastisk.agents.reminder_engine.notify.send",
+        lambda title, body, url=None: sent.append(body) or True,
+    )
+
+    with caplog.at_level("ERROR", logger="mastisk.reminder_engine"):
+        reminder_engine.reminder_tick(
+            now=datetime(2026, 6, 11, 9, 0, tzinfo=UTC),
+            ensure_daily_summary=False,
+        )
+
+    assert sent == ["Ship it"]
+    assert "people_dates_tick failed; continuing reminder tick" in caplog.text
+
+
 def test_person_follow_up_at_reminder_lifecycle(db, vault_tmp, data_tmp):
     from mastisk.people.sync import create_person_file, patch_person
 
