@@ -341,6 +341,44 @@ def test_task_due_reminder_cancels_if_due_was_removed_before_fire(
     assert row["last_error"] == "task due removed"
 
 
+def test_reminder_tick_continues_when_routine_missed_tick_fails(
+    db, data_tmp, monkeypatch, caplog
+):
+    _configure_notify(data_tmp)
+    db.execute(
+        """INSERT INTO tasks
+           (uid, host_path, line_number, text, checked, status, due,
+            reminder_lead_minutes, tags_json, links_json)
+           VALUES ('abc123', 'journal/2026-06-11.md', 1, 'Call Sam', 0, 'open',
+                   '2026-06-11T09:15:00+00:00', 15, '[]', '[]')"""
+    )
+    reminder_id = _insert_reminder(db, body="Old task text")
+    sent: list[str] = []
+
+    from mastisk.agents import reminder_engine
+
+    monkeypatch.setattr(
+        reminder_engine,
+        "routine_missed_tick",
+        lambda *, now=None: (_ for _ in ()).throw(RuntimeError("routine boom")),
+    )
+    monkeypatch.setattr(
+        "mastisk.agents.reminder_engine.notify.send",
+        lambda title, body, url=None: sent.append(body) or True,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="mastisk.reminder_engine"):
+        reminder_engine.reminder_tick(
+            now=datetime(2026, 6, 11, 9, 0, tzinfo=UTC),
+            ensure_daily_summary=False,
+        )
+
+    row = db.execute("SELECT status FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+    assert row["status"] == "sent"
+    assert sent == ["Call Sam"]
+    assert "routine_missed_tick failed; continuing reminder tick" in caplog.text
+
+
 def test_reclaim_firing_reminders_returns_orphaned_claims_to_pending(db):
     reminder_id = _insert_reminder(db, status="firing")
 

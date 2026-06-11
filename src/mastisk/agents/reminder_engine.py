@@ -23,7 +23,10 @@ def reminder_tick(*, now: datetime | None = None, ensure_daily_summary: bool = T
     """
     now_dt = _coerce_datetime(now)
     _reclaim_stale_firing_reminders(now_dt)
-    routine_missed_tick(now=now_dt)
+    try:
+        routine_missed_tick(now=now_dt)
+    except Exception:
+        log.exception("routine_missed_tick failed; continuing reminder tick")
     if _notify_backend_disabled():
         log.info("reminder_tick skipped: notify backend disabled")
         return 0
