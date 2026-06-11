@@ -9,6 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 log = logging.getLogger("mastisk.scheduler")
 _calendar_sync_missing_token_logged = False
+_RUN_WHEN_WOKEN_MISFIRE_GRACE = None
 
 
 def _scheduled_calendar_sync() -> None:
@@ -35,6 +36,7 @@ async def start_scheduler():
     _reclaim_running_blog_posts()
     _reclaim_running_tweet_threads()
     _reclaim_firing_reminders()
+    _catch_up_daily_cron_engines()
 
     # One-shot graph repair on boot: reconnects links the Compiler dropped
     # because sibling articles didn't exist yet. This closes the gap between
@@ -149,8 +151,9 @@ async def start_scheduler():
             id="recurrence_tick",
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=_RUN_WHEN_WOKEN_MISFIRE_GRACE,
         )
-        log.info("scheduler: recurrence_tick registered (daily 00:10 local)")
+        log.info("scheduler: recurrence_tick registered (daily 00:10 local, run when woken)")
     except Exception as e:
         log.warning("scheduler: recurrence_tick registration failed: %s", e)
 
@@ -167,8 +170,9 @@ async def start_scheduler():
             id="retainer_rollover",
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=_RUN_WHEN_WOKEN_MISFIRE_GRACE,
         )
-        log.info("scheduler: retainer_rollover registered (daily 00:20 local)")
+        log.info("scheduler: retainer_rollover registered (daily 00:20 local, run when woken)")
     except Exception as e:
         log.warning("scheduler: retainer_rollover registration failed: %s", e)
 
@@ -238,6 +242,10 @@ async def start_scheduler():
             summary_time = settings.reminders.daily_summary_time.strip()
             if summary_time:
                 hour_s, minute_s = summary_time.split(":", 1)
+                # Sleep catch-up for daily summaries is intentionally handled by
+                # reminder_tick: its durable row is created on the next interval
+                # after the configured local time, then fired through the normal
+                # pending-reminder queue.
                 sched.add_job(
                     daily_summary_tick, "cron",
                     hour=int(hour_s),
@@ -476,6 +484,26 @@ def _reclaim_firing_reminders() -> None:
             log.info("reclaimed %s firing reminder row(s)", n)
     except Exception as e:
         log.warning("reminder reclaim skipped: %s", e)
+
+
+def _catch_up_daily_cron_engines() -> None:
+    try:
+        from mastisk.tasks.recurrence import recurrence_tick
+
+        n = recurrence_tick()
+        if n:
+            log.info("recurrence_tick catch-up materialized %s task(s)", n)
+    except Exception as e:
+        log.warning("recurrence_tick catch-up skipped: %s", e)
+
+    try:
+        from mastisk.agents.retainer_rollover import retainer_rollover
+
+        n = retainer_rollover()
+        if n:
+            log.info("retainer_rollover catch-up processed %s retainer(s)", n)
+    except Exception as e:
+        log.warning("retainer_rollover catch-up skipped: %s", e)
 
 
 def _graph_repair_once() -> None:
