@@ -185,6 +185,20 @@ def test_routine_toggle_does_not_resurrect_hand_deleted_completion(
         assert [row["date"] for row in completions] == ["2026-06-11", "2026-06-12"]
 
 
+def test_routine_create_retries_slug_when_file_already_exists(vault_tmp, data_tmp, db):
+    from mastisk.routines.sync import create_routine_file
+
+    path = vault_tmp / "routines" / "morning-vitamins.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("reserved\n", encoding="utf-8")
+
+    created = create_routine_file(name="Morning Vitamins")
+
+    assert created["slug"] == "morning-vitamins-2"
+    assert path.read_text(encoding="utf-8") == "reserved\n"
+    assert (vault_tmp / "routines" / "morning-vitamins-2.md").exists()
+
+
 def test_routine_missed_nudges_dedup_and_respect_windows(db, vault_tmp, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")

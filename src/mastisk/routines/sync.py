@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -32,6 +33,7 @@ _COMPLETION_RE = re.compile(r"^\s*-\s*(?P<date>\d{4}-\d{2}-\d{2})\s*$")
 _COMPLETIONS_HEADING_RE = re.compile(r"^##\s+Completions\s*$", re.I)
 _NEXT_HEADING_RE = re.compile(r"^##\s+")
 _HHMM_RE = re.compile(r"^\d{2}:\d{2}$")
+_CREATE_ROUTINE_LOCK = threading.Lock()
 
 
 def scan_routines(paths: list[Path] | None = None) -> dict[str, int]:
@@ -134,7 +136,6 @@ def create_routine_file(
     target_days: int | None = None,
     start_date: str | None = None,
 ) -> dict[str, Any]:
-    path = _next_routine_path(name)
     meta = _routine_meta(
         name=name,
         description=description,
@@ -147,9 +148,11 @@ def create_routine_file(
         start_date=start_date,
         archived=False,
     )
-    with host_file_lock(path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(path, dump_routine_file(meta, [], "## Completions\n"))
+    with _CREATE_ROUTINE_LOCK:
+        path = _create_routine_file_exclusive(
+            name,
+            dump_routine_file(meta, [], "## Completions\n"),
+        )
     scan_routines([path])
     row = get_routine(path.stem, include_archived=True)
     if row is None:
@@ -316,7 +319,7 @@ def _absolute_path(path: Path) -> Path:
     return path if path.is_absolute() else vault_dir() / path
 
 
-def _next_routine_path(name: str) -> Path:
+def _create_routine_file_exclusive(name: str, content: str) -> Path:
     base = slugify(name)[:80] or "routine"
     routines_dir().mkdir(parents=True, exist_ok=True)
     for attempt in range(1, 100):
@@ -330,7 +333,12 @@ def _next_routine_path(name: str) -> Path:
                 (slug,),
             ).fetchone()
         if existing is None:
-            return path
+            try:
+                with host_file_lock(path), path.open("x", encoding="utf-8") as handle:
+                    handle.write(content)
+                return path
+            except FileExistsError:
+                continue
     raise RuntimeError(f"unable to allocate routine slug for {name!r}")
 
 
