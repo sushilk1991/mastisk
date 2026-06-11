@@ -364,7 +364,6 @@ def calendar_connect(
         exchange_authorization_code,
         make_authorization_url,
         make_pkce_pair,
-        token_file_path,
         write_calendar_tokens,
     )
     from mastisk.settings import get_settings, reload_settings
@@ -448,9 +447,9 @@ def calendar_connect(
         )
     except Exception as e:
         typer.secho(f"Token exchange failed: {e}", fg="red")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
-    path = write_calendar_tokens(tokens)
+    path = write_calendar_tokens(tokens, replace_connection=True)
     typer.secho("Google Calendar connected read-only.", fg="green")
     typer.echo(f"Tokens: {path} (0600)")
     typer.echo("")
@@ -461,7 +460,10 @@ def calendar_connect(
         "Keychain encryption is a later hardening TODO."
     )
     typer.echo("")
-    typer.echo("Run `mastisk start` or click force sync in the PWA to populate Today.")
+    typer.echo(
+        "If Mastisk is already running, click force sync in the PWA now and "
+        "restart the daemon before relying on the periodic calendar_sync job."
+    )
 
 
 @app.command()

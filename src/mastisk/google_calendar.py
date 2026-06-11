@@ -55,9 +55,11 @@ def read_calendar_tokens() -> dict[str, Any] | None:
         return None
 
 
-def write_calendar_tokens(tokens: dict[str, Any]) -> Path:
+def write_calendar_tokens(tokens: dict[str, Any], *, replace_connection: bool = False) -> Path:
     path = token_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    if replace_connection:
+        _clear_calendar_cache_and_state()
     # Phase 9 deviation from the spec's "encrypted in data dir": tokens are
     # protected by local single-user file permissions (0600). Keychain-backed
     # encryption is a later hardening step.
@@ -195,6 +197,9 @@ def sync_calendar(
     settings = get_settings()
     tokens = read_calendar_tokens()
     if not tokens:
+        if calendar_token_exists():
+            mark_calendar_disconnected("calendar token file unreadable")
+            raise CalendarAuthError("calendar token file unreadable")
         raise CalendarAuthError("calendar connection is unconfigured")
     now_dt = now or datetime.now(ZoneInfo(settings.capture.default_timezone))
     tokens = _valid_access_tokens(tokens, http_client=http_client, now=now_dt)
@@ -239,7 +244,7 @@ def sync_calendar(
                              synced_at=excluded.synced_at""",
                         row,
                     )
-                _prune_missing_events(conn, calendar_id, start.isoformat(), end.isoformat(), seen_ids)
+                _prune_missing_events(conn, calendar_id, start, end, seen_ids)
                 event_count += len(seen_ids)
         mark_calendar_connected(synced_at)
     finally:
@@ -253,11 +258,18 @@ def calendar_status() -> dict[str, str | None]:
     with connect() as conn:
         row = conn.execute("SELECT * FROM calendar_state WHERE id = 1").fetchone()
     state = dict(row) if row else {}
+    tokens = read_calendar_tokens()
     if not calendar_token_exists():
         return {
             "status": "unconfigured",
             "last_synced_at": state.get("last_synced_at"),
             "error": None,
+        }
+    if tokens is None:
+        return {
+            "status": "disconnected",
+            "last_synced_at": state.get("last_synced_at"),
+            "error": "calendar token file unreadable",
         }
     if state.get("status") == "disconnected":
         return {
@@ -309,23 +321,23 @@ def clear_calendar_connection() -> None:
 
 
 def events_for_day(day: date) -> list[dict[str, Any]]:
-    if calendar_status()["status"] != "connected":
+    status = calendar_status()
+    if status["status"] != "connected" or not status["last_synced_at"]:
         return []
     tz = ZoneInfo(get_settings().capture.default_timezone)
-    start = datetime.combine(day, time.min, tzinfo=tz).isoformat()
-    end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz).isoformat()
-    day_s = day.isoformat()
-    next_day_s = (day + timedelta(days=1)).isoformat()
+    start = datetime.combine(day, time.min, tzinfo=tz)
+    end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
     with connect() as conn:
         rows = conn.execute(
             """SELECT id, calendar_id, summary, start, end, all_day, location, status, updated_at, synced_at
-               FROM calendar_events
-               WHERE (start < ? AND end > ?)
-                  OR (all_day = 1 AND start < ? AND end > ?)
-               ORDER BY all_day DESC, start ASC, summary ASC""",
-            (end, start, next_day_s, day_s),
+               FROM calendar_events""",
         ).fetchall()
-    return [_event_response(dict(row)) for row in rows]
+    matching = [
+        dict(row) for row in rows
+        if _row_overlaps_window(dict(row), start, end, tz)
+    ]
+    matching.sort(key=lambda row: (0 if row["all_day"] else 1, _event_sort_dt(row, tz), row["summary"]))
+    return [_event_response(row) for row in matching]
 
 
 def _valid_access_tokens(
@@ -435,20 +447,26 @@ def _normalize_event(
 def _prune_missing_events(
     conn,
     calendar_id: str,
-    time_min: str,
-    time_max: str,
+    time_min: datetime,
+    time_max: datetime,
     seen_ids: list[str],
 ) -> None:
-    base = "calendar_id = ? AND start < ? AND end > ?"
-    params: list[Any] = [calendar_id, time_max, time_min]
-    if seen_ids:
-        placeholders = ",".join("?" for _ in seen_ids)
-        conn.execute(
-            f"DELETE FROM calendar_events WHERE {base} AND id NOT IN ({placeholders})",
-            [*params, *seen_ids],
-        )
-    else:
-        conn.execute(f"DELETE FROM calendar_events WHERE {base}", params)
+    tz = ZoneInfo(get_settings().capture.default_timezone)
+    rows = conn.execute(
+        "SELECT id, start, end, all_day FROM calendar_events WHERE calendar_id = ?",
+        (calendar_id,),
+    ).fetchall()
+    stale_ids = [
+        row["id"] for row in rows
+        if row["id"] not in seen_ids and _row_overlaps_window(dict(row), time_min, time_max, tz)
+    ]
+    if not stale_ids:
+        return
+    placeholders = ",".join("?" for _ in stale_ids)
+    conn.execute(
+        f"DELETE FROM calendar_events WHERE calendar_id = ? AND id IN ({placeholders})",
+        [calendar_id, *stale_ids],
+    )
 
 
 def _event_response(row: dict[str, Any]) -> dict[str, Any]:
@@ -480,6 +498,44 @@ def _sync_window(now: datetime, tz: ZoneInfo) -> tuple[datetime, datetime]:
     start = datetime.combine(today - timedelta(days=1), time.min, tzinfo=tz)
     end = datetime.combine(today + timedelta(days=15), time.min, tzinfo=tz)
     return start, end
+
+
+def _clear_calendar_cache_and_state() -> None:
+    init_schema()
+    with connect() as conn:
+        conn.execute("DELETE FROM calendar_state WHERE id = 1")
+        conn.execute("DELETE FROM calendar_events")
+
+
+def _row_overlaps_window(row: dict[str, Any], start: datetime, end: datetime, tz: ZoneInfo) -> bool:
+    event_start, event_end = _event_bounds(row, tz)
+    return event_start < end and event_end > start
+
+
+def _event_sort_dt(row: dict[str, Any], tz: ZoneInfo) -> datetime:
+    return _event_bounds(row, tz)[0]
+
+
+def _event_bounds(row: dict[str, Any], tz: ZoneInfo) -> tuple[datetime, datetime]:
+    if row.get("all_day"):
+        start = _parse_date_boundary(str(row["start"]), tz)
+        end = _parse_date_boundary(str(row["end"]), tz)
+        return start, end
+    start = _parse_datetime(str(row["start"]), tz)
+    end = _parse_datetime(str(row["end"]), tz)
+    return start, end
+
+
+def _parse_date_boundary(value: str, tz: ZoneInfo) -> datetime:
+    return datetime.combine(date.fromisoformat(value[:10]), time.min, tzinfo=tz)
+
+
+def _parse_datetime(value: str, tz: ZoneInfo) -> datetime:
+    normalized = value.replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=tz)
+    return parsed
 
 
 def _response_error(resp: httpx.Response) -> str:

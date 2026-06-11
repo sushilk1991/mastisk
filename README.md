@@ -457,6 +457,8 @@ mastisk calendar-connect
 
 The command opens a loopback OAuth flow on `127.0.0.1`, exchanges the code for access/refresh tokens, and stores them in the Mastisk data dir as `calendar_tokens.json` with `0600` permissions. Tokens are not encrypted at rest in Phase 9; this is a deliberate local-first deviation from the spec's "encrypted" wording. Keychain-backed storage is the later hardening path.
 
+If the daemon was already running before the first connection, force sync works immediately from the PWA, but restart Mastisk before relying on the periodic `calendar_sync` scheduler job. The scheduler only registers calendar sync when a token exists at startup.
+
 Mastisk never writes to Google Calendar: the scheduler calls `events.list` with `singleEvents=true`, `orderBy=startTime`, `timeMin`, and `timeMax`, then caches events for the Today view.
 
 ---

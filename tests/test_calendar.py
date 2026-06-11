@@ -341,6 +341,102 @@ def test_calendar_routes_status_force_sync_disconnect_and_sorted_today(
         assert db.execute("SELECT COUNT(*) AS n FROM calendar_events").fetchone()["n"] == 2
 
 
+def test_calendar_today_filters_timed_events_by_actual_timezone_day(
+    vault_tmp, data_tmp, db
+):
+    _write_calendar_config(data_tmp)
+    from mastisk.google_calendar import mark_calendar_connected, write_calendar_tokens
+
+    write_calendar_tokens(
+        {
+            "access_token": "access-ok",
+            "refresh_token": "refresh-ok",
+            "expires_at": 4102444800,
+            "token_type": "Bearer",
+            "scope": "https://www.googleapis.com/auth/calendar.readonly",
+        }
+    )
+    db.execute(
+        """INSERT INTO calendar_events
+           (id, calendar_id, summary, start, end, all_day, status, updated_at, synced_at)
+           VALUES
+           ('la-night', 'primary', 'LA evening call',
+            '2026-06-11T20:00:00-07:00', '2026-06-11T20:30:00-07:00',
+            0, 'confirmed', '2026-06-11T00:00:00Z', '2026-06-12T08:00:00+05:30'),
+           ('asia-prev', 'primary', 'Earlier local day',
+            '2026-06-11T20:00:00+05:30', '2026-06-11T20:30:00+05:30',
+            0, 'confirmed', '2026-06-11T00:00:00Z', '2026-06-12T08:00:00+05:30')"""
+    )
+    mark_calendar_connected("2026-06-12T08:00:00+05:30")
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        today = client.get("/api/calendar/today?date=2026-06-12")
+
+    assert today.status_code == 200, today.text
+    assert [event["id"] for event in today.json()["events"]] == ["la-night"]
+
+
+def test_calendar_corrupt_token_file_reports_disconnected(data_tmp, db):
+    _write_calendar_config(data_tmp)
+    token_file = data_tmp / "calendar_tokens.json"
+    token_file.write_text("{not-json", encoding="utf-8")
+
+    from mastisk.google_calendar import calendar_status
+
+    assert calendar_status() == {
+        "status": "disconnected",
+        "last_synced_at": None,
+        "error": "calendar token file unreadable",
+    }
+
+
+def test_calendar_reconnect_does_not_show_old_cache_until_new_sync(
+    vault_tmp, data_tmp, db
+):
+    _write_calendar_config(data_tmp)
+    from mastisk.google_calendar import (
+        clear_calendar_connection,
+        mark_calendar_connected,
+        write_calendar_tokens,
+    )
+
+    write_calendar_tokens(
+        {
+            "access_token": "old-access",
+            "refresh_token": "old-refresh",
+            "expires_at": 4102444800,
+            "token_type": "Bearer",
+            "scope": "https://www.googleapis.com/auth/calendar.readonly",
+        }
+    )
+    db.execute(
+        """INSERT INTO calendar_events
+           (id, calendar_id, summary, start, end, all_day, status, updated_at, synced_at)
+           VALUES
+           ('old', 'primary', 'Old account event', '2026-06-12', '2026-06-13',
+            1, 'confirmed', '2026-06-11T00:00:00Z', '2026-06-12T08:00:00+05:30')"""
+    )
+    mark_calendar_connected("2026-06-12T08:00:00+05:30")
+    clear_calendar_connection()
+    assert db.execute("SELECT COUNT(*) AS n FROM calendar_events").fetchone()["n"] == 1
+    write_calendar_tokens(
+        {
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+            "expires_at": 4102444800,
+            "token_type": "Bearer",
+            "scope": "https://www.googleapis.com/auth/calendar.readonly",
+        }
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        today = client.get("/api/calendar/today?date=2026-06-12")
+
+    assert today.status_code == 200, today.text
+    assert today.json()["status"]["status"] == "connected"
+    assert today.json()["events"] == []
+
+
 @pytest.mark.asyncio
 async def test_scheduler_registers_calendar_sync_only_when_token_exists(
     data_tmp, db, monkeypatch, caplog
