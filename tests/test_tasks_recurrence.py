@@ -101,6 +101,52 @@ def test_scheduled_only_recurring_task_advances_schedule_without_due(
         assert "📅" not in next_line
 
 
+def test_scheduled_only_recurrence_tick_materializes_once_across_days(
+    vault_tmp, data_tmp, db
+):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/tasks",
+            json={
+                "text": "Plan tomorrow",
+                "scheduled": "2026-06-10",
+                "recurrence": "daily",
+            },
+        )
+        assert created.status_code == 201, created.text
+        uid = created.json()["uid"]
+        host_path = vault_tmp / created.json()["host_path"]
+
+        host_path.write_text(
+            host_path.read_text(encoding="utf-8").replace("- [ ] Plan tomorrow", "- [x] Plan tomorrow"),
+            encoding="utf-8",
+        )
+
+        from mastisk.tasks.recurrence import recurrence_tick
+        from mastisk.tasks.sync import scan_task_hosts
+
+        scan_task_hosts([host_path])
+        tz = ZoneInfo("UTC")
+        assert recurrence_tick(now=datetime(2026, 6, 11, 0, 10, tzinfo=tz)) == 1
+        assert recurrence_tick(now=datetime(2026, 6, 12, 0, 10, tzinfo=tz)) == 0
+
+        file_text = host_path.read_text(encoding="utf-8")
+        assert file_text.count("Plan tomorrow") == 2
+        open_rows = db.execute(
+            """SELECT scheduled FROM tasks
+               WHERE text = 'Plan tomorrow' AND status = 'open' AND deleted_at IS NULL"""
+        ).fetchall()
+        assert [row["scheduled"] for row in open_rows] == ["2026-06-11"]
+        row = db.execute(
+            "SELECT recurrence_materialized_key FROM tasks WHERE uid = ?",
+            (uid,),
+        ).fetchone()
+        assert row["recurrence_materialized_key"] == f"{uid}:2026-06-10:daily"
+
+
 def test_unparseable_recurring_task_is_flagged_without_materializing(
     vault_tmp, data_tmp, db
 ):

@@ -115,12 +115,12 @@ def materialize_next_instance(uid: str, *, completed_on: str | None = None) -> b
     task = dict(row)
     if task.get("status") != "done" or not task.get("recurrence"):
         return False
+    if task.get("recurrence_materialized_key"):
+        return False
 
-    base_date = (task.get("due") or completed_on or local_today())[:10]
+    base_date = (task.get("due") or task.get("scheduled") or completed_on or local_today())[:10]
     rule = str(task["recurrence"])
     key = f"{uid}:{base_date}:{rule}"
-    if task.get("recurrence_materialized_key") == key:
-        return False
 
     next_day = next_due_date(rule, base_date)
     if next_day is None:
