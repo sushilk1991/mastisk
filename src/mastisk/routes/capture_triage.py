@@ -8,7 +8,9 @@ from pydantic import BaseModel
 
 from mastisk.capture.triage import list_triage_items, reclassify_triage_item
 
-router = APIRouter(prefix="/api/capture/triage", tags=["capture-triage"])
+# Localhost/tailnet trust model: triage can read vault contents and mutate
+# files, so it must never live under /api/capture, the internet-tunneled ingress.
+router = APIRouter(prefix="/api/triage", tags=["capture-triage"])
 
 TriageTarget = Literal[
     "task",

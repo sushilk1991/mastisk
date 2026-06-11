@@ -520,6 +520,8 @@ from the wrist. Use Cloudflare Tunnel — and scope it to the capture surface on
 (a bare tunnel to the whole app is a security hole; the bearer token is the
 backstop, not the only control):
 
+Warning: only `/api/capture` (the ingress `POST`) is safe to expose; nothing else under `/api` may be tunneled.
+
 ```bash
 brew install cloudflared
 cloudflared tunnel login

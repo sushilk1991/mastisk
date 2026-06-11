@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -12,6 +13,13 @@ def _client(vault_tmp, data_tmp, db):
     from mastisk.app import create_app
 
     return TestClient(create_app())
+
+
+def test_capture_triage_frontend_client_stays_outside_capture_tunnel_scope():
+    api_source = Path("frontend/src/api.ts").read_text(encoding="utf-8")
+
+    assert "`${BASE}/triage?limit=${limit}`" in api_source
+    assert "/capture/triage" not in api_source
 
 
 def test_capture_triage_lists_persisted_triage_shapes(db, vault_tmp, data_tmp):
@@ -45,9 +53,11 @@ def test_capture_triage_lists_persisted_triage_shapes(db, vault_tmp, data_tmp):
     )
 
     with _client(vault_tmp, data_tmp, db) as client:
-        r = client.get("/api/capture/triage")
+        r = client.get("/api/triage")
+        old = client.get("/api/capture/triage")
 
     assert r.status_code == 200, r.text
+    assert old.status_code == 404
     rows = r.json()
     ids = {row["id"] for row in rows}
     assert "task:triagetask" in ids
@@ -69,7 +79,7 @@ def test_capture_triage_accept_task_clears_task_marker(db, vault_tmp, data_tmp):
     )
 
     with _client(vault_tmp, data_tmp, db) as client:
-        r = client.post("/api/capture/triage/task:accepttask/reclassify", json={"type": "task"})
+        r = client.post("/api/triage/task:accepttask/reclassify", json={"type": "task"})
 
     assert r.status_code == 200, r.text
     file_text = (vault_tmp / "journal" / "2026-06-11.md").read_text(encoding="utf-8")
@@ -88,11 +98,11 @@ def test_capture_triage_reclassifies_journal_line_to_task_without_deleting_log(
     with _client(vault_tmp, data_tmp, db) as client:
         item_id = next(
             row["id"]
-            for row in client.get("/api/capture/triage").json()
+            for row in client.get("/api/triage").json()
             if row["kind"] == "journal"
         )
         r = client.post(
-            f"/api/capture/triage/{item_id}/reclassify",
+            f"/api/triage/{item_id}/reclassify",
             json={"type": "task"},
         )
 
@@ -127,7 +137,7 @@ def test_capture_triage_reclassifies_typed_note_to_task_and_clears_frontmatter(
 
     with _client(vault_tmp, data_tmp, db) as client:
         r = client.post(
-            f"/api/capture/triage/note:{note['id']}/reclassify",
+            f"/api/triage/note:{note['id']}/reclassify",
             json={"type": "task"},
         )
 

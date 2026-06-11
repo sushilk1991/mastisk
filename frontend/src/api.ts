@@ -388,10 +388,10 @@ export const api = {
 
   captureTriage: {
     list: (limit = 100): Promise<CaptureTriageItem[]> =>
-      j<CaptureTriageItem[]>(`${BASE}/capture/triage?limit=${limit}`),
+      j<CaptureTriageItem[]>(`${BASE}/triage?limit=${limit}`),
     reclassify: (id: string, type: CaptureTriageTarget): Promise<{ ok: boolean; id: string; type: CaptureTriageTarget }> =>
       j<{ ok: boolean; id: string; type: CaptureTriageTarget }>(
-        `${BASE}/capture/triage/${encodeURIComponent(id)}/reclassify`,
+        `${BASE}/triage/${encodeURIComponent(id)}/reclassify`,
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
