@@ -153,6 +153,37 @@ def test_scan_routines_ignores_date_bullets_outside_completions_section(db, vaul
     assert count == 0
 
 
+def test_routine_toggle_does_not_resurrect_hand_deleted_completion(
+    vault_tmp, data_tmp, db
+):
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/routines",
+            json={"name": "Reading", "time_of_day": "evening"},
+        )
+        assert created.status_code == 201, created.text
+        client.post("/api/routines/reading/toggle?date=2026-06-10")
+        client.post("/api/routines/reading/toggle?date=2026-06-11")
+
+        path = vault_tmp / "routines" / "reading.md"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("- 2026-06-10\n", ""),
+            encoding="utf-8",
+        )
+
+        toggled = client.post("/api/routines/reading/toggle?date=2026-06-12")
+        assert toggled.status_code == 200, toggled.text
+
+        file_text = path.read_text(encoding="utf-8")
+        assert "- 2026-06-10" not in file_text
+        assert "- 2026-06-11" in file_text
+        assert "- 2026-06-12" in file_text
+        completions = db.execute(
+            "SELECT date FROM routine_completions WHERE routine_id = 'reading' ORDER BY date"
+        ).fetchall()
+        assert [row["date"] for row in completions] == ["2026-06-11", "2026-06-12"]
+
+
 def test_routine_missed_nudges_dedup_and_respect_windows(db, vault_tmp, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")

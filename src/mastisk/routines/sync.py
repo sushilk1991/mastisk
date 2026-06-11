@@ -191,8 +191,7 @@ def _mutate_routine_completion(
     path = vault_dir() / routine["path"]
     with host_file_lock(path):
         meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
-        file_dates = set(_completion_dates_from_body(body))
-        all_dates = file_dates | set(completion_dates(slug))
+        all_dates = set(_completion_dates_from_body(body))
         completed = force if force is not None else target_date not in all_dates
         if completed:
             all_dates.add(target_date)
