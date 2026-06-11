@@ -205,6 +205,14 @@ def test_calendar_sync_upserts_prunes_and_only_reads_google_calendar(data_tmp, d
             "scope": "https://www.googleapis.com/auth/calendar.readonly",
         }
     )
+    db.execute(
+        """INSERT INTO calendar_events
+           (id, calendar_id, summary, start, end, all_day, status, updated_at, synced_at)
+           VALUES
+           ('old-cache', 'primary', 'Old cached event',
+            '2026-06-09T10:00:00+00:00', '2026-06-10T18:29:00+00:00',
+            0, 'confirmed', '2026-06-09T00:00:00Z', '2026-06-09T08:00:00+05:30')"""
+    )
     now = datetime(2026, 6, 12, 8, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
     result = sync_calendar(now=now, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     assert result["event_count"] == 3
@@ -217,24 +225,24 @@ def test_calendar_sync_upserts_prunes_and_only_reads_google_calendar(data_tmp, d
             "calendar_id": "primary",
             "id": "all-day-1",
             "summary": "Travel day",
-            "start": "2026-06-12",
-            "end": "2026-06-13",
+            "start": "2026-06-11T18:30:00+00:00",
+            "end": "2026-06-12T18:30:00+00:00",
             "all_day": 1,
         },
         {
             "calendar_id": "primary",
             "id": "timed-1",
             "summary": "Standup",
-            "start": "2026-06-12T10:00:00+05:30",
-            "end": "2026-06-12T10:30:00+05:30",
+            "start": "2026-06-12T04:30:00+00:00",
+            "end": "2026-06-12T05:00:00+00:00",
             "all_day": 0,
         },
         {
             "calendar_id": "work@example.com",
             "id": "work-1",
             "summary": "Client review",
-            "start": "2026-06-12T15:00:00+05:30",
-            "end": "2026-06-12T16:00:00+05:30",
+            "start": "2026-06-12T09:30:00+00:00",
+            "end": "2026-06-12T10:30:00+00:00",
             "all_day": 0,
         },
     ]

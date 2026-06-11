@@ -213,6 +213,7 @@ def sync_calendar(
         close = http_client is None
         try:
             with connect() as conn:
+                _prune_events_before(conn, start)
                 for calendar_id in calendar_ids:
                     events = _fetch_events(
                         client=client,
@@ -370,10 +371,15 @@ def events_for_day(day: date) -> list[dict[str, Any]]:
     tz = ZoneInfo(get_settings().capture.default_timezone)
     start = datetime.combine(day, time.min, tzinfo=tz)
     end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
+    start_key = _stored_datetime(start)
+    end_key = _stored_datetime(end)
     with connect() as conn:
         rows = conn.execute(
             """SELECT id, calendar_id, summary, start, end, all_day, location, status, updated_at, synced_at
-               FROM calendar_events""",
+               FROM calendar_events
+               WHERE start < ? AND end > ?
+               ORDER BY all_day DESC, start ASC, summary ASC""",
+            (end_key, start_key),
         ).fetchall()
     matching = [
         dict(row) for row in rows
@@ -473,18 +479,23 @@ def _normalize_event(
         return None
     if not isinstance(end, str) or not end:
         end = start
+    tz = ZoneInfo(get_settings().capture.default_timezone)
     return {
         "id": event_id,
         "calendar_id": calendar_id,
         "summary": str(event.get("summary") or "(No title)"),
-        "start": start,
-        "end": end,
+        "start": _normalize_event_time(start, all_day=all_day, tz=tz),
+        "end": _normalize_event_time(end, all_day=all_day, tz=tz),
         "all_day": 1 if all_day else 0,
         "location": event.get("location") if isinstance(event.get("location"), str) else None,
         "status": event.get("status") if isinstance(event.get("status"), str) else None,
         "updated_at": event.get("updated") if isinstance(event.get("updated"), str) else None,
         "synced_at": synced_at,
     }
+
+
+def _prune_events_before(conn, window_start: datetime) -> None:
+    conn.execute("DELETE FROM calendar_events WHERE end < ?", (_stored_datetime(window_start),))
 
 
 def _prune_missing_events(
@@ -494,21 +505,19 @@ def _prune_missing_events(
     time_max: datetime,
     seen_ids: list[str],
 ) -> None:
-    tz = ZoneInfo(get_settings().capture.default_timezone)
-    rows = conn.execute(
-        "SELECT id, start, end, all_day FROM calendar_events WHERE calendar_id = ?",
-        (calendar_id,),
-    ).fetchall()
-    stale_ids = [
-        row["id"] for row in rows
-        if row["id"] not in seen_ids and _row_overlaps_window(dict(row), time_min, time_max, tz)
-    ]
-    if not stale_ids:
-        return
-    placeholders = ",".join("?" for _ in stale_ids)
+    params: list[Any] = [calendar_id, _stored_datetime(time_max), _stored_datetime(time_min)]
+    seen_clause = ""
+    if seen_ids:
+        placeholders = ",".join("?" for _ in seen_ids)
+        seen_clause = f" AND id NOT IN ({placeholders})"
+        params.extend(seen_ids)
     conn.execute(
-        f"DELETE FROM calendar_events WHERE calendar_id = ? AND id IN ({placeholders})",
-        [calendar_id, *stale_ids],
+        f"""DELETE FROM calendar_events
+            WHERE calendar_id = ?
+              AND start < ?
+              AND end > ?
+              {seen_clause}""",
+        params,
     )
 
 
@@ -543,6 +552,18 @@ def _sync_window(now: datetime, tz: ZoneInfo) -> tuple[datetime, datetime]:
     return start, end
 
 
+def _normalize_event_time(value: str, *, all_day: bool, tz: ZoneInfo) -> str:
+    if all_day:
+        parsed = datetime.combine(date.fromisoformat(value[:10]), time.min, tzinfo=tz)
+    else:
+        parsed = _parse_datetime(value, tz)
+    return _stored_datetime(parsed)
+
+
+def _stored_datetime(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat()
+
+
 def _clear_calendar_cache_and_state() -> None:
     init_schema()
     with connect() as conn:
@@ -561,8 +582,10 @@ def _event_sort_dt(row: dict[str, Any], tz: ZoneInfo) -> datetime:
 
 def _event_bounds(row: dict[str, Any], tz: ZoneInfo) -> tuple[datetime, datetime]:
     if row.get("all_day"):
-        start = _parse_date_boundary(str(row["start"]), tz)
-        end = _parse_date_boundary(str(row["end"]), tz)
+        start_raw = str(row["start"])
+        end_raw = str(row["end"])
+        start = _parse_datetime(start_raw, tz) if "T" in start_raw else _parse_date_boundary(start_raw, tz)
+        end = _parse_datetime(end_raw, tz) if "T" in end_raw else _parse_date_boundary(end_raw, tz)
         return start, end
     start = _parse_datetime(str(row["start"]), tz)
     end = _parse_datetime(str(row["end"]), tz)
