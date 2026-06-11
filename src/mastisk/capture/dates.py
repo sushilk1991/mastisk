@@ -16,6 +16,10 @@ _WEEKDAYS = {
 }
 
 _WEEKDAY_RE = re.compile(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I)
+_NEXT_WEEK_WEEKDAY_RE = re.compile(
+    r"\bnext\s+week\s+(?:on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+    re.I,
+)
 _NEXT_WEEKDAY_RE = re.compile(
     r"\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I
 )
@@ -44,7 +48,16 @@ def resolve_datetime(
     forced_time: time | None = None
     date_kind: str | None = None
 
-    if re.search(r"\bnext\s+week\b", lowered):
+    next_weekday_match = _NEXT_WEEKDAY_RE.search(lowered)
+    next_week_weekday_match = _NEXT_WEEK_WEEKDAY_RE.search(lowered)
+    weekday_match = next_weekday_match or next_week_weekday_match or _WEEKDAY_RE.search(lowered)
+    if next_weekday_match or next_week_weekday_match:
+        match = next_weekday_match or next_week_weekday_match
+        target_weekday = _WEEKDAYS[match.group(1).lower()]
+        days = (target_weekday - base.weekday()) % 7 or 7
+        parsed_date = (base + timedelta(days=days)).date()
+        date_kind = "next_weekday"
+    elif re.search(r"\bnext\s+week\b", lowered):
         days = 7 - base.weekday()
         parsed_date = (base + timedelta(days=days)).date()
         date_kind = "relative"
@@ -58,19 +71,11 @@ def resolve_datetime(
         parsed_date = base.date()
         forced_time = time(20, 0)
         date_kind = "relative"
-    else:
-        next_weekday_match = _NEXT_WEEKDAY_RE.search(lowered)
-        weekday_match = next_weekday_match or _WEEKDAY_RE.search(lowered)
-        if next_weekday_match:
-            target_weekday = _WEEKDAYS[next_weekday_match.group(1).lower()]
-            days = (target_weekday - base.weekday()) % 7 or 7
-            parsed_date = (base + timedelta(days=days)).date()
-            date_kind = "next_weekday"
-        elif weekday_match:
-            target_weekday = _WEEKDAYS[weekday_match.group(1).lower()]
-            days = (target_weekday - base.weekday()) % 7
-            parsed_date = (base + timedelta(days=days)).date()
-            date_kind = "weekday"
+    elif weekday_match:
+        target_weekday = _WEEKDAYS[weekday_match.group(1).lower()]
+        days = (target_weekday - base.weekday()) % 7
+        parsed_date = (base + timedelta(days=days)).date()
+        date_kind = "weekday"
 
     parsed_time = parsed_time or forced_time
     if parsed_date is not None:
@@ -82,6 +87,11 @@ def resolve_datetime(
         return _format_datetime(candidate)
 
     if parsed_time is not None:
+        model_date = _future_model_date(model_iso, base, parsed_time)
+        if model_date is not None:
+            return _format_datetime(
+                datetime.combine(model_date, parsed_time, tzinfo=base.tzinfo)
+            )
         candidate = datetime.combine(base.date(), parsed_time, tzinfo=base.tzinfo)
         if candidate <= base:
             candidate += timedelta(days=1)
@@ -147,6 +157,29 @@ def _normalize_model_iso(value: str | None, tzinfo) -> str | None:
         return None
     parsed = parsed.replace(tzinfo=tzinfo) if parsed.tzinfo is None else parsed.astimezone(tzinfo)
     return _format_datetime(parsed)
+
+
+def _future_model_date(value: str | None, base: datetime, parsed_time: time) -> date | None:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            parsed_date = date.fromisoformat(raw)
+        else:
+            parsed_dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            parsed_dt = (
+                parsed_dt.replace(tzinfo=base.tzinfo)
+                if parsed_dt.tzinfo is None
+                else parsed_dt.astimezone(base.tzinfo)
+            )
+            parsed_date = parsed_dt.date()
+    except ValueError:
+        return None
+    candidate = datetime.combine(parsed_date, parsed_time, tzinfo=base.tzinfo)
+    return parsed_date if candidate > base else None
 
 
 def _format_datetime(value: datetime) -> str:

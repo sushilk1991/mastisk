@@ -13,6 +13,7 @@ def test_resolves_relative_dates_without_inventing_times():
     assert resolve_datetime("follow up Thursday", BASE_TS, TZ) == "2026-06-11"
     assert resolve_datetime("review this next week", BASE_TS, TZ) == "2026-06-15"
     assert resolve_datetime("follow up next Tuesday", BASE_TS, TZ) == "2026-06-16"
+    assert resolve_datetime("follow up next week Tuesday", BASE_TS, TZ) == "2026-06-16"
 
 
 def test_resolves_relative_dates_with_times():
@@ -42,6 +43,20 @@ def test_resolves_time_only_to_next_occurrence():
     assert (
         resolve_datetime("remind me at 2pm", BASE_TS, TZ)
         == "2026-06-10T14:00:00-07:00"
+    )
+
+
+def test_time_only_uses_future_model_date_when_available():
+    from mastisk.capture.dates import resolve_datetime
+
+    assert (
+        resolve_datetime(
+            "remind me on June 20 at 2pm",
+            BASE_TS,
+            TZ,
+            model_iso="2026-06-20",
+        )
+        == "2026-06-20T14:00:00-07:00"
     )
 
 
