@@ -159,7 +159,10 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
         fixed_intent=fixed_intent or "null",
         text=text,
     )
-    result, _backend = await intelligence.run_intelligence(prompt, timeout_s=180)
+    result, _backend = await intelligence.run_intelligence(
+        prompt,
+        timeout_s=settings.capture.router_timeout_s,
+    )
     raw_text = result.get("text", "") if isinstance(result, dict) else str(result)
     parsed = extract_json_block(raw_text)
     if not isinstance(parsed, dict):

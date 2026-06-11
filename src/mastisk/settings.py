@@ -57,6 +57,7 @@ class CaptureSettings(BaseSettings):
     """Config for the token-authenticated capture ingress."""
     bearer_token: str | None = None
     default_timezone: str = "America/Los_Angeles"
+    router_timeout_s: int = 25
 
 
 class RemindersSettings(BaseSettings):

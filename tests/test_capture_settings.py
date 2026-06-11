@@ -12,6 +12,7 @@ def test_capture_settings_defaults(tmp_path, monkeypatch):
     s = reload_settings()
     assert s.capture.bearer_token is None
     assert s.capture.default_timezone
+    assert s.capture.router_timeout_s == 25
 
 
 def test_capture_token_read_from_toml(tmp_path, monkeypatch):

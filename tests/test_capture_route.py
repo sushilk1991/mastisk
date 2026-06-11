@@ -248,6 +248,23 @@ def test_capture_router_failure_falls_back_to_raw_inbox(
     assert (vault_tmp / body["destination"]).read_text() == "do not lose this"
 
 
+def test_capture_router_timeout_falls_back_to_raw_inbox(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    fake_capture_router.side_effect = TimeoutError("router timed out")
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "timeout should not duplicate this", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "inbox"
+    assert body["needs_triage"] is True
+    assert (vault_tmp / body["destination"]).read_text() == "timeout should not duplicate this"
+
+
 def test_command_detected_capture_skips_confidence_gate(
     client_with_token, vault_tmp, fake_capture_router
 ):

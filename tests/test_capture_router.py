@@ -142,6 +142,28 @@ async def test_route_capture_injects_identity_and_empty_phase3_context(data_tmp)
 
 
 @pytest.mark.asyncio
+async def test_route_capture_uses_configured_router_timeout(data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "America/Los_Angeles"\nrouter_timeout_s = 11\n'
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="journal"))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as run_mock:
+        await route_capture("felt focused", source="watch", ts=BASE_TS)
+
+    assert run_mock.call_args.kwargs["timeout_s"] == 11
+
+
+@pytest.mark.asyncio
 async def test_route_capture_does_not_clobber_scheduled_or_review_at(data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
