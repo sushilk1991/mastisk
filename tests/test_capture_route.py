@@ -379,6 +379,33 @@ def test_capture_journal_appends_clean_body_to_today_log(
     assert "- 13:05 Felt steady after lunch" in file_text
 
 
+def test_capture_journal_log_includes_source_provenance(
+    client_with_token,
+    vault_tmp,
+    fake_capture_router,
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="journal",
+        confidence=0.94,
+        body="Captured on the phone",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={
+            "text": "journal captured on the phone",
+            "source": "phone",
+            "ts": "2026-06-11T13:05:00-07:00",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    file_text = (vault_tmp / r.json()["destination"]).read_text(encoding="utf-8")
+    assert "- 13:05 Captured on the phone [source: phone]" in file_text
+
+
 def test_capture_journal_fallback_uses_capture_default_timezone(
     vault_tmp,
     data_tmp,

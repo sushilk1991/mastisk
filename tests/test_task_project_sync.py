@@ -176,6 +176,20 @@ def test_append_task_collapses_newlines_and_marker_glyphs_to_one_line(db, vault_
     assert parsed[0]["text"] == "first line - [ ] injected 2026-06-30"
 
 
+def test_append_task_to_journal_day_refreshes_journal_mirror(db, vault_tmp):
+    from mastisk.tasks.sync import append_task_to_host
+
+    host = vault_tmp / "journal" / "2026-06-11.md"
+
+    append_task_to_host(host, text="Mirror this journal task", uid="mirror1")
+
+    row = db.execute("SELECT * FROM journal_days WHERE date = '2026-06-11'").fetchone()
+    assert row is not None
+    assert row["path"] == "journal/2026-06-11.md"
+    assert row["log_count"] == 0
+    assert row["deleted_at"] is None
+
+
 def test_task_append_and_scan_acquire_host_file_lock(db, vault_tmp, monkeypatch):
     from mastisk.tasks import sync as task_sync
 

@@ -69,6 +69,31 @@ def test_journal_mood_energy_frontmatter_preserves_body_content(db, vault_tmp):
     assert "- 11:00 Implemented the write path" in text
 
 
+def test_journal_dump_preserves_unowned_null_frontmatter(db, vault_tmp):
+    from mastisk.journal import append_log
+
+    path = vault_tmp / "journal" / "2026-06-11.md"
+    path.parent.mkdir()
+    path.write_text(
+        "---\n"
+        "custom: null\n"
+        "mood: null\n"
+        "energy: 4\n"
+        "---\n\n"
+        "## Tasks\n\n"
+        "## Log\n\n"
+        "## Reflections\n",
+        encoding="utf-8",
+    )
+
+    append_log("2026-06-11", "Preserve nulls", datetime(2026, 6, 11, 9, 0))
+
+    text = path.read_text(encoding="utf-8")
+    assert "custom: null\n" in text
+    assert "mood:" not in text
+    assert "energy: 4\n" in text
+
+
 def test_journal_reflections_escape_headings_without_corrupting_log_mirror(db, vault_tmp):
     from mastisk.journal import append_log, assemble_journal_day, set_reflections
 
@@ -308,6 +333,26 @@ def test_journal_route_log_timestamp_uses_capture_default_timezone(
     assert "- 12:00 config tz wins" in (
         vault_tmp / "journal" / "2026-06-11.md"
     ).read_text(encoding="utf-8")
+
+
+def test_journal_patch_null_mood_clears_only_that_frontmatter_key(
+    db,
+    vault_tmp,
+    data_tmp,
+):
+    from mastisk.journal import set_mood_energy
+
+    set_mood_energy("2026-06-11", mood=4, energy=3)
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        patched = client.patch("/api/journal/2026-06-11", json={"mood": None})
+
+    assert patched.status_code == 200, patched.text
+    assert "mood" not in patched.json()["frontmatter"]
+    assert patched.json()["frontmatter"]["energy"] == 3
+    text = (vault_tmp / "journal" / "2026-06-11.md").read_text(encoding="utf-8")
+    assert "mood:" not in text
+    assert "energy: 3\n" in text
 
 
 def test_journal_route_rejects_bad_frontmatter_without_rewriting(

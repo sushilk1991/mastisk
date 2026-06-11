@@ -74,8 +74,13 @@ async def append_journal_log_endpoint(day: str, req: JournalLogCreate) -> dict:
 async def patch_journal_day_endpoint(day: str, req: JournalPatch) -> dict:
     valid_day = _validate_day(day)
     try:
-        if "mood" in req.model_fields_set or "energy" in req.model_fields_set:
-            set_mood_energy(valid_day, mood=req.mood, energy=req.energy)
+        scale_updates = {}
+        if "mood" in req.model_fields_set:
+            scale_updates["mood"] = req.mood
+        if "energy" in req.model_fields_set:
+            scale_updates["energy"] = req.energy
+        if scale_updates:
+            set_mood_energy(valid_day, **scale_updates)
         if "reflections" in req.model_fields_set:
             set_reflections(valid_day, req.reflections or "")
         assembled = assemble_journal_day(valid_day)

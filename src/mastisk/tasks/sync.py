@@ -9,7 +9,7 @@ from typing import Any
 
 from mastisk.db.queries import connect
 from mastisk.file_locks import host_file_lock
-from mastisk.journal import ensure_day
+from mastisk.journal import ensure_day, scan_journal_days
 from mastisk.journal import skeleton as journal_skeleton
 from mastisk.markdown_sections import append_to_section
 from mastisk.paths import journal_dir, projects_dir, vault_dir
@@ -168,6 +168,8 @@ def append_task_to_host(
         markdown = path.read_text(encoding="utf-8")
         atomic_write(path, append_to_section(markdown, "Tasks", line))
     scan_task_hosts([path])
+    if _is_journal_day_path(path):
+        scan_journal_days([path])
     _persist_capture_event_facts(
         task_uid,
         reminder_lead_minutes=reminder_lead_minutes,

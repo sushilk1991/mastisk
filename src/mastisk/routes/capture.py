@@ -83,7 +83,12 @@ async def capture(
 
     if routed.type == "journal":
         try:
-            return _persist_journal_capture(routed, ts=req.ts, needs_triage=needs_triage)
+            return _persist_journal_capture(
+                routed,
+                ts=req.ts,
+                source=req.source,
+                needs_triage=needs_triage,
+            )
         except JournalFrontmatterError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception:
@@ -167,14 +172,20 @@ def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: boo
     }
 
 
-def _persist_journal_capture(capture: Capture, *, ts: str | None, needs_triage: bool) -> dict:
+def _persist_journal_capture(
+    capture: Capture,
+    *,
+    ts: str | None,
+    source: str,
+    needs_triage: bool,
+) -> dict:
     at = _capture_local_datetime(ts)
     body = (
         f"{capture.body.rstrip()} #needs-triage"
         if needs_triage and "#needs-triage" not in capture.body
         else capture.body
     )
-    result = append_log(at.date().isoformat(), body, at)
+    result = append_log(at.date().isoformat(), body, at, source=source)
     return {
         "id": result["date"],
         "type": "journal",

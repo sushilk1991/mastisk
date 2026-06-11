@@ -11,6 +11,7 @@ import yaml
 
 from mastisk.db.queries import connect
 from mastisk.file_locks import host_file_lock
+from mastisk.markdown_sections import append_to_section
 from mastisk.paths import journal_dir, vault_dir
 from mastisk.routes.notes import atomic_write
 from mastisk.settings import get_settings
@@ -20,6 +21,8 @@ _H2_RE = re.compile(r"(?m)^##\s+(.+?)\s*$")
 _LOG_BULLET_RE = re.compile(r"^\s*-\s+\d{2}:\d{2}\b")
 _USER_HEADING_RE = re.compile(r"(?m)^(#{1,6}\s)")
 _REQUIRED_SECTIONS = ("Tasks", "Log", "Reflections")
+_OWNED_FRONTMATTER_KEYS = {"mood", "energy"}
+_UNSET = object()
 
 
 class JournalFrontmatterError(ValueError):
@@ -49,7 +52,7 @@ def append_log(
     with host_file_lock(target):
         _ensure_day_locked(target)
         frontmatter, markdown_body = _split_frontmatter(target.read_text(encoding="utf-8"))
-        updated_body = _append_to_section(markdown_body, "Log", line)
+        updated_body = append_to_section(markdown_body, "Log", line)
         atomic_write(target, _dump_day(frontmatter, updated_body))
     scan_journal_days([target])
     return {
@@ -77,18 +80,16 @@ def set_reflections(day: str | date | datetime, text: str) -> dict[str, str]:
 
 def set_mood_energy(
     day: str | date | datetime,
-    mood: int | None = None,
-    energy: int | None = None,
+    mood: int | None | object = _UNSET,
+    energy: int | None | object = _UNSET,
 ) -> dict[str, str]:
     target_day = _coerce_day(day)
     target = _day_path(target_day)
     with host_file_lock(target):
         _ensure_day_locked(target)
         frontmatter, markdown_body = _split_frontmatter(target.read_text(encoding="utf-8"))
-        if mood is not None:
-            frontmatter["mood"] = _clean_scale(mood, "mood")
-        if energy is not None:
-            frontmatter["energy"] = _clean_scale(energy, "energy")
+        _apply_optional_scale(frontmatter, "mood", mood)
+        _apply_optional_scale(frontmatter, "energy", energy)
         atomic_write(target, _dump_day(frontmatter, markdown_body))
     scan_journal_days([target])
     return {"date": target_day.isoformat(), "path": str(target.relative_to(vault_dir()))}
@@ -241,22 +242,6 @@ def _ensure_required_sections(markdown: str) -> str:
     return updated
 
 
-def _append_to_section(markdown: str, heading: str, line: str) -> str:
-    if not _has_section(markdown, heading):
-        markdown = _ensure_section(markdown, heading)
-    match = _section_match(markdown, heading)
-    if match is None:
-        raise RuntimeError(f"missing journal section after ensure: {heading}")
-    body_start = _line_end(markdown, match)
-    next_heading = _next_heading_match(markdown, body_start)
-    insert_at = body_start + next_heading.start() if next_heading else len(markdown)
-    prefix = markdown[:insert_at]
-    suffix = markdown[insert_at:]
-    if prefix and not prefix.endswith("\n"):
-        prefix += "\n"
-    return f"{prefix}{line}\n{suffix}"
-
-
 def _replace_section(markdown: str, heading: str, text: str) -> str:
     if not _has_section(markdown, heading):
         markdown = _ensure_section(markdown, heading)
@@ -303,7 +288,11 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def _dump_day(frontmatter: dict[str, Any], body: str) -> str:
-    clean = {key: value for key, value in frontmatter.items() if value is not None}
+    clean = {
+        key: value
+        for key, value in frontmatter.items()
+        if value is not None or key not in _OWNED_FRONTMATTER_KEYS
+    }
     body_text = body.lstrip("\n")
     if not clean:
         return body_text
@@ -445,6 +434,19 @@ def _neutralize_heading_lines(value: str) -> str:
 def _source_suffix(source: str | None) -> str:
     cleaned = _clean_one_line(source or "")
     return f" [source: {cleaned}]" if cleaned else ""
+
+
+def _apply_optional_scale(
+    frontmatter: dict[str, Any],
+    field: str,
+    value: int | None | object,
+) -> None:
+    if value is _UNSET:
+        return
+    if value is None:
+        frontmatter.pop(field, None)
+        return
+    frontmatter[field] = _clean_scale(value, field)
 
 
 def _clean_scale(value: int, field: str) -> int:
