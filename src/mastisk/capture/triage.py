@@ -19,7 +19,12 @@ from mastisk.projects.sync import append_project_log, find_project, get_project
 from mastisk.routes.notes import atomic_write, persist_note_capture
 from mastisk.routines.sync import complete_routine_completion
 from mastisk.settings import get_settings
-from mastisk.tasks.sync import append_task_to_host, get_task, journal_host_for_today, scan_task_hosts
+from mastisk.tasks.sync import (
+    append_task_to_host,
+    get_task,
+    journal_host_for_today,
+    scan_task_hosts,
+)
 
 CaptureTriageType = str
 log = logging.getLogger("mastisk.capture.triage")
