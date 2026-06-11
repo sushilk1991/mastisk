@@ -353,6 +353,69 @@ async def test_did_my_matching_routine_promotes_to_command(data_tmp, db, vault_t
 
 
 @pytest.mark.asyncio
+async def test_route_capture_routine_context_does_not_scan(data_tmp, db, vault_tmp, monkeypatch):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    from mastisk.routines.sync import create_routine_file
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_routine_file(name="Morning Vitamins", time_of_day="morning")
+    monkeypatch.setattr(
+        "mastisk.routines.sync.scan_routines",
+        lambda *args, **kwargs: pytest.fail("routine context should not scan"),
+    )
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="note", confidence=0.91))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as run_mock:
+        capture = await route_capture("felt focused", source="watch", ts=BASE_TS)
+
+    assert capture.type == "note"
+    prompt = run_mock.call_args.args[0]
+    assert '"slug": "morning-vitamins"' in prompt
+
+
+@pytest.mark.asyncio
+async def test_did_my_matching_routine_uses_one_targeted_scan(
+    data_tmp, db, vault_tmp, monkeypatch
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    from mastisk.routines.sync import create_routine_file
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_routine_file(name="Morning Vitamins", time_of_day="morning")
+    scan_calls = []
+
+    def fake_scan(paths=None):
+        scan_calls.append(paths)
+        return {"upserted": 1}
+
+    monkeypatch.setattr("mastisk.routines.sync.scan_routines", fake_scan)
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="note", confidence=0.2))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ):
+        capture = await route_capture("did my vitamins", source="watch", ts=BASE_TS)
+
+    assert capture.type == "routine_done"
+    assert capture.routine == "morning-vitamins"
+    assert len(scan_calls) == 1
+    assert scan_calls[0] is not None
+    assert [path.name for path in scan_calls[0]] == ["morning-vitamins.md"]
+
+
+@pytest.mark.asyncio
 async def test_did_my_question_stays_hint_even_if_words_match_routine(data_tmp, db, vault_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')

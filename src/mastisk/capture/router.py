@@ -284,9 +284,8 @@ def _routing_context() -> tuple[str, str]:
 
 def _routine_routing_context() -> str:
     try:
-        from mastisk.routines.sync import list_routines, scan_routines
+        from mastisk.routines.sync import list_routines
 
-        scan_routines()
         routines = [
             {
                 "slug": routine["slug"],
@@ -310,28 +309,46 @@ def _match_routine_done_command(text: str) -> dict[str, str] | None:
     if not target:
         return None
     try:
-        from mastisk.routines.sync import list_routines, scan_routines
+        from mastisk.paths import vault_dir
+        from mastisk.routines.sync import get_routine, list_routines, scan_routines
 
-        scan_routines()
         routines = list_routines(include_archived=False)
     except (sqlite3.Error, OSError):
         return None
     target_tokens = set(target.split())
+    candidate = None
     for routine in routines:
-        candidates = {
-            _normalize_routine_ref(routine["slug"].replace("-", " ")),
-            _normalize_routine_ref(routine["name"]),
-        }
-        for candidate in candidates:
-            if not candidate:
-                continue
-            candidate_tokens = set(candidate.split())
-            if (
-                target in candidate
-                or target_tokens <= candidate_tokens
-            ):
-                return {"slug": routine["slug"], "name": routine["name"]}
-    return None
+        if _routine_matches_target(routine, target, target_tokens):
+            candidate = routine
+            break
+    if candidate is None:
+        return None
+    try:
+        scan_routines([vault_dir() / candidate["path"]])
+        refreshed = get_routine(candidate["slug"])
+    except (sqlite3.Error, OSError):
+        return None
+    if refreshed is None or not _routine_matches_target(refreshed, target, target_tokens):
+        return None
+    return {"slug": refreshed["slug"], "name": refreshed["name"]}
+
+
+def _routine_matches_target(
+    routine: dict[str, object],
+    target: str,
+    target_tokens: set[str],
+) -> bool:
+    candidates = {
+        _normalize_routine_ref(str(routine["slug"]).replace("-", " ")),
+        _normalize_routine_ref(str(routine["name"])),
+    }
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate_tokens = set(candidate.split())
+        if target in candidate or target_tokens <= candidate_tokens:
+            return True
+    return False
 
 
 def _normalize_routine_ref(value: str) -> str:
