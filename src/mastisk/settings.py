@@ -61,8 +61,22 @@ class CaptureSettings(BaseSettings):
 
 
 class RemindersSettings(BaseSettings):
-    """Config for reminder defaults. Reminder rows arrive in Phase 4."""
+    """Config for reminder defaults and reminder engine cadence."""
     default_lead_minutes: int = 15
+    tick_seconds: int = 60
+    late_threshold_minutes: int = 5
+    max_attempts: int = 3
+    retry_backoff_seconds: list[int] = Field(default_factory=lambda: [60, 300, 900])
+    daily_summary_time: str = "07:30"
+
+
+class NotifySettings(BaseSettings):
+    """Push notification backend config."""
+    backend: str = "none"
+    pushover_token: str | None = None
+    pushover_user: str | None = None
+    ntfy_topic: str | None = None
+    ntfy_server: str = "https://ntfy.sh"
 
 
 class DomainsSettings(BaseSettings):
@@ -227,6 +241,8 @@ class Settings(BaseSettings):
     capture: CaptureSettings = Field(default_factory=CaptureSettings)
 
     reminders: RemindersSettings = Field(default_factory=RemindersSettings)
+
+    notify: NotifySettings = Field(default_factory=NotifySettings)
 
     domains: DomainsSettings = Field(default_factory=DomainsSettings)
 

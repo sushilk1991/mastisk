@@ -10,6 +10,7 @@ import yaml
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from mastisk.agents.reminder_engine import create_task_due_reminder
 from mastisk.capture.router import Capture, route_capture
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import append_project_log, find_project
@@ -124,6 +125,16 @@ def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: boo
         no_reminder=capture.no_reminder,
         review_at=capture.review_at,
     )
+    try:
+        create_task_due_reminder(
+            task_uid=row["uid"],
+            task_text=row["text"],
+            due=capture.due,
+            lead_minutes=capture.reminder_lead_minutes,
+            no_reminder=capture.no_reminder,
+        )
+    except Exception:
+        log.exception("capture task reminder creation failed for task %s", row["uid"])
     return {
         "id": row["uid"],
         "type": "task",

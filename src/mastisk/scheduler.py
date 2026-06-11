@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -18,6 +19,7 @@ async def start_scheduler():
     _reclaim_orphaned_running()
     _reclaim_running_blog_posts()
     _reclaim_running_tweet_threads()
+    _reclaim_firing_reminders()
 
     # One-shot graph repair on boot: reconnects links the Compiler dropped
     # because sibling articles didn't exist yet. This closes the gap between
@@ -115,6 +117,34 @@ async def start_scheduler():
         log.info("scheduler: personal_os_scan registered (5min tick)")
     except Exception as e:
         log.warning("scheduler: personal_os_scan registration failed: %s", e)
+
+    try:
+        from mastisk.agents.reminder_engine import daily_summary_tick, reminder_tick
+        from mastisk.settings import get_settings
+
+        settings = get_settings()
+        sched.add_job(
+            reminder_tick, "interval",
+            seconds=settings.reminders.tick_seconds, id="reminder_tick",
+            max_instances=1,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=15),
+            coalesce=True,
+        )
+        summary_time = settings.reminders.daily_summary_time.strip()
+        if summary_time:
+            hour_s, minute_s = summary_time.split(":", 1)
+            sched.add_job(
+                daily_summary_tick, "cron",
+                hour=int(hour_s),
+                minute=int(minute_s),
+                timezone=ZoneInfo(settings.capture.default_timezone),
+                id="daily_summary",
+                max_instances=1,
+                coalesce=True,
+            )
+        log.info("scheduler: reminder_tick registered (%ss tick)", settings.reminders.tick_seconds)
+    except Exception as e:
+        log.warning("scheduler: reminder registration failed: %s", e)
 
     try:
         from mastisk.agents.linter import Linter
@@ -331,6 +361,17 @@ def _reclaim_running_tweet_threads() -> None:
             log.info("reclaimed %s stale running tweet_threads row(s)", n)
     except Exception as e:
         log.warning("tweet_threads reclaim skipped: %s", e)
+
+
+def _reclaim_firing_reminders() -> None:
+    try:
+        from mastisk.agents.reminder_engine import reclaim_firing_reminders
+
+        n = reclaim_firing_reminders()
+        if n:
+            log.info("reclaimed %s firing reminder row(s)", n)
+    except Exception as e:
+        log.warning("reminder reclaim skipped: %s", e)
 
 
 def _graph_repair_once() -> None:

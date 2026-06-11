@@ -401,6 +401,34 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_domain ON tasks(domain);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project);
 
+-- ─────────────────────────────── Personal OS Phase 4 ───────────────────────────────
+-- Reminders are operational state, not markdown-canonical knowledge.
+
+CREATE TABLE IF NOT EXISTS reminders (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type     TEXT,
+  entity_id       TEXT,
+  fire_at         DATETIME NOT NULL,
+  lead_minutes    INTEGER,
+  kind            TEXT NOT NULL,                       -- task_due | followup | daily_summary | custom
+  status          TEXT NOT NULL DEFAULT 'pending',     -- pending | firing | sent | late | notify_failed | cancelled
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at DATETIME,
+  last_error      TEXT,
+  title           TEXT,
+  body            TEXT,
+  url             TEXT,
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  fired_at        DATETIME,
+  deleted_at      DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, fire_at);
+CREATE INDEX IF NOT EXISTS idx_reminders_entity ON reminders(entity_type, entity_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_daily_summary_date
+  ON reminders(kind, entity_id)
+  WHERE kind = 'daily_summary' AND deleted_at IS NULL;
+
 -- ─────────────────────────────── Roundtables ───────────────────────────────
 -- A roundtable is one fan-out of a prompt to multiple LLMs + one synthesis.
 -- Fully DB-stored (no filesystem artifact), because perspectives are transient

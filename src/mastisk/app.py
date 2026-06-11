@@ -25,6 +25,7 @@ from mastisk.routes import (
     open_questions_route,
     podcasts_route,
     projects,
+    reminders,
     repos_route,
     roundtable_route,
     search,
@@ -96,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(domains.router)
     app.include_router(projects.router)
     app.include_router(tasks.router)
+    app.include_router(reminders.router)
     app.include_router(notes.articles_notes_router)
     app.include_router(repos_route.router)
     app.include_router(roundtable_route.router)

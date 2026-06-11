@@ -234,6 +234,92 @@ def test_capture_task_preserves_due_time_and_reminder_facts(
     assert row["review_at"] == "2026-06-10T13:45:00-07:00"
 
 
+def test_capture_task_creates_due_reminder_from_router_fields(
+    client_with_token, db, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.93,
+        body="call Sam",
+        due="2099-01-01T14:00:00+00:00",
+        reminder_lead_minutes=15,
+        no_reminder=False,
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={
+            "text": "remind me to call Sam at 2pm",
+            "source": "watch",
+            "ts": "2026-06-11T09:00:00-07:00",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    row = db.execute(
+        """SELECT entity_type, entity_id, fire_at, lead_minutes, kind, status
+           FROM reminders WHERE entity_type = 'task' AND entity_id = ?""",
+        (body["id"],),
+    ).fetchone()
+    assert dict(row) == {
+        "entity_type": "task",
+        "entity_id": body["id"],
+        "fire_at": "2099-01-01T13:45:00+00:00",
+        "lead_minutes": 15,
+        "kind": "task_due",
+        "status": "pending",
+    }
+
+
+def test_capture_task_no_reminder_suppresses_due_reminder(
+    client_with_token, db, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.93,
+        body="call Sam",
+        due="2099-01-01T14:00:00+00:00",
+        reminder_lead_minutes=15,
+        no_reminder=True,
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "call Sam at 2pm no reminder", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    assert db.execute("SELECT COUNT(*) AS n FROM reminders").fetchone()["n"] == 0
+
+
+def test_capture_task_skips_due_reminder_when_lead_instant_is_past(
+    client_with_token, db, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.93,
+        body="archive old box",
+        due="2000-01-01T14:00:00+00:00",
+        reminder_lead_minutes=15,
+        no_reminder=False,
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "archive old box", "source": "watch"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    assert db.execute("SELECT COUNT(*) AS n FROM reminders").fetchone()["n"] == 0
+
+
 def test_capture_medium_confidence_marks_needs_triage(
     client_with_token, vault_tmp, fake_capture_router
 ):
