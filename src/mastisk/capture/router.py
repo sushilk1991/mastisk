@@ -1,6 +1,7 @@
 """Phase-2 capture intent router."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import datetime
@@ -179,10 +180,13 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
         hint_intent=hint_intent or "null",
         text=text,
     )
-    result, _backend = await intelligence.run_intelligence(
-        prompt,
-        timeout_s=settings.capture.router_timeout_s,
-        classification=True,
+    result, _backend = await asyncio.wait_for(
+        intelligence.run_intelligence(
+            prompt,
+            timeout_s=settings.capture.router_timeout_s,
+            classification=True,
+        ),
+        timeout=settings.capture.router_timeout_s,
     )
     raw_text = result.get("text", "") if isinstance(result, dict) else str(result)
     parsed = extract_json_block(raw_text)

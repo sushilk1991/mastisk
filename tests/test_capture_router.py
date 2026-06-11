@@ -1,6 +1,7 @@
 """Intent-router unit tests for Phase 2 capture."""
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -175,6 +176,28 @@ async def test_route_capture_uses_configured_router_timeout(data_tmp):
 
     assert run_mock.call_args.kwargs["timeout_s"] == 11
     assert run_mock.call_args.kwargs["classification"] is True
+
+
+@pytest.mark.asyncio
+async def test_route_capture_enforces_total_router_timeout(data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "America/Los_Angeles"\nrouter_timeout_s = 1\n'
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    async def slow_router(*args, **kwargs):
+        await asyncio.sleep(10)
+        return ({"text": json.dumps(_llm_capture(type="journal"))}, "claude")
+
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        side_effect=slow_router,
+    ), pytest.raises(TimeoutError):
+        await route_capture("felt focused", source="watch", ts=BASE_TS)
 
 
 @pytest.mark.asyncio
