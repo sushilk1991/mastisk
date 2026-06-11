@@ -19,6 +19,7 @@ from mastisk.projects.sync import append_project_log, find_project, get_project
 from mastisk.routes.notes import atomic_write, persist_note_capture
 from mastisk.routines.sync import RoutineArchivedError, complete_routine_completion
 from mastisk.settings import get_settings
+from mastisk.tasks.parser import parse_task_line
 from mastisk.tasks.sync import (
     append_task_to_host,
     get_task,
@@ -348,6 +349,10 @@ def _clear_triage_marker(item: dict[str, Any], *, target_type: str) -> None:
         if task is None:
             return
         path = vault_dir() / task["host_path"]
+        if target_type not in {"task", "dismiss"}:
+            _rewrite_line_containing(path, uid, _task_line_to_plain_bullet)
+            scan_task_hosts([path])
+            return
         _rewrite_line_containing(path, uid, _remove_triage_tag)
         scan_task_hosts([path])
         return
@@ -463,6 +468,14 @@ def _typed_note_content(capture: dict[str, Any], *, needs_triage: bool) -> str:
 
 def _remove_triage_tag(line: str) -> str:
     return re.sub(r"\s{2,}", " ", _TRIAGE_TAG_RE.sub("", line)).rstrip()
+
+
+def _task_line_to_plain_bullet(line: str) -> str:
+    parsed = parse_task_line(line)
+    text = str(parsed.get("text") if parsed else _clean_triage_text(line)).strip()
+    indent_match = re.match(r"^(?P<indent>\s*)-\s+\[[ xX]\]\s*", line)
+    indent = indent_match.group("indent") if indent_match else ""
+    return f"{indent}- {text}".rstrip()
 
 
 def _clean_triage_text(value: str) -> str:

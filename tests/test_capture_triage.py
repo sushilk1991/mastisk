@@ -33,6 +33,14 @@ def test_capture_triage_frontend_hides_routine_done_without_candidate():
     assert "await throwApiError(r)" in api_source
 
 
+def test_capture_triage_frontend_labels_task_dismiss_as_keep_task():
+    view_source = Path("frontend/src/components/DashboardViews.tsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "item.kind === 'task' ? 'keep task' : 'dismiss'" in view_source
+
+
 def test_capture_triage_lists_persisted_triage_shapes(db, vault_tmp, data_tmp):
     from mastisk.journal import append_log
     from mastisk.projects.sync import append_project_log, create_project_file
@@ -97,6 +105,60 @@ def test_capture_triage_accept_task_clears_task_marker(db, vault_tmp, data_tmp):
     assert "#needs-triage" not in file_text
     row = db.execute("SELECT needs_triage FROM tasks WHERE uid = 'accepttask'").fetchone()
     assert row["needs_triage"] == 0
+
+
+def test_capture_triage_reclassifies_task_away_by_demoting_original_task(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.tasks.sync import append_task_to_host
+
+    append_task_to_host(
+        vault_tmp / "journal" / "2026-06-11.md",
+        text="Call Sam",
+        due="2026-06-12",
+        tags=["needs-triage"],
+        uid="awaytask",
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        r = client.post("/api/triage/task:awaytask/reclassify", json={"type": "journal"})
+
+    assert r.status_code == 200, r.text
+    file_text = (vault_tmp / "journal" / "2026-06-11.md").read_text(encoding="utf-8")
+    assert "- Call Sam" in file_text
+    assert "- [ ] Call Sam" not in file_text
+    assert "awaytask" not in file_text
+    assert "#needs-triage" not in file_text
+    open_task = db.execute(
+        "SELECT uid FROM tasks WHERE uid = 'awaytask' AND deleted_at IS NULL"
+    ).fetchone()
+    assert open_task is None
+
+
+def test_capture_triage_dismiss_task_keeps_task_and_clears_triage_marker(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.tasks.sync import append_task_to_host
+
+    append_task_to_host(
+        vault_tmp / "journal" / "2026-06-11.md",
+        text="Call Sam",
+        tags=["needs-triage"],
+        uid="dismisstask",
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        r = client.post("/api/triage/task:dismisstask/reclassify", json={"type": "dismiss"})
+
+    assert r.status_code == 200, r.text
+    file_text = (vault_tmp / "journal" / "2026-06-11.md").read_text(encoding="utf-8")
+    assert "- [ ] Call Sam" in file_text
+    assert "dismisstask" in file_text
+    assert "#needs-triage" not in file_text
+    row = db.execute(
+        "SELECT needs_triage, deleted_at FROM tasks WHERE uid = 'dismisstask'"
+    ).fetchone()
+    assert dict(row) == {"needs_triage": 0, "deleted_at": None}
 
 
 def test_capture_triage_reclassifies_journal_line_to_task_without_deleting_log(

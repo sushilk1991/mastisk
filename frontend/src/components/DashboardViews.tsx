@@ -539,7 +539,7 @@ export function InboxTriageView({ liveKey }: LiveProps) {
                   </button>
                 ))}
                 <button className="chip muted" disabled={busy === item.id} onClick={() => void act(item, 'dismiss')}>
-                  dismiss
+                  {item.kind === 'task' ? 'keep task' : 'dismiss'}
                 </button>
               </div>
             </div>

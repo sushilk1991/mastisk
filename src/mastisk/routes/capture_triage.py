@@ -47,6 +47,12 @@ async def reclassify_capture_triage_endpoint(
     item_id: str,
     req: TriageReclassify,
 ) -> dict:
+    """Reclassify one triage item.
+
+    For task items, ``dismiss`` means "this is a task; stop asking" and only
+    clears the triage marker. Reclassifying a task to a non-task target demotes
+    the original checkbox to a plain bullet so it is no longer an open task.
+    """
     try:
         result = reclassify_triage_item(item_id, req.type)
     except TriageReclassifyError as exc:
