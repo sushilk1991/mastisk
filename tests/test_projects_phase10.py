@@ -178,6 +178,44 @@ def test_time_entry_scan_route_and_totals(client, db, vault_tmp):
     assert db.execute("SELECT COUNT(*) AS n FROM time_entries").fetchone()["n"] == 3
 
 
+def test_project_detail_reads_milestones_and_time_from_file_before_scan(client, vault_tmp):
+    from mastisk.projects.sync import scan_projects
+
+    path = vault_tmp / "projects" / "client.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\nname: Client\nstatus: active\n---\n\n"
+        "## Milestones\n"
+        "- [ ] Original\n\n"
+        "## Activity\n"
+        "- 2026-06-10 1h original work\n",
+        encoding="utf-8",
+    )
+    scan_projects([path])
+
+    path.write_text(
+        "---\nname: Client\nstatus: active\n---\n\n"
+        "## Milestones\n"
+        "- [x] Edited in Obsidian\n\n"
+        "## Activity\n"
+        "- 2026-06-10 2.5h edited work\n",
+        encoding="utf-8",
+    )
+
+    detail = client.get("/api/projects/client")
+
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["milestones"] == [
+        {"position": 1, "text": "Edited in Obsidian", "done": True}
+    ]
+    assert body["milestone_progress"] == {"done": 1, "total": 1, "percent": 100}
+    assert body["time_entries"] == [
+        {"position": 1, "date": "2026-06-10", "hours": 2.5, "text": "edited work"}
+    ]
+    assert body["time_totals"]["total_hours"] == 2.5
+
+
 def test_project_detail_returns_404_when_backing_file_is_deleted(client, db, vault_tmp):
     project = client.post("/api/projects", json={"name": "Missing File"}).json()
     (vault_tmp / project["path"]).unlink()

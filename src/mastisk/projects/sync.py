@@ -280,8 +280,8 @@ def project_payload(slug: str) -> dict[str, Any] | None:
         _soft_delete_project(slug)
         return None
     parsed = parse_project_file(path)
-    milestones = _active_milestones(slug)
-    time_entries = _active_time_entries(slug)
+    milestones = parsed["milestones"]
+    time_entries = _payload_time_entries(parsed["time_entries"])
     return {
         **row,
         "frontmatter": parsed["frontmatter"],
@@ -535,31 +535,8 @@ def _rewrite_milestone(markdown: str, position: int, *, done: bool) -> str:
     return "".join(rewritten)
 
 
-def _active_milestones(slug: str) -> list[dict[str, Any]]:
-    with connect() as conn:
-        rows = conn.execute(
-            """SELECT position, text, done
-               FROM milestones
-               WHERE project_slug = ? AND deleted_at IS NULL
-               ORDER BY position""",
-            (slug,),
-        ).fetchall()
-    return [
-        {"position": row["position"], "text": row["text"], "done": bool(row["done"])}
-        for row in rows
-    ]
-
-
-def _active_time_entries(slug: str) -> list[dict[str, Any]]:
-    with connect() as conn:
-        rows = conn.execute(
-            """SELECT position, date, hours, text
-               FROM time_entries
-               WHERE project_slug = ? AND deleted_at IS NULL
-               ORDER BY date DESC, position DESC""",
-            (slug,),
-        ).fetchall()
-    return [dict(row) for row in rows]
+def _payload_time_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(entries, key=lambda entry: (entry["date"], entry["position"]), reverse=True)
 
 
 def _milestone_progress(milestones: list[dict[str, Any]]) -> dict[str, int]:
