@@ -61,6 +61,18 @@ def test_parse_rewrite_parse_roundtrip_preserves_task_fields():
         assert after == before
 
 
+def test_due_time_marker_round_trips_as_datetime():
+    from mastisk.tasks.parser import parse_markdown_tasks, rewrite_task_line
+
+    line = "- [ ] call Sam 📅 2026-06-10 ⏰ 14:00 🆔 timed1"
+
+    parsed = parse_markdown_tasks(f"{line}\n")[0]
+    assert parsed["due"] == "2026-06-10T14:00:00"
+    rewritten = rewrite_task_line(line, due=parsed["due"], uid=parsed["uid"])
+
+    assert rewritten == line
+
+
 def test_toggle_rewrites_only_the_matching_task_line():
     from mastisk.tasks.parser import rewrite_task_by_uid
 

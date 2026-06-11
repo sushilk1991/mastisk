@@ -114,12 +114,15 @@ def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: boo
     row = append_task_to_host(
         host,
         text=capture.body,
-        due=_date_marker(capture.due),
+        due=capture.due,
         scheduled=_date_marker(capture.scheduled),
         recurrence=capture.recurrence,
         priority=capture.priority,
         tags=tags,
         links=capture.related,
+        reminder_lead_minutes=capture.reminder_lead_minutes,
+        no_reminder=capture.no_reminder,
+        review_at=capture.review_at,
     )
     return {
         "id": row["uid"],

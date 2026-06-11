@@ -60,9 +60,11 @@ def scan_task_hosts(
                     """INSERT INTO tasks
                        (uid, host_path, line_number, text, checked, status, due, scheduled,
                         priority, domain, project, recurrence, tags_json, links_json, needs_triage,
-                        last_activity_at, review_at, deleted_at)
+                        last_activity_at, reminder_lead_minutes, no_reminder, review_at, deleted_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                                COALESCE((SELECT last_activity_at FROM tasks WHERE uid = ?), CURRENT_TIMESTAMP),
+                               COALESCE((SELECT reminder_lead_minutes FROM tasks WHERE uid = ?), NULL),
+                               COALESCE((SELECT no_reminder FROM tasks WHERE uid = ?), 0),
                                COALESCE((SELECT review_at FROM tasks WHERE uid = ?), NULL),
                                NULL)
                        ON CONFLICT(uid) DO UPDATE SET
@@ -104,6 +106,8 @@ def scan_task_hosts(
                         1 if task.get("needs_triage") else 0,
                         uid,
                         uid,
+                        uid,
+                        uid,
                     ),
                 )
                 upserted += 1
@@ -122,6 +126,9 @@ def append_task_to_host(
     tags: list[str] | None = None,
     links: list[str] | None = None,
     uid: str | None = None,
+    reminder_lead_minutes: int | None = None,
+    no_reminder: bool | None = None,
+    review_at: str | None = None,
 ) -> dict[str, Any]:
     path = _absolute_host_path(host)
     task_uid = uid or generate_uid()
@@ -144,6 +151,12 @@ def append_task_to_host(
     markdown = path.read_text(encoding="utf-8")
     atomic_write(path, append_to_section(markdown, "Tasks", line))
     scan_task_hosts([path])
+    _persist_capture_event_facts(
+        task_uid,
+        reminder_lead_minutes=reminder_lead_minutes,
+        no_reminder=no_reminder,
+        review_at=review_at,
+    )
     row = get_task(task_uid)
     if row is None:
         raise RuntimeError(f"task mirror missing after write: {task_uid}")
@@ -218,9 +231,39 @@ def journal_host_for_today(ts: str | None = None) -> Path:
 def _task_row(row: dict[str, Any]) -> dict[str, Any]:
     row["checked"] = bool(row.get("checked"))
     row["needs_triage"] = bool(row.get("needs_triage"))
+    row["no_reminder"] = bool(row.get("no_reminder"))
     row["tags"] = json.loads(row.pop("tags_json") or "[]")
     row["links"] = json.loads(row.pop("links_json") or "[]")
     return row
+
+
+def _persist_capture_event_facts(
+    uid: str,
+    *,
+    reminder_lead_minutes: int | None,
+    no_reminder: bool | None,
+    review_at: str | None,
+) -> None:
+    updates: list[str] = []
+    params: list[Any] = []
+    if reminder_lead_minutes is not None:
+        updates.append("reminder_lead_minutes = ?")
+        params.append(reminder_lead_minutes)
+    if no_reminder is not None:
+        updates.append("no_reminder = ?")
+        params.append(1 if no_reminder else 0)
+    if review_at is not None:
+        updates.append("review_at = ?")
+        params.append(review_at)
+    if not updates:
+        return
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    params.append(uid)
+    with connect() as conn:
+        conn.execute(
+            f"UPDATE tasks SET {', '.join(updates)} WHERE uid = ?",
+            tuple(params),
+        )
 
 
 def _default_task_hosts() -> list[Path]:

@@ -386,6 +386,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   links_json       TEXT NOT NULL DEFAULT '[]',
   needs_triage     INTEGER NOT NULL DEFAULT 0,
   last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  -- Capture-event reminder facts are preserved across file-truth scans; the
+  -- markdown task line remains canonical for text/status/date/tag fields.
+  reminder_lead_minutes INTEGER,
+  no_reminder      INTEGER NOT NULL DEFAULT 0,
   review_at        TEXT,
   deleted_at       DATETIME,
   created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,

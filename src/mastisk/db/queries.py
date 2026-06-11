@@ -108,6 +108,8 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "sources", "feed_url", "TEXT")
     _add_column_if_missing(conn, "notes", "transcript_anchor_json", "TEXT")
     _add_column_if_missing(conn, "tasks", "needs_triage", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "tasks", "reminder_lead_minutes", "INTEGER")
+    _add_column_if_missing(conn, "tasks", "no_reminder", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(
         conn, "articles", "source_note_id",
         "INTEGER REFERENCES notes(id) ON DELETE SET NULL",

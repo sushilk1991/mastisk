@@ -178,7 +178,7 @@ def test_capture_task_writes_today_journal_host(client_with_token, vault_tmp, fa
 
     file_text = (vault_tmp / body["destination"]).read_text(encoding="utf-8")
     assert file_text.startswith("## Tasks\n")
-    assert "- [ ] call Sam 📅 2026-06-10 ⏫ #follow-up" in file_text
+    assert "- [ ] call Sam 📅 2026-06-10 ⏰ 14:00 ⏫ #follow-up" in file_text
     assert "🆔 " in file_text
 
     from mastisk.db.queries import connect
@@ -187,6 +187,51 @@ def test_capture_task_writes_today_journal_host(client_with_token, vault_tmp, fa
         row = conn.execute("SELECT * FROM tasks WHERE uid = ?", (body["id"],)).fetchone()
     assert row is not None
     assert row["host_path"] == body["destination"]
+
+
+def test_capture_task_preserves_due_time_and_reminder_facts(
+    client_with_token, vault_tmp, db, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.93,
+        body="call Sam",
+        due="2026-06-10T14:00:00-07:00",
+        reminder_lead_minutes=15,
+        no_reminder=False,
+        review_at="2026-06-10T13:45:00-07:00",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={
+            "text": "remind me to call Sam tomorrow 2pm",
+            "source": "watch",
+            "ts": "2026-06-11T09:00:00-07:00",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    path = vault_tmp / body["destination"]
+    assert "📅 2026-06-10 ⏰ 14:00" in path.read_text(encoding="utf-8")
+
+    row = db.execute("SELECT * FROM tasks WHERE uid = ?", (body["id"],)).fetchone()
+    assert row["due"] == "2026-06-10T14:00:00"
+    assert row["reminder_lead_minutes"] == 15
+    assert row["no_reminder"] == 0
+    assert row["review_at"] == "2026-06-10T13:45:00-07:00"
+
+    from mastisk.tasks.sync import scan_task_hosts
+
+    scan_task_hosts([path])
+    row = db.execute("SELECT * FROM tasks WHERE uid = ?", (body["id"],)).fetchone()
+    assert row["due"] == "2026-06-10T14:00:00"
+    assert row["reminder_lead_minutes"] == 15
+    assert row["no_reminder"] == 0
+    assert row["review_at"] == "2026-06-10T13:45:00-07:00"
 
 
 def test_capture_medium_confidence_marks_needs_triage(

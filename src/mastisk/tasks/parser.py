@@ -11,12 +11,14 @@ import re
 import secrets
 import string
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 _UNSET = object()
 
 _TASK_RE = re.compile(r"^(?P<prefix>\s*-\s+\[(?P<mark>[ xX])\]\s*)(?P<body>.*)$")
 _DUE_RE = re.compile(r"\s*📅\s*(?P<value>\d{4}-\d{2}-\d{2})")
+_TIME_RE = re.compile(r"\s*⏰\s*(?P<value>\d{2}:\d{2})")
 _SCHEDULED_RE = re.compile(r"\s*⏳\s*(?P<value>\d{4}-\d{2}-\d{2})")
 _RECURRENCE_RE = re.compile(
     r"\s*🔁\s*(?P<value>.*?)(?=\s+(?:📅|⏳|⏫|🔼|🔽|🆔|#[^\s#]+|\[\[)|\s*$)"
@@ -51,7 +53,7 @@ def parse_task_line(
         return None
     body = match.group("body")
     checked = match.group("mark").lower() == "x"
-    due = _first_match(_DUE_RE, body)
+    due = _due_value(_first_match(_DUE_RE, body), _first_match(_TIME_RE, body))
     scheduled = _first_match(_SCHEDULED_RE, body)
     recurrence = _first_match(_RECURRENCE_RE, body)
     uid = _first_match(_UID_RE, body)
@@ -114,6 +116,7 @@ def rewrite_task_line(
 
     if due is not _UNSET:
         body = _DUE_RE.sub("", body)
+        body = _TIME_RE.sub("", body)
     if scheduled is not _UNSET:
         body = _SCHEDULED_RE.sub("", body)
     if recurrence is not _UNSET:
@@ -125,7 +128,7 @@ def rewrite_task_line(
 
     additions: list[str] = []
     if due is not _UNSET and due:
-        additions.append(f"📅 {due}")
+        additions.extend(_due_marker_parts(str(due)))
     if scheduled is not _UNSET and scheduled:
         additions.append(f"⏳ {scheduled}")
     if recurrence is not _UNSET and recurrence:
@@ -183,7 +186,7 @@ def format_task_line(
     marker = "x" if checked else " "
     parts = [f"- [{marker}] {_sanitize_inline(text)}"]
     if due:
-        parts.append(f"📅 {due}")
+        parts.extend(_due_marker_parts(due))
     if scheduled:
         parts.append(f"⏳ {scheduled}")
     if recurrence:
@@ -216,6 +219,7 @@ def _first_match(pattern: re.Pattern[str], body: str) -> str | None:
 
 def _clean_task_text(body: str) -> str:
     stripped = _DUE_RE.sub("", body)
+    stripped = _TIME_RE.sub("", stripped)
     stripped = _SCHEDULED_RE.sub("", stripped)
     stripped = _RECURRENCE_RE.sub("", stripped)
     stripped = _PRIORITY_RE.sub("", stripped)
@@ -233,6 +237,33 @@ def _sanitize_inline(value: object) -> str:
 def _sanitize_tag(value: object) -> str:
     cleaned = _sanitize_inline(value).lstrip("#")
     return re.sub(r"\s+", "-", cleaned).strip("-")
+
+
+def _due_value(day: str | None, clock: str | None) -> str | None:
+    if not day:
+        return None
+    if clock:
+        return f"{day}T{clock}:00"
+    return day
+
+
+def _due_marker_parts(value: str) -> list[str]:
+    day, clock = _date_and_clock(value)
+    parts = [f"📅 {day}"]
+    if clock:
+        parts.append(f"⏰ {clock}")
+    return parts
+
+
+def _date_and_clock(value: str) -> tuple[str, str | None]:
+    raw = value.strip()
+    if "T" not in raw:
+        return raw[:10], None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw[:10], None
+    return parsed.date().isoformat(), parsed.strftime("%H:%M")
 
 
 def _split_line_ending(raw: str) -> tuple[str, str]:
