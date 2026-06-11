@@ -165,7 +165,6 @@ def parse_sections(markdown: str) -> dict[str, str]:
 
 
 def list_journal_days(*, limit: int = 30) -> list[dict[str, Any]]:
-    scan_journal_days()
     with connect() as conn:
         rows = conn.execute(
             """SELECT * FROM journal_days

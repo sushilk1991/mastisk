@@ -108,6 +108,28 @@ def test_journal_scan_mirrors_handmade_files_and_soft_deletes_removed_days(
     assert row["deleted_at"] is not None
 
 
+def test_journal_timeline_reads_mirror_without_scanning_disk(db, vault_tmp):
+    from mastisk.journal import list_journal_days, scan_journal_days
+
+    journal_dir = vault_tmp / "journal"
+    journal_dir.mkdir()
+    mirrored = journal_dir / "2026-06-11.md"
+    mirrored.write_text("## Tasks\n\n## Log\n\n## Reflections\n", encoding="utf-8")
+    scan_journal_days([mirrored])
+
+    unscanned = journal_dir / "2026-06-12.md"
+    unscanned.write_text("## Tasks\n\n## Log\n\n## Reflections\n", encoding="utf-8")
+
+    assert [row["date"] for row in list_journal_days(limit=10)] == ["2026-06-11"]
+
+    scan_journal_days()
+
+    assert [row["date"] for row in list_journal_days(limit=10)] == [
+        "2026-06-12",
+        "2026-06-11",
+    ]
+
+
 def test_journal_scan_rejects_impossible_date_filenames(db, vault_tmp):
     from mastisk.journal import scan_journal_days
 
