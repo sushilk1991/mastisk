@@ -300,6 +300,46 @@ def test_capture_person_matched_auto_stub_and_low_confidence_paths(
         assert "needs_triage: true" in note_text
 
 
+def test_capture_person_matched_medium_confidence_queues_triage_before_timeline(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.people.sync import create_person_file
+
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\nbearer_token = "test-token"\n')
+    create_person_file(name="Anjali Rao")
+    with _client(vault_tmp, data_tmp, db) as client, patch(
+        "mastisk.routes.capture.route_capture", new_callable=AsyncMock
+    ) as router:
+        router.return_value = _capture(
+            person="anjali-rao",
+            body="Might be changing roles.",
+            confidence=0.7,
+        )
+        captured = client.post(
+            "/api/capture",
+            json={"text": "Anjali might be changing roles", "source": "watch"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert captured.status_code == 201, captured.text
+        body = captured.json()
+        assert body["type"] == "person"
+        assert body["needs_triage"] is True
+        person_path = vault_tmp / "people" / "anjali-rao.md"
+        assert "Might be changing roles." not in person_path.read_text(encoding="utf-8")
+
+        queued = client.get("/api/triage").json()
+        item = next(row for row in queued if row["id"] == f"note:{body['id']}")
+        assert item["detected_type"] == "person"
+        assert item["capture"]["person"] == "anjali-rao"
+
+        accepted = client.post(f"/api/triage/{item['id']}/reclassify", json={"type": "person"})
+
+    assert accepted.status_code == 200, accepted.text
+    assert "Might be changing roles." in person_path.read_text(encoding="utf-8")
+
+
 def test_triage_person_target_creates_person_from_low_confidence_note(
     db, vault_tmp, data_tmp
 ):

@@ -252,6 +252,8 @@ def _persist_person_capture(
     ts: str | None,
     needs_triage: bool,
 ) -> dict | None:
+    if needs_triage:
+        return None
     person = find_person(capture.person)
     interaction_ts = _capture_local_datetime(ts).strftime("%Y-%m-%d %H:%M")
     if person is not None:
