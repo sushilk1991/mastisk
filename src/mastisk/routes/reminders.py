@@ -11,6 +11,7 @@ from mastisk.agents.reminder_engine import (
     create_custom_reminder,
     get_reminder,
     list_reminders,
+    retry_reminder,
 )
 
 router = APIRouter(prefix="/api/reminders", tags=["reminders"])
@@ -63,3 +64,14 @@ async def cancel_reminder_endpoint(reminder_id: int) -> dict:
     if cancelled is None:
         raise HTTPException(status_code=409, detail="only pending reminders can be cancelled")
     return cancelled
+
+
+@router.post("/{reminder_id}/retry")
+async def retry_reminder_endpoint(reminder_id: int) -> dict:
+    existing = get_reminder(reminder_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="reminder not found")
+    retried = retry_reminder(reminder_id)
+    if retried is None:
+        raise HTTPException(status_code=409, detail="only notify_failed reminders can be retried")
+    return retried

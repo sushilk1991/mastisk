@@ -183,6 +183,24 @@ def cancel_reminder(reminder_id: int) -> dict | None:
     return _reminder_row(dict(row))
 
 
+def retry_reminder(reminder_id: int) -> dict | None:
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE reminders
+               SET status = 'pending',
+                   attempts = 0,
+                   next_attempt_at = NULL,
+                   last_error = NULL,
+                   fired_at = NULL
+               WHERE id = ? AND status = 'notify_failed' AND deleted_at IS NULL""",
+            (reminder_id,),
+        )
+        if cur.rowcount != 1:
+            return None
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+    return _reminder_row(dict(row))
+
+
 def compose_daily_summary(*, today: date, open_tasks: list[dict]) -> tuple[str, str]:
     due_today: list[dict] = []
     overdue: list[dict] = []
@@ -305,19 +323,18 @@ def _fire_claimed(row: dict, now_dt: datetime) -> None:
 
 def _handle_notify_failure(row: dict, now_dt: datetime) -> None:
     settings = get_settings().reminders
-    attempts = int(row.get("attempts") or 0) + 1
+    attempts = _increment_attempts(row["id"])
     error = "notifier returned False"
     if attempts >= settings.max_attempts:
         with connect() as conn:
             conn.execute(
                 """UPDATE reminders
                    SET status = 'notify_failed',
-                       attempts = ?,
                        fired_at = NULL,
                        next_attempt_at = NULL,
                        last_error = ?
                    WHERE id = ?""",
-                (attempts, error, row["id"]),
+                (error, row["id"]),
             )
             q.append_feed(
                 conn,
@@ -335,14 +352,27 @@ def _handle_notify_failure(row: dict, now_dt: datetime) -> None:
         conn.execute(
             """UPDATE reminders
                SET status = 'pending',
-                   attempts = ?,
                    fired_at = NULL,
                    next_attempt_at = ?,
                    last_error = ?
                WHERE id = ?""",
-            (attempts, _utc_iso(next_at), error, row["id"]),
+            (_utc_iso(next_at), error, row["id"]),
         )
     log.warning("reminder %s notify failed; retrying at %s", row["id"], _utc_iso(next_at))
+
+
+def _increment_attempts(reminder_id: int) -> int:
+    with connect() as conn:
+        row = conn.execute(
+            """UPDATE reminders
+               SET attempts = attempts + 1
+               WHERE id = ?
+               RETURNING attempts""",
+            (reminder_id,),
+        ).fetchone()
+    if row is None:
+        return 1
+    return int(row["attempts"])
 
 
 def _sync_pending_task_due_reminder(row: dict) -> bool:
@@ -575,7 +605,7 @@ def _parse_hhmm(value: str) -> time:
 def _parse_datetime(value: str) -> datetime:
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if dt.tzinfo is None:
-        dt = dt.astimezone()
+        dt = dt.replace(tzinfo=_default_timezone())
     return dt.astimezone(UTC)
 
 
@@ -583,8 +613,12 @@ def _coerce_datetime(value: datetime | None) -> datetime:
     if value is None:
         return datetime.now().astimezone().astimezone(UTC)
     if value.tzinfo is None:
-        value = value.astimezone()
+        value = value.replace(tzinfo=_default_timezone())
     return value.astimezone(UTC)
+
+
+def _default_timezone() -> ZoneInfo:
+    return ZoneInfo(get_settings().capture.default_timezone)
 
 
 def _utc_iso(value: datetime) -> str:

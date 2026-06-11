@@ -68,7 +68,7 @@ def _insert_custom_reminder(
 
 def test_reminder_tick_claims_due_row_once_with_overlapping_ticks(db, data_tmp, monkeypatch):
     _configure_notify(data_tmp)
-    reminder_id = _insert_reminder(db)
+    reminder_id = _insert_custom_reminder(db, title="Task due", body="Call Sam")
     sent: list[tuple[str, str, str | None]] = []
 
     def fake_send(title: str, body: str, url: str | None = None) -> bool:
@@ -92,7 +92,12 @@ def test_reminder_tick_claims_due_row_once_with_overlapping_ticks(db, data_tmp, 
 
 def test_late_on_wake_marks_late_but_still_sends(db, data_tmp, monkeypatch):
     _configure_notify(data_tmp)
-    reminder_id = _insert_reminder(db, fire_at="2026-06-11T08:30:00+00:00")
+    reminder_id = _insert_custom_reminder(
+        db,
+        fire_at="2026-06-11T08:30:00+00:00",
+        title="Task due",
+        body="Call Sam",
+    )
     sent: list[str] = []
     monkeypatch.setattr(
         "mastisk.agents.reminder_engine.notify.send",
@@ -119,7 +124,7 @@ def test_notify_failure_retries_then_marks_failed_and_emits_feed(db, data_tmp, m
     from mastisk.settings import reload_settings
 
     reload_settings()
-    reminder_id = _insert_reminder(db)
+    reminder_id = _insert_custom_reminder(db, title="Task due", body="Call Sam")
     monkeypatch.setattr("mastisk.agents.reminder_engine.notify.send", lambda *args, **kwargs: False)
 
     from mastisk.agents.reminder_engine import reminder_tick
@@ -153,13 +158,39 @@ def test_notify_failure_retries_then_marks_failed_and_emits_feed(db, data_tmp, m
     }
 
 
+def test_notify_failure_attempt_increment_is_atomic_for_concurrent_failures(db, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        "[reminders]\nmax_attempts = 10\nretry_backoff_seconds = [60]\n"
+        '[notify]\nbackend = "ntfy"\nntfy_topic = "test"\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    reminder_id = _insert_custom_reminder(db, status="firing")
+    row = dict(db.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone())
+
+    from mastisk.agents import reminder_engine
+
+    now = datetime(2026, 6, 11, 9, 0, tzinfo=UTC)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda _: reminder_engine._handle_notify_failure(row, now), range(2)))
+
+    failed = db.execute(
+        "SELECT status, attempts FROM reminders WHERE id = ?",
+        (reminder_id,),
+    ).fetchone()
+    assert dict(failed) == {"status": "pending", "attempts": 2}
+
+
 def test_backend_none_leaves_due_reminder_pending_without_attempts(db, data_tmp, monkeypatch):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[notify]\nbackend = "none"\n', encoding="utf-8")
     from mastisk.settings import reload_settings
 
     reload_settings()
-    reminder_id = _insert_reminder(db)
+    reminder_id = _insert_custom_reminder(db)
     monkeypatch.setattr(
         "mastisk.agents.reminder_engine.notify.send",
         lambda *args, **kwargs: pytest.fail("backend none should not call notifier"),
@@ -171,6 +202,55 @@ def test_backend_none_leaves_due_reminder_pending_without_attempts(db, data_tmp,
     row = db.execute("SELECT status, attempts FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
     assert row["status"] == "pending"
     assert row["attempts"] == 0
+
+
+def test_custom_reminder_naive_fire_at_uses_capture_default_timezone(client, data_tmp, db):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+
+    created = client.post(
+        "/api/reminders",
+        json={
+            "kind": "custom",
+            "fire_at": "2026-06-11T09:00:00",
+            "title": "Check oven",
+            "body": "Turn it off",
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    row = db.execute(
+        "SELECT fire_at FROM reminders WHERE id = ?",
+        (created.json()["id"],),
+    ).fetchone()
+    assert row["fire_at"] == "2026-06-11T16:00:00+00:00"
+
+
+def test_task_due_date_only_fire_at_uses_capture_default_timezone(db, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.agents.reminder_engine import create_task_due_reminder
+
+    reminder_id = create_task_due_reminder(
+        task_uid="dateonly1",
+        task_text="Pay rent",
+        due="2026-06-12",
+        lead_minutes=15,
+        no_reminder=False,
+        now=datetime(2026, 6, 10, 9, 0, tzinfo=UTC),
+    )
+
+    row = db.execute(
+        "SELECT fire_at FROM reminders WHERE id = ?",
+        (reminder_id,),
+    ).fetchone()
+    assert row["fire_at"] == "2026-06-12T06:45:00+00:00"
 
 
 def test_task_due_reminder_cancels_if_task_is_already_done(db, data_tmp, monkeypatch):
@@ -450,3 +530,39 @@ def test_reminders_route_creates_lists_and_cancels_custom_reminder(client, db):
     assert cancelled.json()["status"] == "cancelled"
     row = db.execute("SELECT status FROM reminders WHERE id = ?", (reminder["id"],)).fetchone()
     assert row["status"] == "cancelled"
+
+
+def test_reminders_route_retries_notify_failed_reminder(client, db):
+    reminder_id = _insert_custom_reminder(db, status="notify_failed")
+    db.execute(
+        """UPDATE reminders
+           SET attempts = 3,
+               next_attempt_at = '2026-06-11T10:00:00+00:00',
+               last_error = 'notifier returned False'
+           WHERE id = ?""",
+        (reminder_id,),
+    )
+
+    retried = client.post(f"/api/reminders/{reminder_id}/retry")
+
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["status"] == "pending"
+    row = db.execute(
+        "SELECT status, attempts, next_attempt_at, last_error FROM reminders WHERE id = ?",
+        (reminder_id,),
+    ).fetchone()
+    assert dict(row) == {
+        "status": "pending",
+        "attempts": 0,
+        "next_attempt_at": None,
+        "last_error": None,
+    }
+
+
+def test_reminders_route_retry_rejects_non_failed_reminder(client, db):
+    reminder_id = _insert_custom_reminder(db, status="pending")
+
+    retried = client.post(f"/api/reminders/{reminder_id}/retry")
+
+    assert retried.status_code == 409
+    assert retried.json()["detail"] == "only notify_failed reminders can be retried"
