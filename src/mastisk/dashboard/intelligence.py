@@ -12,7 +12,6 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -44,66 +43,64 @@ def list_focus(day: str) -> list[dict[str, Any]]:
 
 
 def star_focus(day: str, task_uid: str, *, replace_uid: str | None = None) -> list[dict[str, Any]]:
-    with connect() as conn:
-        with txn(conn):
-            task = conn.execute("SELECT uid FROM tasks WHERE uid = ?", (task_uid,)).fetchone()
-            if task is None:
-                raise KeyError(task_uid)
-            if replace_uid:
-                replaced = conn.execute(
-                    """SELECT position FROM daily_focus
+    with connect() as conn, txn(conn):
+        task = conn.execute("SELECT uid FROM tasks WHERE uid = ?", (task_uid,)).fetchone()
+        if task is None:
+            raise KeyError(task_uid)
+        if replace_uid:
+            replaced = conn.execute(
+                """SELECT position FROM daily_focus
                        WHERE date = ? AND task_uid = ?""",
-                    (day, replace_uid),
-                ).fetchone()
-                if replaced is None:
-                    raise ValueError("replace_uid is not focused for this date")
-                position = int(replaced["position"])
-                conn.execute(
-                    "DELETE FROM daily_focus WHERE date = ? AND task_uid = ?",
-                    (day, replace_uid),
-                )
-                conn.execute(
-                    """INSERT INTO daily_focus(date, task_uid, position)
-                       VALUES (?, ?, ?)
-                       ON CONFLICT(date, task_uid) DO UPDATE SET position = excluded.position""",
-                    (day, task_uid, position),
-                )
-                _compact_focus_positions(conn, day)
-                return _list_focus_with_conn(conn, day)
-
-            already = conn.execute(
-                "SELECT 1 FROM daily_focus WHERE date = ? AND task_uid = ?",
-                (day, task_uid),
+                (day, replace_uid),
             ).fetchone()
-            if already is not None:
-                return _list_focus_with_conn(conn, day)
-
-            occupied = {
-                int(row["position"])
-                for row in conn.execute(
-                    "SELECT position FROM daily_focus WHERE date = ?",
-                    (day,),
-                ).fetchall()
-            }
-            if len(occupied) >= 3:
-                raise FocusFullError(_list_focus_with_conn(conn, day))
-            position = next(pos for pos in (1, 2, 3) if pos not in occupied)
-            conn.execute(
-                "INSERT INTO daily_focus(date, task_uid, position) VALUES (?, ?, ?)",
-                (day, task_uid, position),
-            )
-            return _list_focus_with_conn(conn, day)
-
-
-def unstar_focus(day: str, task_uid: str) -> list[dict[str, Any]]:
-    with connect() as conn:
-        with txn(conn):
+            if replaced is None:
+                raise ValueError("replace_uid is not focused for this date")
+            position = int(replaced["position"])
             conn.execute(
                 "DELETE FROM daily_focus WHERE date = ? AND task_uid = ?",
-                (day, task_uid),
+                (day, replace_uid),
+            )
+            conn.execute(
+                """INSERT INTO daily_focus(date, task_uid, position)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(date, task_uid) DO UPDATE SET position = excluded.position""",
+                (day, task_uid, position),
             )
             _compact_focus_positions(conn, day)
             return _list_focus_with_conn(conn, day)
+
+        already = conn.execute(
+            "SELECT 1 FROM daily_focus WHERE date = ? AND task_uid = ?",
+            (day, task_uid),
+        ).fetchone()
+        if already is not None:
+            return _list_focus_with_conn(conn, day)
+
+        occupied = {
+            int(row["position"])
+            for row in conn.execute(
+                "SELECT position FROM daily_focus WHERE date = ?",
+                (day,),
+            ).fetchall()
+        }
+        if len(occupied) >= 3:
+            raise FocusFullError(_list_focus_with_conn(conn, day))
+        position = next(pos for pos in (1, 2, 3) if pos not in occupied)
+        conn.execute(
+            "INSERT INTO daily_focus(date, task_uid, position) VALUES (?, ?, ?)",
+            (day, task_uid, position),
+        )
+        return _list_focus_with_conn(conn, day)
+
+
+def unstar_focus(day: str, task_uid: str) -> list[dict[str, Any]]:
+    with connect() as conn, txn(conn):
+        conn.execute(
+            "DELETE FROM daily_focus WHERE date = ? AND task_uid = ?",
+            (day, task_uid),
+        )
+        _compact_focus_positions(conn, day)
+        return _list_focus_with_conn(conn, day)
 
 
 def slipping_scan(*, now: datetime | None = None) -> int:
@@ -216,34 +213,33 @@ def needs_review_scan(*, today: date | None = None) -> int:
     settings = get_settings().dashboard
     candidates = _needs_review_candidates(scan_day, settings.triage_reminder_days)
     candidate_keys = {(c.entity_type, c.entity_id, c.reason) for c in candidates}
-    with connect() as conn:
-        with txn(conn):
-            if candidate_keys:
-                clauses = " OR ".join(
-                    "(entity_type = ? AND entity_id = ? AND reason = ?)"
-                    for _ in candidate_keys
-                )
-                params = [part for key in candidate_keys for part in key]
-                conn.execute(
-                    f"""DELETE FROM needs_review
+    with connect() as conn, txn(conn):
+        if candidate_keys:
+            clauses = " OR ".join(
+                "(entity_type = ? AND entity_id = ? AND reason = ?)"
+                for _ in candidate_keys
+            )
+            params = [part for key in candidate_keys for part in key]
+            conn.execute(
+                f"""DELETE FROM needs_review
                         WHERE dismissed_at IS NULL
                           AND NOT ({clauses})""",
-                    params,
-                )
-            else:
-                conn.execute("DELETE FROM needs_review WHERE dismissed_at IS NULL")
-            for candidate in candidates:
-                conn.execute(
-                    """INSERT INTO needs_review(entity_type, entity_id, reason, surfaced_at)
+                params,
+            )
+        else:
+            conn.execute("DELETE FROM needs_review WHERE dismissed_at IS NULL")
+        for candidate in candidates:
+            conn.execute(
+                """INSERT INTO needs_review(entity_type, entity_id, reason, surfaced_at)
                        VALUES (?, ?, ?, ?)
                        ON CONFLICT(entity_type, entity_id, reason) DO NOTHING""",
-                    (
-                        candidate.entity_type,
-                        candidate.entity_id,
-                        candidate.reason,
-                        surfaced_at,
-                    ),
-                )
+                (
+                    candidate.entity_type,
+                    candidate.entity_id,
+                    candidate.reason,
+                    surfaced_at,
+                ),
+            )
     return len(candidates)
 
 
@@ -266,18 +262,17 @@ def count_open_needs_review() -> int:
 
 
 def dismiss_needs_review(item_id: int) -> dict[str, Any] | None:
-    with connect() as conn:
-        with txn(conn):
-            cur = conn.execute(
-                """UPDATE needs_review
+    with connect() as conn, txn(conn):
+        cur = conn.execute(
+            """UPDATE needs_review
                    SET dismissed_at = CURRENT_TIMESTAMP
                    WHERE id = ? AND dismissed_at IS NULL""",
-                (item_id,),
-            )
-            if cur.rowcount != 1:
-                return None
-            row = conn.execute("SELECT * FROM needs_review WHERE id = ?", (item_id,)).fetchone()
-            return _needs_review_row(conn, dict(row))
+            (item_id,),
+        )
+        if cur.rowcount != 1:
+            return None
+        row = conn.execute("SELECT * FROM needs_review WHERE id = ?", (item_id,)).fetchone()
+        return _needs_review_row(conn, dict(row))
 
 
 def clear_needs_review(
@@ -487,18 +482,17 @@ def _set_slipping_controls(
         return None
     updates.append("updated_at = CURRENT_TIMESTAMP")
     params.append(entity_id)
-    with connect() as conn:
-        with txn(conn):
-            cur = conn.execute(
-                f"UPDATE {table} SET {', '.join(updates)} WHERE {key} = ?",
-                tuple(params),
-            )
-            if cur.rowcount != 1:
-                return None
-            conn.execute(
-                "DELETE FROM slipping WHERE entity_type = ? AND entity_id = ?",
-                (entity_type, entity_id),
-            )
+    with connect() as conn, txn(conn):
+        cur = conn.execute(
+            f"UPDATE {table} SET {', '.join(updates)} WHERE {key} = ?",
+            tuple(params),
+        )
+        if cur.rowcount != 1:
+            return None
+        conn.execute(
+            "DELETE FROM slipping WHERE entity_type = ? AND entity_id = ?",
+            (entity_type, entity_id),
+        )
     return {"entity_type": entity_type, "entity_id": entity_id, "ok": True}
 
 
