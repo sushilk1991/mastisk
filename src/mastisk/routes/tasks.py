@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import get_project
+from mastisk.tasks.parser import normalize_date_or_datetime
 from mastisk.tasks.sync import (
     TaskLineMissingError,
     append_task_to_host,
@@ -17,7 +18,6 @@ from mastisk.tasks.sync import (
     list_tasks,
     rewrite_task,
 )
-from mastisk.tasks.parser import normalize_date_or_datetime
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
