@@ -207,6 +207,43 @@ def test_journal_scan_rejects_impossible_date_filenames(db, vault_tmp):
     assert row["deleted_at"] is not None
 
 
+def test_journal_scan_continues_past_bad_frontmatter_without_deleting_mirror(
+    db,
+    vault_tmp,
+):
+    from mastisk.journal import scan_journal_days
+
+    journal_dir = vault_tmp / "journal"
+    journal_dir.mkdir()
+    bad = journal_dir / "2026-06-10.md"
+    bad.write_text(
+        "---\n"
+        "mood: [bad\n"
+        "---\n\n"
+        "## Tasks\n\n"
+        "## Log\n\n"
+        "## Reflections\n",
+        encoding="utf-8",
+    )
+    valid = journal_dir / "2026-06-11.md"
+    valid.write_text("## Tasks\n\n## Log\n- 09:00 valid\n\n## Reflections\n", encoding="utf-8")
+    db.execute(
+        """INSERT INTO journal_days (date, path)
+           VALUES ('2026-06-10', 'journal/2026-06-10.md')"""
+    )
+
+    scan_journal_days()
+
+    bad_row = db.execute(
+        "SELECT deleted_at FROM journal_days WHERE date = '2026-06-10'",
+    ).fetchone()
+    valid_row = db.execute(
+        "SELECT path, log_count FROM journal_days WHERE date = '2026-06-11'",
+    ).fetchone()
+    assert bad_row["deleted_at"] is None
+    assert dict(valid_row) == {"path": "journal/2026-06-11.md", "log_count": 1}
+
+
 def test_journal_assembled_reminders_use_local_journal_day(db, vault_tmp, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")
@@ -403,3 +440,30 @@ def test_journal_route_rejects_bad_frontmatter_without_rewriting(
     assert logged.status_code == 409, logged.text
     assert "frontmatter" in logged.json()["detail"]
     assert path.read_bytes() == original
+
+
+def test_journal_get_rejects_bad_frontmatter_without_500(
+    db,
+    vault_tmp,
+    data_tmp,
+):
+    path = vault_tmp / "journal" / "2026-06-11.md"
+    path.parent.mkdir()
+    path.write_text(
+        "---\n"
+        "mood: [bad\n"
+        "---\n\n"
+        "## Tasks\n\n"
+        "## Log\n\n"
+        "## Reflections\n",
+        encoding="utf-8",
+    )
+    from mastisk.app import create_app
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    with TestClient(create_app(), raise_server_exceptions=False) as client:
+        response = client.get("/api/journal/2026-06-11")
+
+    assert response.status_code == 409, response.text
+    assert "frontmatter" in response.json()["detail"]

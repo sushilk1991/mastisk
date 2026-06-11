@@ -117,7 +117,13 @@ def scan_journal_days(paths: list[Path] | None = None) -> dict[str, int]:
                     )
                 continue
             with host_file_lock(path):
-                parsed = parse_journal_file(path)
+                try:
+                    parsed = parse_journal_file(path)
+                except JournalFrontmatterError:
+                    if paths is not None:
+                        raise
+                    seen.add(path.stem)
+                    continue
             seen.add(parsed["date"])
             conn.execute(
                 """INSERT INTO journal_days

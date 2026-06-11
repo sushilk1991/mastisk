@@ -50,7 +50,10 @@ async def list_journal_endpoint(
 @router.get("/{day}")
 async def get_journal_day_endpoint(day: str) -> dict:
     valid_day = _validate_day(day)
-    assembled = assemble_journal_day(valid_day)
+    try:
+        assembled = assemble_journal_day(valid_day)
+    except JournalFrontmatterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if assembled is None:
         raise HTTPException(status_code=404, detail="journal day not found")
     return assembled
