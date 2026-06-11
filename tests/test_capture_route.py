@@ -45,6 +45,15 @@ def test_capture_rejects_bad_token(client_with_token):
     assert r.status_code == 401
 
 
+def test_capture_rejects_non_ascii_token_without_500(client_with_token):
+    r = client_with_token.post(
+        "/api/capture",
+        json={"text": "hi", "source": "watch"},
+        headers=[(b"authorization", "Bearer café".encode("utf-8"))],
+    )
+    assert r.status_code == 401
+
+
 def test_capture_503_when_unconfigured(client_no_token):
     r = client_no_token.post(
         "/api/capture",

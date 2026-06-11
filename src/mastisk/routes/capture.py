@@ -25,8 +25,9 @@ def require_capture_token(authorization: str | None) -> None:
             status_code=503,
             detail="capture ingress not configured - run `mastisk capture-token`",
         )
-    expected = f"Bearer {token}"
-    if not authorization or not hmac.compare_digest(authorization, expected):
+    expected = f"Bearer {token}".encode("utf-8", "surrogateescape")
+    actual = authorization.encode("utf-8", "surrogateescape") if authorization else b""
+    if not hmac.compare_digest(actual, expected):
         raise HTTPException(status_code=401, detail="invalid or missing token")
 
 
