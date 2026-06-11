@@ -70,8 +70,9 @@ def scan_task_hosts(
                         """INSERT INTO tasks
                            (uid, host_path, line_number, text, checked, status, due, scheduled,
                             priority, domain, project, recurrence, tags_json, links_json, needs_triage,
-                            last_activity_at, reminder_lead_minutes, no_reminder, review_at, deleted_at)
+                            staleness_days, last_activity_at, reminder_lead_minutes, no_reminder, review_at, deleted_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                   COALESCE((SELECT staleness_days FROM tasks WHERE uid = ?), NULL),
                                    COALESCE((SELECT last_activity_at FROM tasks WHERE uid = ?), CURRENT_TIMESTAMP),
                                    COALESCE((SELECT reminder_lead_minutes FROM tasks WHERE uid = ?), NULL),
                                    COALESCE((SELECT no_reminder FROM tasks WHERE uid = ?), 0),
@@ -131,6 +132,7 @@ def scan_task_hosts(
                             json.dumps(task.get("tags", [])),
                             json.dumps(task.get("links", [])),
                             1 if task.get("needs_triage") else 0,
+                            uid,
                             uid,
                             uid,
                             uid,
@@ -225,6 +227,23 @@ def rewrite_task(uid: str, **updates: Any) -> dict[str, Any] | None:
         from mastisk.tasks.recurrence import materialize_next_instance
 
         materialize_next_instance(uid)
+    return get_task(uid)
+
+
+def patch_task_operator_controls(
+    uid: str,
+    *,
+    staleness_days: int | None,
+) -> dict[str, Any] | None:
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE tasks
+                  SET staleness_days = ?
+                WHERE uid = ? AND deleted_at IS NULL""",
+            (staleness_days, uid),
+        )
+        if cur.rowcount != 1:
+            return None
     return get_task(uid)
 
 

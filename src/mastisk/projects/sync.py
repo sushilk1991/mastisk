@@ -33,8 +33,8 @@ def scan_projects(paths: list[Path] | None = None) -> dict[str, int]:
             seen.add(slug)
             conn.execute(
                 """INSERT INTO projects
-                   (slug, path, name, type, domain, status, due, last_activity_at, deleted_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT last_activity_at FROM projects WHERE slug = ?), CURRENT_TIMESTAMP), NULL)
+                   (slug, path, name, type, domain, status, due, staleness_days, last_activity_at, deleted_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT last_activity_at FROM projects WHERE slug = ?), CURRENT_TIMESTAMP), NULL)
                    ON CONFLICT(slug) DO UPDATE SET
                      path=excluded.path,
                      name=excluded.name,
@@ -42,6 +42,7 @@ def scan_projects(paths: list[Path] | None = None) -> dict[str, int]:
                      domain=excluded.domain,
                      status=excluded.status,
                      due=excluded.due,
+                     staleness_days=excluded.staleness_days,
                      deleted_at=NULL,
                      updated_at=CURRENT_TIMESTAMP""",
                 (
@@ -52,6 +53,7 @@ def scan_projects(paths: list[Path] | None = None) -> dict[str, int]:
                     project.get("domain"),
                     project["status"],
                     project.get("due"),
+                    project.get("staleness_days"),
                     slug,
                 ),
             )
@@ -88,6 +90,7 @@ def parse_project_file(path: Path) -> dict[str, Any]:
         "domain": meta.get("domain"),
         "status": status,
         "due": str(meta["due"]) if meta.get("due") else None,
+        "staleness_days": _optional_positive_int(meta.get("staleness_days")),
         "body": body,
         "frontmatter": meta,
     }
@@ -222,6 +225,16 @@ def dump_project_file(meta: dict[str, Any], body: str) -> str:
         allow_unicode=True,
     ).strip()
     return f"---\n{frontmatter}\n---\n\n{body.lstrip()}"
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _project_paths() -> list[Path]:

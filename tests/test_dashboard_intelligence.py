@@ -141,6 +141,41 @@ def test_slipping_scan_windows_overrides_snooze_mute_and_rebuild_idempotency(
     ]
 
 
+def test_slipping_scan_uses_project_frontmatter_staleness_override(db, vault_tmp, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text("[dashboard]\nslipping_project_days = 14\n", encoding="utf-8")
+    from mastisk.settings import reload_settings
+    from mastisk.dashboard.intelligence import slipping_scan
+    from mastisk.projects.sync import scan_projects
+
+    reload_settings()
+    project_path = vault_tmp / "projects" / "slow-project.md"
+    project_path.parent.mkdir(parents=True)
+    project_path.write_text(
+        "---\n"
+        "name: Slow Project\n"
+        "type: project\n"
+        "status: active\n"
+        "staleness_days: 30\n"
+        "---\n\n"
+        "## Log\n\n## Tasks\n",
+        encoding="utf-8",
+    )
+    scan_projects([project_path])
+    db.execute(
+        "UPDATE projects SET last_activity_at = '2026-06-01T09:00:00+00:00' WHERE slug = 'slow-project'"
+    )
+
+    count = slipping_scan(now=datetime(2026, 6, 20, 12, 0, tzinfo=UTC))
+
+    assert count == 0
+    row = db.execute(
+        "SELECT staleness_days FROM projects WHERE slug = 'slow-project'"
+    ).fetchone()
+    assert row["staleness_days"] == 30
+    assert db.execute("SELECT 1 FROM slipping").fetchone() is None
+
+
 def test_slipping_route_lists_and_snoozes_items(client, db):
     db.execute(
         """INSERT INTO tasks

@@ -360,6 +360,7 @@ CREATE TABLE IF NOT EXISTS projects (
   status           TEXT NOT NULL DEFAULT 'active',
   due              TEXT,
   last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  -- File-canonical project frontmatter mirrored by scan_projects.
   staleness_days   INTEGER,
   slipping_muted_until TEXT,
   slipping_muted   INTEGER NOT NULL DEFAULT 0,
@@ -389,11 +390,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   links_json       TEXT NOT NULL DEFAULT '[]',
   needs_triage     INTEGER NOT NULL DEFAULT 0,
   last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  -- DB-primary task operator/capture controls are preserved across file scans;
+  -- the markdown task line remains canonical for text/status/date/tag fields.
   staleness_days   INTEGER,
   slipping_muted_until TEXT,
   slipping_muted   INTEGER NOT NULL DEFAULT 0,
-  -- Capture-event reminder facts are preserved across file-truth scans; the
-  -- markdown task line remains canonical for text/status/date/tag fields.
   reminder_lead_minutes INTEGER,
   no_reminder      INTEGER NOT NULL DEFAULT 0,
   review_at        TEXT,

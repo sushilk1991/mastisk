@@ -356,6 +356,7 @@ export interface TaskRow {
   tags: string[];
   links: string[];
   needs_triage: boolean;
+  staleness_days?: number | null;
   reminder_lead_minutes?: number | null;
   no_reminder?: boolean;
   review_at?: string | null;

@@ -17,6 +17,7 @@ from mastisk.tasks.sync import (
     get_task,
     journal_host_for_today,
     list_tasks,
+    patch_task_operator_controls,
     rewrite_task,
 )
 
@@ -54,6 +55,7 @@ class TaskPatch(BaseModel):
     scheduled: str | None = None
     recurrence: str | None = None
     priority: Literal["high", "medium", "low"] | None = None
+    staleness_days: int | None = Field(default=None, ge=1, le=365)
 
     @field_validator("due", "scheduled")
     @classmethod
@@ -116,10 +118,17 @@ async def patch_task_endpoint(uid: str, req: TaskPatch) -> dict:
         for key, value in req.model_dump().items()
         if key in req.model_fields_set
     }
-    try:
-        updated = rewrite_task(uid, **updates)
-    except TaskLineMissingError as exc:
-        raise HTTPException(status_code=404, detail="task line not found; mirror refreshed") from exc
+    staleness_days = updates.pop("staleness_days", None)
+    staleness_days_set = "staleness_days" in req.model_fields_set
+    if updates:
+        try:
+            updated = rewrite_task(uid, **updates)
+        except TaskLineMissingError as exc:
+            raise HTTPException(status_code=404, detail="task line not found; mirror refreshed") from exc
+    else:
+        updated = get_task(uid)
+    if staleness_days_set:
+        updated = patch_task_operator_controls(uid, staleness_days=staleness_days)
     if updated is None:
         raise HTTPException(status_code=404, detail="task not found")
     if "due" in req.model_fields_set:

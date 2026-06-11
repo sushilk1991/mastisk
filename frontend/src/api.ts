@@ -351,7 +351,7 @@ export const api = {
     },
     toggle: (uid: string): Promise<TaskRow> =>
       j<TaskRow>(`${BASE}/tasks/${encodeURIComponent(uid)}/toggle`, { method: 'PATCH' }),
-    patch: (uid: string, body: { due?: string | null; scheduled?: string | null; recurrence?: string | null; priority?: 'high' | 'medium' | 'low' | null }):
+    patch: (uid: string, body: { due?: string | null; scheduled?: string | null; recurrence?: string | null; priority?: 'high' | 'medium' | 'low' | null; staleness_days?: number | null }):
       Promise<TaskRow> =>
       j<TaskRow>(`${BASE}/tasks/${encodeURIComponent(uid)}`, {
         method: 'PATCH',

@@ -115,6 +115,26 @@ def test_task_routes_create_filter_toggle_and_patch_file_first(client, vault_tmp
     assert "🔽" in host_text
 
 
+def test_task_patch_staleness_override_survives_file_rescan(client, db, vault_tmp):
+    created = client.post("/api/tasks", json={"text": "Custom slipping window"})
+    assert created.status_code == 201, created.text
+    task = created.json()
+
+    patched = client.patch(f"/api/tasks/{task['uid']}", json={"staleness_days": 30})
+
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["staleness_days"] == 30
+
+    from mastisk.tasks.sync import scan_task_hosts
+
+    scan_task_hosts([vault_tmp / task["host_path"]])
+    row = db.execute(
+        "SELECT staleness_days FROM tasks WHERE uid = ?",
+        (task["uid"],),
+    ).fetchone()
+    assert row["staleness_days"] == 30
+
+
 def test_task_patch_due_reschedules_pending_task_due_reminder(
     client, db, data_tmp, vault_tmp
 ):
