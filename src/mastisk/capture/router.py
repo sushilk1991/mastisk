@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from mastisk.agents.base import Agent
 from mastisk.bridges import intelligence
@@ -60,8 +60,7 @@ class Capture(BaseModel):
     review_at: str | None = None
     tags: list[str] = Field(default_factory=list)
     related: list[str] = Field(default_factory=list)
-
-    _command_detected: bool = PrivateAttr(default=False)
+    command_detected: bool = False
 
     @field_validator("confidence")
     @classmethod
@@ -164,10 +163,6 @@ def detect_command_hint(text: str) -> CaptureType | None:
     return None
 
 
-def command_detected(capture: Capture) -> bool:
-    return bool(capture._command_detected)
-
-
 async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     settings = get_settings()
     fixed_intent = detect_command_intent(text)
@@ -194,7 +189,7 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     if fixed_intent is not None:
         payload["type"] = fixed_intent
     capture = Capture(**payload)
-    capture._command_detected = fixed_intent is not None
+    capture.command_detected = fixed_intent is not None
 
     timezone = settings.capture.default_timezone
     if capture.type == "task" or capture.due is not None:

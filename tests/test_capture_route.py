@@ -175,6 +175,7 @@ def test_capture_persists_typed_intent_metadata(client_with_token, vault_tmp, fa
     assert "type: task" in file_text
     assert "due: '2026-06-10T14:00:00-07:00'" in file_text
     assert "needs_triage: false" in file_text
+    assert "command_detected: false" in file_text
     assert file_text.endswith("call Sam")
 
     from mastisk.db.queries import connect, get_note
@@ -341,7 +342,7 @@ def test_command_detected_capture_skips_confidence_gate(
     client_with_token, vault_tmp, fake_capture_router
 ):
     command_capture = _capture(type="task", confidence=0.2, body="call Sam")
-    command_capture._command_detected = True
+    command_capture.command_detected = True
     fake_capture_router.side_effect = None
     fake_capture_router.return_value = command_capture
 
@@ -356,6 +357,7 @@ def test_command_detected_capture_skips_confidence_gate(
     assert body["needs_triage"] is False
     file_text = (vault_tmp / body["destination"]).read_text()
     assert "confidence: 0.2" in file_text
+    assert "command_detected: true" in file_text
 
 
 def test_typed_capture_write_failure_rolls_back_and_returns_inbox_fallback(

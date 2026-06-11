@@ -52,6 +52,7 @@ def test_capture_schema_matches_spec():
         "review_at",
         "tags",
         "related",
+        "command_detected",
     ]
 
 
@@ -116,6 +117,7 @@ async def test_command_override_fixes_intent_and_resolves_due(data_tmp):
     assert capture.due == "2026-06-10T14:00:00-07:00"
     assert capture.reminder_lead_minutes == 20
     assert capture.no_reminder is False
+    assert capture.command_detected is True
     prompt = run_mock.call_args.args[0]
     assert "Fixed command intent: task" in prompt
     assert run_mock.call_args.kwargs["classification"] is True
@@ -193,6 +195,7 @@ async def test_did_my_hint_does_not_force_intent_or_skip_gates(data_tmp):
         capture = await route_capture("did my vitamins", source="watch", ts=BASE_TS)
 
     assert capture.type == "note"
+    assert capture.command_detected is False
     prompt = run_mock.call_args.args[0]
     assert "Fixed command intent: null" in prompt
     assert "Command hint intent: routine_done" in prompt

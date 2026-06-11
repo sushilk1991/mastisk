@@ -9,7 +9,7 @@ import yaml
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from mastisk.capture.router import Capture, command_detected, route_capture
+from mastisk.capture.router import Capture, route_capture
 from mastisk.routes.notes import persist_note_capture
 from mastisk.settings import read_capture_bearer_token
 
@@ -58,11 +58,13 @@ async def capture(
         log.exception("capture router failed; falling back to raw inbox note")
         return _persist_inbox_fallback(req.text, req.source)
 
-    if routed.type == "inbox" or (not command_detected(routed) and routed.confidence < 0.5):
+    if routed.type == "inbox" or (
+        not routed.command_detected and routed.confidence < 0.5
+    ):
         return _persist_inbox_fallback(req.text, req.source)
 
     try:
-        needs_triage = False if command_detected(routed) else routed.confidence < 0.85
+        needs_triage = False if routed.command_detected else routed.confidence < 0.85
         row = persist_note_capture(
             body=routed.body,
             source=req.source,
