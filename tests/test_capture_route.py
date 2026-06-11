@@ -1,9 +1,10 @@
 """Integration tests for the /api/capture ingress."""
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch
 
 
 def _capture(**overrides):
@@ -88,7 +89,7 @@ def test_capture_rejects_non_ascii_token_without_500(client_with_token):
     r = client_with_token.post(
         "/api/capture",
         json={"text": "hi", "source": "watch"},
-        headers=[(b"authorization", "Bearer café".encode("utf-8"))],
+        headers=[(b"authorization", "Bearer café".encode())],
     )
     assert r.status_code == 401
 

@@ -127,10 +127,7 @@ def _normalize_model_iso(value: str | None, tzinfo) -> str | None:
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=tzinfo)
-    else:
-        parsed = parsed.astimezone(tzinfo)
+    parsed = parsed.replace(tzinfo=tzinfo) if parsed.tzinfo is None else parsed.astimezone(tzinfo)
     return _format_datetime(parsed)
 
 

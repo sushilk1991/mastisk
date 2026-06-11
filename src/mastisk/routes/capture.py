@@ -9,9 +9,9 @@ import hmac
 import logging
 from typing import Literal
 
+import yaml
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
-import yaml
 
 from mastisk.capture.router import Capture, command_detected, route_capture
 from mastisk.routes.notes import persist_note_capture

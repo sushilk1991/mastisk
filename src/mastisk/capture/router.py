@@ -7,8 +7,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 from mastisk.agents.base import Agent
-from mastisk.bridges.claude_bridge import extract_json_block
 from mastisk.bridges import intelligence
+from mastisk.bridges.claude_bridge import extract_json_block
 from mastisk.capture.dates import resolve_datetime
 from mastisk.settings import get_settings
 

@@ -1,7 +1,6 @@
 """Deterministic date normalization for the capture router."""
 from __future__ import annotations
 
-
 BASE_TS = "2026-06-09T15:30:00-07:00"  # Tuesday afternoon in Los Angeles.
 TZ = "America/Los_Angeles"
 

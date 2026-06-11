@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
 BASE_TS = "2026-06-09T15:30:00-07:00"
 
 
