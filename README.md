@@ -499,6 +499,69 @@ mastisk status        # full content + agents + bridges report
 
 ---
 
+## Capturing from your Apple Watch
+
+One-tap voice capture from the wrist: **Dictate Text → POST to your ingress**.
+(Raw audio push from the Watch isn't supported by watchOS Shortcuts — the watch
+dictates *text*. Server-side Whisper on phone-recorded audio is a later option.)
+
+### 1. Generate a token
+
+```bash
+mastisk capture-token
+```
+
+Copy the token it prints.
+
+### 2. Expose ONLY /api/capture to the internet
+
+The Apple Watch is **not** a Tailscale client, so the tailnet host won't resolve
+from the wrist. Use Cloudflare Tunnel — and scope it to the capture surface only
+(a bare tunnel to the whole app is a security hole; the bearer token is the
+backstop, not the only control):
+
+```bash
+brew install cloudflared
+cloudflared tunnel login
+cloudflared tunnel create mastisk-capture
+# Route a hostname to the local daemon, restricted to the capture path:
+#   ingress:
+#     - hostname: capture.<your-domain>
+#       service: http://localhost:5555
+#       path: ^/api/capture        # scope to the ingress
+#     - service: http_status:404   # everything else → 404
+cloudflared tunnel route dns mastisk-capture capture.<your-domain>
+cloudflared tunnel run mastisk-capture
+```
+
+For stronger isolation, put a **Cloudflare Access** policy in front of
+`capture.<your-domain>`. HTTPS is mandatory (the Watch enforces ATS) — Cloudflare
+provides TLS automatically.
+
+### 3. Build the shortcut (on iPhone; syncs to Watch)
+
+Shortcuts app → new shortcut:
+
+1. **Dictate Text** → Language: your language; Stop Listening: On Tap
+2. **Get Contents of URL**
+   - URL: `https://capture.<your-domain>/api/capture`
+   - Method: `POST`
+   - Headers: `Authorization` = `Bearer <token>`, `Content-Type` = `application/json`
+   - Request Body: JSON → `text` = Dictated Text, `source` = `watch`
+3. Optional: **Show Notification** with the `type` field from the response.
+
+Name it "Capture". Enable **Show on Apple Watch**. Add it as a **watch-face
+complication** for two-tap access: tap, confirm, speak.
+
+### Limits
+
+- Dictation goes through Apple's servers, not locally; it needs Wi-Fi or cellular.
+- Expect a 30-60s practical dictation cap. This path is for quick thoughts.
+- `Get Contents of URL` POST from the Watch has been intermittently flaky across
+  watchOS versions; test on your exact version.
+
+---
+
 ## CLI reference
 
 ```
@@ -519,6 +582,7 @@ mastisk add-feed <url>      subscribe an RSS feed
 mastisk add-youtube <url>   queue a video for Listener
 mastisk add-podcast <url>   queue a podcast (RSS / Apple / direct audio)
 mastisk note [text]         capture a note (opens $EDITOR if no text)
+mastisk capture-token       generate the /api/capture bearer token
 mastisk roundtable [text]   fan a prompt out to all LLM backends + synthesize
 mastisk add-repo <slug>     track a GitHub repo (hourly poll + daily ideation)
 mastisk list-repos          list tracked repos
