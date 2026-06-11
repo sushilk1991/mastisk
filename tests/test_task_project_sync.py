@@ -63,3 +63,51 @@ def test_project_scan_mirrors_frontmatter_and_soft_deletes_missing_files(db, vau
     scan_projects()
     row = db.execute("SELECT deleted_at FROM projects WHERE slug = 'mastisk'").fetchone()
     assert row["deleted_at"] is not None
+
+
+def test_append_task_sanitizes_injected_uid_before_mirror_write(db, vault_tmp):
+    from mastisk.tasks.sync import append_task_to_host, scan_task_hosts
+
+    host = vault_tmp / "journal" / "2026-06-11.md"
+    host.parent.mkdir(parents=True)
+    host.write_text("## Tasks\n- [ ] original row 🆔 existing1\n", encoding="utf-8")
+    scan_task_hosts([host])
+
+    row = append_task_to_host(
+        host,
+        text="new task tries to steal 🆔 existing1",
+        uid="fresh1",
+    )
+
+    assert row["uid"] == "fresh1"
+    original = db.execute(
+        "SELECT text, host_path FROM tasks WHERE uid = 'existing1'",
+    ).fetchone()
+    assert original["text"] == "original row"
+    new_row = db.execute("SELECT text FROM tasks WHERE uid = 'fresh1'").fetchone()
+    assert new_row["text"] == "new task tries to steal existing1"
+
+
+def test_append_task_collapses_newlines_and_marker_glyphs_to_one_line(db, vault_tmp):
+    from mastisk.tasks.parser import parse_markdown_tasks
+    from mastisk.tasks.sync import append_task_to_host
+
+    host = vault_tmp / "journal" / "2026-06-11.md"
+
+    row = append_task_to_host(
+        host,
+        text="first line\n- [ ] injected 📅 2026-06-30",
+        tags=["safe\n🆔 bad"],
+        links=["Some Page\n⏳ bad"],
+        uid="clean1",
+    )
+
+    file_text = host.read_text(encoding="utf-8")
+    task_lines = [line for line in file_text.splitlines() if line.startswith("- [ ]")]
+    assert task_lines == [
+        "- [ ] first line - [ ] injected 2026-06-30 #safe-bad [[Some Page bad]] 🆔 clean1"
+    ]
+    parsed = parse_markdown_tasks(file_text)
+    assert len(parsed) == 1
+    assert parsed[0]["uid"] == row["uid"] == "clean1"
+    assert parsed[0]["text"] == "first line - [ ] injected 2026-06-30"

@@ -17,6 +17,7 @@ from mastisk.tasks.parser import (
     format_task_line,
     generate_uid,
     parse_markdown_tasks,
+    parse_task_line,
     rewrite_task_by_uid,
 )
 
@@ -121,9 +122,6 @@ def append_task_to_host(
     uid: str | None = None,
 ) -> dict[str, Any]:
     path = _absolute_host_path(host)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        atomic_write(path, "## Tasks\n\n## Log\n")
     task_uid = uid or generate_uid()
     line = format_task_line(
         text,
@@ -135,6 +133,12 @@ def append_task_to_host(
         links=links,
         uid=task_uid,
     )
+    parsed_line = parse_task_line(line)
+    if parsed_line is None or parsed_line.get("uid") != task_uid:
+        raise RuntimeError("formatted task line did not round-trip generated uid")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        atomic_write(path, "## Tasks\n\n## Log\n")
     markdown = path.read_text(encoding="utf-8")
     atomic_write(path, append_to_section(markdown, "Tasks", line))
     scan_task_hosts([path])

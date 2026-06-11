@@ -27,6 +27,7 @@ _LINK_RE = re.compile(r"\[\[(?P<value>[^\]|#]+)(?:[|#][^\]]*)?\]\]")
 _PRIORITY_TO_ICON = {"high": "⏫", "medium": "🔼", "low": "🔽"}
 _ICON_TO_PRIORITY = {v: k for k, v in _PRIORITY_TO_ICON.items()}
 _PRIORITY_RE = re.compile(r"\s*(?P<value>[⏫🔼🔽])")
+_MARKER_GLYPHS_RE = re.compile(r"[🆔📅⏳🔁⏫🔼🔽⏰]")
 _BASE36 = string.digits + string.ascii_lowercase
 
 
@@ -178,7 +179,7 @@ def format_task_line(
     uid: str | None = None,
 ) -> str:
     marker = "x" if checked else " "
-    parts = [f"- [{marker}] {text.strip()}"]
+    parts = [f"- [{marker}] {_sanitize_inline(text)}"]
     if due:
         parts.append(f"📅 {due}")
     if scheduled:
@@ -188,11 +189,11 @@ def format_task_line(
     if priority and priority in _PRIORITY_TO_ICON:
         parts.append(_PRIORITY_TO_ICON[priority])
     for tag in tags or []:
-        clean = str(tag).strip().lstrip("#")
+        clean = _sanitize_tag(tag)
         if clean:
             parts.append(f"#{clean}")
     for link in links or []:
-        clean = str(link).strip().strip("[]")
+        clean = _sanitize_inline(link).strip("[]")
         if clean:
             parts.append(f"[[{clean}]]")
     if uid:
@@ -220,6 +221,16 @@ def _clean_task_text(body: str) -> str:
     stripped = _LINK_RE.sub("", stripped)
     stripped = _TAG_RE.sub("", stripped)
     return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _sanitize_inline(value: object) -> str:
+    cleaned = _MARKER_GLYPHS_RE.sub("", str(value))
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _sanitize_tag(value: object) -> str:
+    cleaned = _sanitize_inline(value).lstrip("#")
+    return re.sub(r"\s+", "-", cleaned).strip("-")
 
 
 def _split_line_ending(raw: str) -> tuple[str, str]:
