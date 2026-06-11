@@ -1,4 +1,6 @@
-import type { AgentInfo, FeedTick, View } from '../types';
+import { useEffect, useState } from 'react';
+import { api } from '../api';
+import type { AgentInfo, CalendarStatus, FeedTick, View } from '../types';
 import { CalendarPicker } from './CalendarPicker';
 
 interface Props {
@@ -25,6 +27,50 @@ const JUMPS: { id: View; l: string; d: string }[] = [
 ];
 
 export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
+  const [calendar, setCalendar] = useState<CalendarStatus | null>(null);
+  const [calendarBusy, setCalendarBusy] = useState(false);
+  const [calendarErr, setCalendarErr] = useState<string | null>(null);
+
+  async function loadCalendarStatus() {
+    setCalendarErr(null);
+    try {
+      setCalendar(await api.calendar.status());
+    } catch (e) {
+      setCalendarErr(e instanceof Error ? e.message : 'calendar status failed');
+    }
+  }
+
+  async function syncCalendar() {
+    setCalendarBusy(true);
+    setCalendarErr(null);
+    try {
+      const result = await api.calendar.sync();
+      setCalendar(result.status);
+      window.dispatchEvent(new Event('mastisk-calendar-sync'));
+    } catch (e) {
+      setCalendarErr(e instanceof Error ? e.message : 'calendar sync failed');
+      await loadCalendarStatus();
+    } finally {
+      setCalendarBusy(false);
+    }
+  }
+
+  async function disconnectCalendar() {
+    setCalendarBusy(true);
+    setCalendarErr(null);
+    try {
+      await api.calendar.disconnect();
+      await loadCalendarStatus();
+      window.dispatchEvent(new Event('mastisk-calendar-sync'));
+    } catch (e) {
+      setCalendarErr(e instanceof Error ? e.message : 'calendar disconnect failed');
+    } finally {
+      setCalendarBusy(false);
+    }
+  }
+
+  useEffect(() => { void loadCalendarStatus(); }, []);
+
   return (
     <aside className="rail">
       <div className="rail-section">
@@ -33,6 +79,38 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
           selectedDate={selectedDate}
           onSelect={(iso) => onNavigate('digest', iso)}
         />
+      </div>
+
+      <div className="rail-section">
+        <div className="rail-h">Calendar health</div>
+        <div className="rel-row" style={{flexDirection:'column',alignItems:'flex-start',gap:4}}>
+          <div style={{color:'var(--fg)',fontSize:13}}>
+            {calendar ? calendar.status : 'loading'}
+          </div>
+          {calendar?.last_synced_at && (
+            <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--fg-faint)'}}>
+              synced {formatRailDate(calendar.last_synced_at)}
+            </div>
+          )}
+          {calendar?.status === 'unconfigured' && (
+            <code style={{fontSize:10,color:'var(--fg-faint)'}}>mastisk calendar-connect</code>
+          )}
+          {(calendar?.status === 'disconnected' || calendarErr) && (
+            <div style={{fontSize:11,color:'#c53030'}}>
+              {calendarErr || calendar?.error || 'OAuth expired'}
+            </div>
+          )}
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            <button className="chip" disabled={calendarBusy || calendar?.status === 'unconfigured'} onClick={() => void syncCalendar()}>
+              {calendarBusy ? 'syncing' : 'sync'}
+            </button>
+            {calendar && calendar.status !== 'unconfigured' && (
+              <button className="chip muted" disabled={calendarBusy} onClick={() => void disconnectCalendar()}>
+                disconnect
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="rail-section">
@@ -68,4 +146,10 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
       </div>
     </aside>
   );
+}
+
+function formatRailDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }

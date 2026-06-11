@@ -1,7 +1,7 @@
 import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
   BlogPostSummary, CaptureTriageItem, CaptureTriageTarget, Digest, DigestAudit, Domain, Feed,
-  FeedTick, AgentInfo, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
+  FeedTick, AgentInfo, CalendarStatus, CalendarToday, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
   PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, ReminderRow,
   RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
@@ -462,6 +462,21 @@ export const api = {
   remindersApi: {
     list: (status?: string): Promise<ReminderRow[]> =>
       j<ReminderRow[]>(status ? `${BASE}/reminders?status=${encodeURIComponent(status)}` : `${BASE}/reminders`),
+  },
+
+  calendar: {
+    today: (day?: string): Promise<CalendarToday> =>
+      j<CalendarToday>(
+        day ? `${BASE}/calendar/today?date=${encodeURIComponent(day)}` : `${BASE}/calendar/today`,
+      ),
+    status: (): Promise<CalendarStatus> => j<CalendarStatus>(`${BASE}/calendar/status`),
+    sync: (): Promise<{ ok: boolean; event_count: number; calendar_count: number; status: CalendarStatus }> =>
+      j<{ ok: boolean; event_count: number; calendar_count: number; status: CalendarStatus }>(
+        `${BASE}/calendar/sync`,
+        { method: 'POST' },
+      ),
+    disconnect: (): Promise<{ ok: boolean }> =>
+      j<{ ok: boolean }>(`${BASE}/calendar/connection`, { method: 'DELETE' }),
   },
 
   captureTriage: {

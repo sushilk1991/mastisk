@@ -42,3 +42,19 @@ def test_slipping_muted_items_have_unmute_action():
 
     assert "api.slipping.unmute" in source
     assert "item.slipping_muted" in source
+
+
+def test_today_calendar_slot_uses_real_calendar_api():
+    source = _dashboard_source()
+
+    assert "api.calendar.today(today)" in source
+    assert "mastisk calendar-connect" in source
+    assert '<QuietPlaceholder title="Calendar" phase="Phase 9" />' not in source
+
+
+def test_system_rail_exposes_calendar_health_actions():
+    source = Path("frontend/src/components/SystemRail.tsx").read_text(encoding="utf-8")
+
+    assert "api.calendar.status" in source
+    assert "api.calendar.sync" in source
+    assert "api.calendar.disconnect" in source

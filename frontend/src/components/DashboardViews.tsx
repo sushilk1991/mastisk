@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { api, FocusFullError } from '../api';
 import type {
-  CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
+  CalendarToday, CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
   NeedsReviewItem, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
   RoutineGroups, RoutineProgress, RoutineRow, SlippingItem, TaskRow, TimeOfDay, View,
 } from '../types';
@@ -44,19 +44,21 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const [routines, setRoutines] = useState<RoutineGroups | null>(null);
   const [journal, setJournal] = useState<JournalDay | null>(null);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
+  const [calendar, setCalendar] = useState<CalendarToday | null>(null);
   const [entry, setEntry] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
   async function load() {
     setErr(null);
     try {
-      const [taskRows, routineRows, reminderRows, focusRows, slippingRows, resurfaceItem] = await Promise.all([
+      const [taskRows, routineRows, reminderRows, focusRows, slippingRows, resurfaceItem, calendarToday] = await Promise.all([
         api.tasks.list({ status: 'open' }),
         api.routinesApi.list(false),
         api.remindersApi.list(),
         api.focus.list(today),
         api.slipping.list(),
         api.resurface.get(today),
+        api.calendar.today(today),
       ]);
       setTasks(taskRows);
       setRoutines(routineRows);
@@ -64,6 +66,7 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
       setFocus(focusRows);
       setSlipping(slippingRows);
       setResurface(resurfaceItem);
+      setCalendar(calendarToday);
       try {
         setJournal(await api.journalApi.get(today));
       } catch {
@@ -75,6 +78,11 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   }
 
   useEffect(() => { void load(); }, [today, liveKey]);
+  useEffect(() => {
+    const reload = () => { void load(); };
+    window.addEventListener('mastisk-calendar-sync', reload);
+    return () => window.removeEventListener('mastisk-calendar-sync', reload);
+  }, [today, liveKey]);
 
   async function appendLog(e: FormEvent) {
     e.preventDefault();
@@ -108,7 +116,7 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
 
       <div className="dash-grid dash-grid-2">
         <FocusPanel focus={focus} today={today} onChanged={load}/>
-        <QuietPlaceholder title="Calendar" phase="Phase 9" />
+        <CalendarPanel calendar={calendar}/>
       </div>
 
       {resurface && <ResurfaceCard item={resurface}/>}
@@ -787,6 +795,39 @@ function ResurfaceCard({ item }: { item: ResurfaceItem }) {
   );
 }
 
+function CalendarPanel({ calendar }: { calendar: CalendarToday | null }) {
+  const status = calendar?.status.status ?? 'loading';
+  const events = calendar?.events ?? [];
+  return (
+    <section className="dash-card calendar-panel">
+      <div className="dash-section-head">
+        <h2>Calendar</h2>
+        <span className={`dash-muted ${status === 'disconnected' ? 'warn' : ''}`}>{status}</span>
+      </div>
+      {!calendar ? (
+        <EmptyLine>Loading calendar.</EmptyLine>
+      ) : status === 'unconfigured' ? (
+        <EmptyLine>Connect Google Calendar with <code>mastisk calendar-connect</code>.</EmptyLine>
+      ) : status === 'disconnected' ? (
+        <p className="dash-error">{calendar.status.error || 'Calendar OAuth expired.'}</p>
+      ) : events.length === 0 ? (
+        <EmptyLine>No events today.</EmptyLine>
+      ) : (
+        <div className="dash-list compact">
+          {events.map((event) => (
+            <div key={`${event.calendar_id}:${event.id}`} className="dash-row">
+              <span className={event.all_day ? 'dash-pill mini' : 'dash-muted'}>
+                {event.all_day ? 'all-day' : formatTime(event.start)}
+              </span>
+              <span>{event.summary}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function TaskGroup({
   title, tasks, today, onChanged, focusDate, focusedUids,
 }: {
@@ -1060,15 +1101,6 @@ function ScaleSetter({ label, value, onSet }: { label: string; value: number | n
       {[1, 2, 3, 4, 5].map((n) => (
         <button key={n} className={value === n ? 'active' : ''} onClick={() => onSet(value === n ? null : n)}>{n}</button>
       ))}
-    </div>
-  );
-}
-
-function QuietPlaceholder({ title, phase }: { title: string; phase: string }) {
-  return (
-    <div className="dash-placeholder">
-      <span>{title}</span>
-      <b>{phase}</b>
     </div>
   );
 }

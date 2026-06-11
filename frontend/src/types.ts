@@ -472,6 +472,31 @@ export interface ReminderRow {
   last_error?: string | null;
 }
 
+export interface CalendarStatus {
+  status: 'connected' | 'disconnected' | 'unconfigured' | string;
+  last_synced_at: string | null;
+  error: string | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  calendar_id: string;
+  summary: string;
+  start: string;
+  end: string;
+  all_day: boolean;
+  location: string | null;
+  status: string | null;
+  updated_at: string | null;
+  synced_at: string;
+}
+
+export interface CalendarToday {
+  date: string;
+  status: CalendarStatus;
+  events: CalendarEvent[];
+}
+
 export interface JournalDaySummary {
   date: string;
   path: string;
