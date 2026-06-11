@@ -9,6 +9,7 @@ import yaml
 from slugify import slugify
 
 from mastisk.db.queries import connect
+from mastisk.file_locks import host_file_lock
 from mastisk.markdown_sections import append_to_section
 from mastisk.paths import projects_dir, vault_dir
 from mastisk.routes.notes import atomic_write
@@ -110,7 +111,8 @@ def create_project_file(
         "status": project_status,
         "due": due,
     }
-    atomic_write(path, dump_project_file(meta, "## Log\n\n## Tasks\n"))
+    with host_file_lock(path):
+        atomic_write(path, dump_project_file(meta, "## Log\n\n## Tasks\n"))
     scan_projects([path])
     return get_project(path.stem) or parse_project_file(path)
 
@@ -120,15 +122,16 @@ def patch_project_frontmatter(slug: str, updates: dict[str, Any]) -> dict[str, A
     if project is None:
         return None
     path = vault_dir() / project["path"]
-    meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
-    for key in ("name", "type", "domain", "status", "due"):
-        if key in updates:
-            meta[key] = updates[key]
-    if meta.get("type") not in _VALID_TYPES:
-        meta["type"] = "project"
-    if meta.get("status") not in _VALID_STATUSES:
-        meta["status"] = "active"
-    atomic_write(path, dump_project_file(meta, body))
+    with host_file_lock(path):
+        meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
+        for key in ("name", "type", "domain", "status", "due"):
+            if key in updates:
+                meta[key] = updates[key]
+        if meta.get("type") not in _VALID_TYPES:
+            meta["type"] = "project"
+        if meta.get("status") not in _VALID_STATUSES:
+            meta["status"] = "active"
+        atomic_write(path, dump_project_file(meta, body))
     scan_projects([path])
     return get_project(slug)
 
@@ -139,8 +142,9 @@ def append_project_log(slug: str, body: str, *, at: datetime | None = None) -> d
         return None
     path = vault_dir() / project["path"]
     timestamp = (at or datetime.now().astimezone()).strftime("%Y-%m-%d %H:%M")
-    markdown = path.read_text(encoding="utf-8")
-    atomic_write(path, append_to_section(markdown, "Log", f"- {timestamp} {body.strip()}"))
+    with host_file_lock(path):
+        markdown = path.read_text(encoding="utf-8")
+        atomic_write(path, append_to_section(markdown, "Log", f"- {timestamp} {body.strip()}"))
     with connect() as conn:
         conn.execute(
             "UPDATE projects SET last_activity_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE slug = ?",

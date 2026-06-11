@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from mastisk.db.queries import connect
+from mastisk.file_locks import host_file_lock
 from mastisk.markdown_sections import append_to_section
 from mastisk.paths import journal_dir, projects_dir, vault_dir
 from mastisk.projects.sync import get_project, parse_project_file
@@ -42,75 +43,78 @@ def scan_task_hosts(
             path = _absolute_host_path(host)
             rel_path = str(path.relative_to(vault_dir()))
             scanned_hosts.append(rel_path)
-            if not path.exists() or path.name.startswith("."):
-                continue
-            markdown = path.read_text(encoding="utf-8")
-            markdown_with_uids, new_uids = ensure_task_uids(markdown, uid_factory=factory)
-            if markdown_with_uids != markdown:
-                atomic_write(path, markdown_with_uids)
-                markdown = markdown_with_uids
-                assigned += len(new_uids)
-            project, domain = _project_domain_for_host(path, rel_path)
-            for task in parse_markdown_tasks(markdown, host_path=rel_path):
-                uid = task.get("uid")
-                if not uid:
+            with host_file_lock(path):
+                if not path.exists() or path.name.startswith("."):
                     continue
-                seen.add(uid)
-                conn.execute(
-                    """INSERT INTO tasks
-                       (uid, host_path, line_number, text, checked, status, due, scheduled,
-                        priority, domain, project, recurrence, tags_json, links_json, needs_triage,
-                        last_activity_at, reminder_lead_minutes, no_reminder, review_at, deleted_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                               COALESCE((SELECT last_activity_at FROM tasks WHERE uid = ?), CURRENT_TIMESTAMP),
-                               COALESCE((SELECT reminder_lead_minutes FROM tasks WHERE uid = ?), NULL),
-                               COALESCE((SELECT no_reminder FROM tasks WHERE uid = ?), 0),
-                               COALESCE((SELECT review_at FROM tasks WHERE uid = ?), NULL),
-                               NULL)
-                       ON CONFLICT(uid) DO UPDATE SET
-                         host_path=excluded.host_path,
-                         line_number=excluded.line_number,
-                         text=excluded.text,
-                         checked=excluded.checked,
-                         status=excluded.status,
-                         due=excluded.due,
-                         scheduled=excluded.scheduled,
-                         priority=excluded.priority,
-                         domain=excluded.domain,
-                         project=excluded.project,
-                         recurrence=excluded.recurrence,
-                         tags_json=excluded.tags_json,
-                         links_json=excluded.links_json,
-                         needs_triage=excluded.needs_triage,
-                         last_activity_at=CASE
-                           WHEN tasks.status IS NOT excluded.status THEN CURRENT_TIMESTAMP
-                           ELSE COALESCE(tasks.last_activity_at, CURRENT_TIMESTAMP)
-                         END,
-                         deleted_at=NULL,
-                         updated_at=CURRENT_TIMESTAMP""",
-                    (
-                        uid,
-                        rel_path,
-                        task["line_number"],
-                        task["text"],
-                        1 if task["checked"] else 0,
-                        task["status"],
-                        task.get("due"),
-                        task.get("scheduled"),
-                        task.get("priority"),
-                        domain,
-                        project,
-                        task.get("recurrence"),
-                        json.dumps(task.get("tags", [])),
-                        json.dumps(task.get("links", [])),
-                        1 if task.get("needs_triage") else 0,
-                        uid,
-                        uid,
-                        uid,
-                        uid,
-                    ),
+                markdown = path.read_text(encoding="utf-8")
+                markdown_with_uids, new_uids = ensure_task_uids(
+                    markdown, uid_factory=factory
                 )
-                upserted += 1
+                if markdown_with_uids != markdown:
+                    atomic_write(path, markdown_with_uids)
+                    markdown = markdown_with_uids
+                    assigned += len(new_uids)
+                project, domain = _project_domain_for_host(path, rel_path)
+                for task in parse_markdown_tasks(markdown, host_path=rel_path):
+                    uid = task.get("uid")
+                    if not uid:
+                        continue
+                    seen.add(uid)
+                    conn.execute(
+                        """INSERT INTO tasks
+                           (uid, host_path, line_number, text, checked, status, due, scheduled,
+                            priority, domain, project, recurrence, tags_json, links_json, needs_triage,
+                            last_activity_at, reminder_lead_minutes, no_reminder, review_at, deleted_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                   COALESCE((SELECT last_activity_at FROM tasks WHERE uid = ?), CURRENT_TIMESTAMP),
+                                   COALESCE((SELECT reminder_lead_minutes FROM tasks WHERE uid = ?), NULL),
+                                   COALESCE((SELECT no_reminder FROM tasks WHERE uid = ?), 0),
+                                   COALESCE((SELECT review_at FROM tasks WHERE uid = ?), NULL),
+                                   NULL)
+                           ON CONFLICT(uid) DO UPDATE SET
+                             host_path=excluded.host_path,
+                             line_number=excluded.line_number,
+                             text=excluded.text,
+                             checked=excluded.checked,
+                             status=excluded.status,
+                             due=excluded.due,
+                             scheduled=excluded.scheduled,
+                             priority=excluded.priority,
+                             domain=excluded.domain,
+                             project=excluded.project,
+                             recurrence=excluded.recurrence,
+                             tags_json=excluded.tags_json,
+                             links_json=excluded.links_json,
+                             needs_triage=excluded.needs_triage,
+                             last_activity_at=CASE
+                               WHEN tasks.status IS NOT excluded.status THEN CURRENT_TIMESTAMP
+                               ELSE COALESCE(tasks.last_activity_at, CURRENT_TIMESTAMP)
+                             END,
+                             deleted_at=NULL,
+                             updated_at=CURRENT_TIMESTAMP""",
+                        (
+                            uid,
+                            rel_path,
+                            task["line_number"],
+                            task["text"],
+                            1 if task["checked"] else 0,
+                            task["status"],
+                            task.get("due"),
+                            task.get("scheduled"),
+                            task.get("priority"),
+                            domain,
+                            project,
+                            task.get("recurrence"),
+                            json.dumps(task.get("tags", [])),
+                            json.dumps(task.get("links", [])),
+                            1 if task.get("needs_triage") else 0,
+                            uid,
+                            uid,
+                            uid,
+                            uid,
+                        ),
+                    )
+                    upserted += 1
         _soft_delete_disappeared(conn, scanned_hosts, seen)
     return {"upserted": upserted, "assigned": assigned}
 
@@ -145,11 +149,12 @@ def append_task_to_host(
     parsed_line = parse_task_line(line)
     if parsed_line is None or parsed_line.get("uid") != task_uid:
         raise RuntimeError("formatted task line did not round-trip generated uid")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        atomic_write(path, "## Tasks\n\n## Log\n")
-    markdown = path.read_text(encoding="utf-8")
-    atomic_write(path, append_to_section(markdown, "Tasks", line))
+    with host_file_lock(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            atomic_write(path, "## Tasks\n\n## Log\n")
+        markdown = path.read_text(encoding="utf-8")
+        atomic_write(path, append_to_section(markdown, "Tasks", line))
     scan_task_hosts([path])
     _persist_capture_event_facts(
         task_uid,
@@ -168,8 +173,9 @@ def rewrite_task(uid: str, **updates: Any) -> dict[str, Any] | None:
     if task is None:
         return None
     path = vault_dir() / task["host_path"]
-    markdown = path.read_text(encoding="utf-8")
-    atomic_write(path, rewrite_task_by_uid(markdown, uid, **updates))
+    with host_file_lock(path):
+        markdown = path.read_text(encoding="utf-8")
+        atomic_write(path, rewrite_task_by_uid(markdown, uid, **updates))
     scan_task_hosts([path])
     return get_task(uid)
 
@@ -223,8 +229,9 @@ def journal_host_for_today(ts: str | None = None) -> Path:
     else:
         day = date.today()
     path = journal_dir() / f"{day.isoformat()}.md"
-    if not path.exists():
-        atomic_write(path, "## Tasks\n\n## Log\n")
+    with host_file_lock(path):
+        if not path.exists():
+            atomic_write(path, "## Tasks\n\n## Log\n")
     return path
 
 

@@ -111,3 +111,33 @@ def test_append_task_collapses_newlines_and_marker_glyphs_to_one_line(db, vault_
     assert len(parsed) == 1
     assert parsed[0]["uid"] == row["uid"] == "clean1"
     assert parsed[0]["text"] == "first line - [ ] injected 2026-06-30"
+
+
+def test_task_append_and_scan_acquire_host_file_lock(db, vault_tmp, monkeypatch):
+    from mastisk.tasks import sync as task_sync
+
+    host = vault_tmp / "journal" / "2026-06-11.md"
+    acquisitions: list[str] = []
+
+    class RecordingLock:
+        def __init__(self, path):
+            self.path = path
+
+        def __enter__(self):
+            acquisitions.append(str(self.path))
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_lock(path):
+        return RecordingLock(path)
+
+    monkeypatch.setattr(task_sync, "host_file_lock", fake_lock, raising=False)
+
+    task_sync.append_task_to_host(host, text="locked append", uid="lock1")
+    assert str(host) in acquisitions
+
+    acquisitions.clear()
+    task_sync.scan_task_hosts([host])
+    assert acquisitions == [str(host)]
