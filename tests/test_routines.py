@@ -270,6 +270,18 @@ def test_routine_missed_nudges_dedup_and_respect_windows(db, vault_tmp, data_tmp
     ]
 
 
+def test_routine_window_end_specific_time_adds_sixty_minutes():
+    from mastisk.agents.reminder_engine import _routine_window_end
+
+    tz = ZoneInfo("Asia/Kolkata")
+    local_now = datetime(2026, 6, 11, 8, 30, tzinfo=tz)
+
+    assert _routine_window_end(
+        {"time_of_day": "anytime", "specific_time": "08:15"},
+        local_now,
+    ) == datetime(2026, 6, 11, 9, 15, tzinfo=tz)
+
+
 def test_routine_missed_rescans_file_before_queueing(db, vault_tmp, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")
