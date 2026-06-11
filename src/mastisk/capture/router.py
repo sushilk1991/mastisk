@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
@@ -210,7 +212,12 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
         capture.reminder_lead_minutes = None
     elif explicit_lead is not None:
         capture.reminder_lead_minutes = explicit_lead
-    elif capture.type == "task" and capture.due and "T" in capture.due:
+    elif (
+        capture.type == "task"
+        and capture.due
+        and "T" in capture.due
+        and _is_future_datetime(capture.due, ts, timezone)
+    ):
         capture.reminder_lead_minutes = settings.reminders.default_lead_minutes
 
     return capture
@@ -271,3 +278,20 @@ def _extract_explicit_lead_minutes(text: str) -> int | None:
     if unit.startswith(("hour", "hr")):
         return amount * 60
     return amount
+
+
+def _is_future_datetime(value: str, ts: str | datetime | None, timezone: str) -> bool:
+    try:
+        due = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    tz = ZoneInfo(timezone)
+    due = due.replace(tzinfo=tz) if due.tzinfo is None else due.astimezone(tz)
+    if isinstance(ts, datetime):
+        base = ts
+    elif ts:
+        base = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    else:
+        base = datetime.now(tz)
+    base = base.replace(tzinfo=tz) if base.tzinfo is None else base.astimezone(tz)
+    return due > base

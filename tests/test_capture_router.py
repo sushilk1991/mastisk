@@ -313,3 +313,31 @@ async def test_explicit_reminder_lead_is_computed_from_text(data_tmp):
     assert capture.due == "2026-06-10T14:00:00-07:00"
     assert capture.reminder_lead_minutes == 45
     assert capture.no_reminder is False
+
+
+@pytest.mark.asyncio
+async def test_past_due_task_keeps_due_without_default_reminder(data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "America/Los_Angeles"\n'
+        "[reminders]\ndefault_lead_minutes = 30\n"
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    response = ({"text": json.dumps(_llm_capture(type="task", due=None))}, "claude")
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ):
+        capture = await route_capture(
+            "remind me today at 2pm",
+            source="watch",
+            ts=BASE_TS,
+        )
+
+    assert capture.due == "2026-06-09T14:00:00-07:00"
+    assert capture.reminder_lead_minutes is None
