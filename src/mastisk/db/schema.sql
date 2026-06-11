@@ -559,6 +559,8 @@ CREATE TABLE IF NOT EXISTS calendar_state (
   status         TEXT NOT NULL,
   last_synced_at TEXT,
   error          TEXT,
+  last_error     TEXT,
+  last_error_at  TEXT,
   updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

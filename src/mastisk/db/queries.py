@@ -158,9 +158,13 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
              status         TEXT NOT NULL,
              last_synced_at TEXT,
              error          TEXT,
+             last_error     TEXT,
+             last_error_at  TEXT,
              updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
            )"""
     )
+    _add_column_if_missing(conn, "calendar_state", "last_error", "TEXT")
+    _add_column_if_missing(conn, "calendar_state", "last_error_at", "TEXT")
     _add_column_if_missing(
         conn, "articles", "source_note_id",
         "INTEGER REFERENCES notes(id) ON DELETE SET NULL",

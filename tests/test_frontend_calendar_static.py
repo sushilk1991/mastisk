@@ -17,3 +17,13 @@ def test_today_calendar_load_is_isolated_from_primary_batch() -> None:
     assert "async function loadCalendarToday()" in source
     assert "setCalendarErr" in source
     assert "calendarErr={calendarErr}" in source
+
+
+def test_system_rail_surfaces_persistent_calendar_sync_errors() -> None:
+    source = (ROOT / "frontend/src/components/SystemRail.tsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "last_error" in source
+    assert "loadCalendarStatus({ clearError: false })" in source
+    assert "calendar?.last_error" in source

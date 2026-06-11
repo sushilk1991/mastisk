@@ -285,6 +285,59 @@ def test_expired_refresh_marks_disconnected_and_today_stays_loud_but_200(
         assert "invalid_grant" in today.json()["status"]["error"]
 
 
+def test_calendar_sync_failure_persists_last_error_without_disconnect(
+    vault_tmp, data_tmp, db
+):
+    _write_calendar_config(data_tmp)
+    now = datetime(2026, 6, 12, 8, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    mode = {"failure": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "www.googleapis.com"
+        if mode["failure"]:
+            return httpx.Response(500, json={"error": "quota exhausted"})
+        return httpx.Response(200, json={"items": []})
+
+    from mastisk.google_calendar import (
+        CalendarSyncError,
+        mark_calendar_connected,
+        sync_calendar,
+        write_calendar_tokens,
+    )
+
+    write_calendar_tokens(
+        {
+            "access_token": "access-ok",
+            "refresh_token": "refresh-ok",
+            "expires_at": 4102444800,
+            "token_type": "Bearer",
+            "scope": "https://www.googleapis.com/auth/calendar.readonly",
+        }
+    )
+    mark_calendar_connected("2026-06-11T08:00:00+05:30")
+
+    with pytest.raises(CalendarSyncError):
+        sync_calendar(now=now, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        status = client.get("/api/calendar/status")
+    assert status.status_code == 200
+    assert status.json()["status"] == "connected"
+    assert status.json()["last_synced_at"] == "2026-06-11T08:00:00+05:30"
+    assert "quota exhausted" in status.json()["last_error"]
+    assert status.json()["last_error_at"] == now.isoformat()
+
+    mode["failure"] = False
+    sync_calendar(now=now, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        healed = client.get("/api/calendar/status")
+    assert healed.status_code == 200
+    assert healed.json()["status"] == "connected"
+    assert healed.json()["last_error"] is None
+    assert healed.json()["last_error_at"] is None
+
+
 def test_calendar_routes_status_force_sync_disconnect_and_sorted_today(
     vault_tmp, data_tmp, db, monkeypatch
 ):
@@ -387,6 +440,8 @@ def test_calendar_corrupt_token_file_reports_disconnected(data_tmp, db):
         "status": "disconnected",
         "last_synced_at": None,
         "error": "calendar token file unreadable",
+        "last_error": None,
+        "last_error_at": None,
     }
 
 

@@ -31,8 +31,8 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
   const [calendarBusy, setCalendarBusy] = useState(false);
   const [calendarErr, setCalendarErr] = useState<string | null>(null);
 
-  async function loadCalendarStatus() {
-    setCalendarErr(null);
+  async function loadCalendarStatus(options: { clearError?: boolean } = {}) {
+    if (options.clearError !== false) setCalendarErr(null);
     try {
       setCalendar(await api.calendar.status());
     } catch (e) {
@@ -49,7 +49,7 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
       window.dispatchEvent(new Event('mastisk-calendar-sync'));
     } catch (e) {
       setCalendarErr(e instanceof Error ? e.message : 'calendar sync failed');
-      await loadCalendarStatus();
+      await loadCalendarStatus({ clearError: false });
     } finally {
       setCalendarBusy(false);
     }
@@ -95,9 +95,14 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
           {calendar?.status === 'unconfigured' && (
             <code style={{fontSize:10,color:'var(--fg-faint)'}}>mastisk calendar-connect</code>
           )}
-          {(calendar?.status === 'disconnected' || calendarErr) && (
+          {(calendar?.status === 'disconnected' || calendarErr || calendar?.last_error) && (
             <div style={{fontSize:11,color:'#c53030'}}>
-              {calendarErr || calendar?.error || 'OAuth expired'}
+              {calendarErr || calendar?.last_error || calendar?.error || 'OAuth expired'}
+            </div>
+          )}
+          {calendar?.last_error_at && (
+            <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--fg-faint)'}}>
+              error {formatRailDate(calendar.last_error_at)}
             </div>
           )}
           <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>

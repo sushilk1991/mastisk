@@ -476,6 +476,8 @@ export interface CalendarStatus {
   status: 'connected' | 'disconnected' | 'unconfigured' | string;
   last_synced_at: string | null;
   error: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
 }
 
 export interface CalendarEvent {
