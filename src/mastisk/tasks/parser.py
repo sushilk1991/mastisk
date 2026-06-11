@@ -1,9 +1,8 @@
 """Parse and rewrite inline markdown tasks.
 
-Decision for Phase 3: any ``- [ ]`` or ``- [x]`` checkbox line in a host file is
-a task, regardless of section heading. The mirror is derived from host files;
-section-aware filtering would make the file contract harder to explain and is
-not required by the spec.
+Decision for Phase 10: checkboxes under a project file's ``## Milestones``
+section are milestones, not tasks. Callers pass that section as ignored so the
+task mirror never assigns them UIDs or rows; other checkbox lines remain tasks.
 """
 from __future__ import annotations
 
@@ -33,9 +32,17 @@ _MARKER_GLYPHS_RE = re.compile(r"[🆔📅⏳🔁⏫🔼🔽⏰]")
 _BASE36 = string.digits + string.ascii_lowercase
 
 
-def parse_markdown_tasks(markdown: str, *, host_path: str = "") -> list[dict[str, Any]]:
+def parse_markdown_tasks(
+    markdown: str,
+    *,
+    host_path: str = "",
+    ignored_sections: set[str] | None = None,
+) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
+    ignored_lines = _ignored_line_numbers(markdown, ignored_sections or set())
     for idx, line in enumerate(markdown.splitlines(), start=1):
+        if idx in ignored_lines:
+            continue
         parsed = parse_task_line(line, line_number=idx, host_path=host_path)
         if parsed is not None:
             tasks.append(parsed)
@@ -149,12 +156,17 @@ def ensure_task_uids(
     *,
     uid_factory: Callable[[], str] | None = None,
     existing_uids: set[str] | None = None,
+    ignored_sections: set[str] | None = None,
 ) -> tuple[str, list[str]]:
     factory = uid_factory or generate_uid
     seen: set[str] = set(existing_uids or set())
+    ignored_lines = _ignored_line_numbers(markdown, ignored_sections or set())
     assigned: list[str] = []
     rewritten: list[str] = []
-    for raw in markdown.splitlines(keepends=True):
+    for line_number, raw in enumerate(markdown.splitlines(keepends=True), start=1):
+        if line_number in ignored_lines:
+            rewritten.append(raw)
+            continue
         line, ending = _split_line_ending(raw)
         parsed = parse_task_line(line)
         if parsed is None:
@@ -261,6 +273,22 @@ def _due_value(day: str | None, clock: str | None) -> str | None:
     if clock:
         return f"{day}T{clock}:00"
     return day
+
+
+def _ignored_line_numbers(markdown: str, headings: set[str]) -> set[int]:
+    normalized = {heading.strip().lower() for heading in headings if heading.strip()}
+    if not normalized:
+        return set()
+    ignored: set[int] = set()
+    active = False
+    for line_number, line in enumerate(markdown.splitlines(), start=1):
+        heading = re.match(r"^##\s+(?P<heading>.+?)\s*$", line)
+        if heading:
+            active = heading.group("heading").strip().lower() in normalized
+            continue
+        if active:
+            ignored.add(line_number)
+    return ignored
 
 
 def _due_marker_parts(value: str) -> list[str]:

@@ -53,15 +53,23 @@ def scan_task_hosts(
                 if not path.exists() or path.name.startswith("."):
                     continue
                 markdown = path.read_text(encoding="utf-8")
+                ignored_sections = {"Milestones"} if rel_path.startswith("projects/") else set()
                 markdown_with_uids, new_uids = ensure_task_uids(
-                    markdown, uid_factory=factory, existing_uids=seen
+                    markdown,
+                    uid_factory=factory,
+                    existing_uids=seen,
+                    ignored_sections=ignored_sections,
                 )
                 if markdown_with_uids != markdown:
                     atomic_write(path, markdown_with_uids)
                     markdown = markdown_with_uids
                     assigned += len(new_uids)
                 project, domain = _project_domain_for_host(path, rel_path)
-                for task in parse_markdown_tasks(markdown, host_path=rel_path):
+                for task in parse_markdown_tasks(
+                    markdown,
+                    host_path=rel_path,
+                    ignored_sections=ignored_sections,
+                ):
                     uid = task.get("uid")
                     if not uid:
                         continue

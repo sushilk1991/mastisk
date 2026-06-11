@@ -1306,9 +1306,10 @@ a { color: inherit; }
   letter-spacing: 0.08em;
 }
 .dash-inline-form {
-  display: flex; gap: 8px; margin-top: 10px;
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
 }
 .dash-inline-form input,
+.dash-inline-form select,
 .dash-filters select,
 .dash-filters input,
 .task-edit input,
@@ -1323,6 +1324,7 @@ a { color: inherit; }
   font-size: 12px;
 }
 .dash-inline-form input { flex: 1; min-width: 0; }
+.dash-inline-form select { min-width: 120px; }
 .dash-inline-form button,
 .mini-toggle,
 .task-check {
@@ -1485,6 +1487,7 @@ a { color: inherit; }
   align-items: start;
 }
 .dash-panel { padding: 16px; }
+.project-create { margin-bottom: 14px; }
 .project-card,
 .journal-day {
   width: 100%;
@@ -1519,6 +1522,27 @@ a { color: inherit; }
   color: var(--fg);
   overflow-wrap: anywhere;
 }
+.project-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-sunk);
+  border: 1px solid var(--line-soft);
+  margin: 6px 0 10px;
+}
+.project-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.project-check-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 13px;
+}
+.project-check-row span { overflow-wrap: anywhere; }
 .dash-strip {
   display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;
 }

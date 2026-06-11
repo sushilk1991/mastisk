@@ -410,6 +410,40 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_domain ON tasks(domain);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project);
 
+-- ─────────────────────────────── Personal OS Phase 10 ───────────────────────────────
+-- Project depth mirrors. Project markdown remains canonical.
+
+CREATE TABLE IF NOT EXISTS milestones (
+  project_slug TEXT NOT NULL,
+  position     INTEGER NOT NULL,
+  text         TEXT NOT NULL,
+  done         INTEGER NOT NULL DEFAULT 0,
+  deleted_at   DATETIME,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(project_slug, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_milestones_project
+  ON milestones(project_slug)
+  WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS time_entries (
+  project_slug TEXT NOT NULL,
+  position     INTEGER NOT NULL,
+  date         TEXT NOT NULL,
+  hours        REAL NOT NULL,
+  text         TEXT NOT NULL,
+  deleted_at   DATETIME,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(project_slug, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_time_entries_project_date
+  ON time_entries(project_slug, date)
+  WHERE deleted_at IS NULL;
+
 -- ─────────────────────────────── Personal OS Phase 4 ───────────────────────────────
 -- Reminders are operational state, not markdown-canonical knowledge.
 

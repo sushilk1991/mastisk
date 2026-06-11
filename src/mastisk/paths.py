@@ -95,6 +95,10 @@ def projects_dir() -> Path:
     return vault_dir() / "projects"
 
 
+def checklist_templates_dir() -> Path:
+    return vault_dir() / "templates" / "checklists"
+
+
 def routines_dir() -> Path:
     return vault_dir() / "routines"
 
@@ -119,6 +123,7 @@ def ensure_dirs() -> None:
         blog_drafts_dir(),
         journal_dir(),
         projects_dir(),
+        checklist_templates_dir(),
         routines_dir(),
     ]:
         d.mkdir(parents=True, exist_ok=True)

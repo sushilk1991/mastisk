@@ -405,7 +405,7 @@ export interface ProjectSummary {
   slug: string;
   path: string;
   name: string;
-  type: 'project' | 'area' | string;
+  type: 'project' | 'area' | 'retainer' | string;
   domain: string | null;
   status: 'active' | 'someday' | 'paused' | 'done' | string;
   due: string | null;
@@ -415,9 +415,52 @@ export interface ProjectSummary {
   updated_at?: string;
 }
 
+export interface ProjectMilestone {
+  position: number;
+  text: string;
+  done: boolean;
+}
+
+export interface ProjectMilestoneProgress {
+  done: number;
+  total: number;
+  percent: number;
+}
+
+export interface ProjectTimeEntry {
+  position: number;
+  date: string;
+  hours: number;
+  text: string;
+}
+
+export interface ProjectTimeTotals {
+  total_hours: number;
+  last_30_days_hours: number;
+}
+
+export interface ProjectRetainerState {
+  current_month: string;
+  month_end: string;
+  done: number;
+  open: number;
+  total: number;
+  tasks: Pick<TaskRow, 'uid' | 'text' | 'status' | 'due'>[];
+}
+
 export interface ProjectDetail extends ProjectSummary {
   frontmatter: Record<string, unknown>;
   body: string;
+  milestones: ProjectMilestone[];
+  milestone_progress: ProjectMilestoneProgress;
+  time_entries: ProjectTimeEntry[];
+  time_totals: ProjectTimeTotals;
+  retainer: ProjectRetainerState | null;
+}
+
+export interface ChecklistTemplate {
+  name: string;
+  task_count: number;
 }
 
 export interface RoutineStreak {

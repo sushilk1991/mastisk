@@ -155,6 +155,24 @@ async def start_scheduler():
         log.warning("scheduler: recurrence_tick registration failed: %s", e)
 
     try:
+        from mastisk.agents.retainer_rollover import retainer_rollover
+        from mastisk.settings import get_settings
+
+        sched.add_job(
+            retainer_rollover,
+            "cron",
+            hour=0,
+            minute=20,
+            timezone=ZoneInfo(get_settings().capture.default_timezone),
+            id="retainer_rollover",
+            max_instances=1,
+            coalesce=True,
+        )
+        log.info("scheduler: retainer_rollover registered (daily 00:20 local)")
+    except Exception as e:
+        log.warning("scheduler: retainer_rollover registration failed: %s", e)
+
+    try:
         from mastisk.dashboard.intelligence import needs_review_scan, slipping_scan
 
         sched.add_job(

@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { api, FocusFullError } from '../api';
 import type {
   CalendarToday, CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
-  NeedsReviewItem, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
+  ChecklistTemplate, NeedsReviewItem, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
   RoutineGroups, RoutineProgress, RoutineRow, SlippingItem, TaskRow, TimeOfDay, View,
 } from '../types';
 
@@ -309,9 +309,14 @@ export function TasksView({ liveKey }: LiveProps) {
 
 export function ProjectsView({ liveKey }: LiveProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [newName, setNewName] = useState('');
+  const [newType, setNewType] = useState<'project' | 'area' | 'retainer'>('project');
+  const [newTemplate, setNewTemplate] = useState('');
+  const [newRecurringItems, setNewRecurringItems] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const selectedRef = useRef<string | null>(null);
   const detailRequestRef = useRef(0);
@@ -323,8 +328,12 @@ export function ProjectsView({ liveKey }: LiveProps) {
   async function loadList() {
     setErr(null);
     try {
-      const rows = await api.projectsApi.list();
+      const [rows, templateRows] = await Promise.all([
+        api.projectsApi.list(),
+        api.projectsApi.checklistTemplates(),
+      ]);
       setProjects(rows);
+      setTemplates(templateRows);
       setSelected((current) => current || rows[0]?.slug || null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
@@ -364,11 +373,84 @@ export function ProjectsView({ liveKey }: LiveProps) {
     await loadDetail(detail.slug);
   }
 
+  async function createProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+    const created = await api.projectsApi.create({
+      name,
+      type: newType,
+      template: newTemplate || null,
+      recurring_items: newRecurringItems
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    });
+    setNewName('');
+    setNewType('project');
+    setNewTemplate('');
+    setNewRecurringItems('');
+    await loadList();
+    setSelected(created.slug);
+  }
+
+  async function addMilestone(text: string) {
+    if (!detail) return;
+    const slug = detail.slug;
+    const updated = await api.projectsApi.addMilestone(slug, text);
+    if (selectedRef.current === slug) setDetail(updated);
+    await loadList();
+  }
+
+  async function setMilestoneDone(position: number, done: boolean) {
+    if (!detail) return;
+    const slug = detail.slug;
+    const updated = await api.projectsApi.setMilestoneDone(slug, position, done);
+    if (selectedRef.current === slug) setDetail(updated);
+    await loadList();
+  }
+
+  async function addTime(hours: number, text: string, entryDate: string) {
+    if (!detail) return;
+    const slug = detail.slug;
+    const updated = await api.projectsApi.addTime(slug, {
+      date: entryDate || null,
+      hours,
+      text,
+    });
+    if (selectedRef.current === slug) setDetail(updated);
+    await loadList();
+  }
+
   return (
     <div className="view dash-view">
       <div className="view-h">Personal OS</div>
       <h1 className="view-title">Projects</h1>
       {err && <p className="dash-error">{err}</p>}
+      <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createProject(event), setErr)}>
+        <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Project name"/>
+        <select value={newType} onChange={(event) => setNewType(event.target.value as 'project' | 'area' | 'retainer')}>
+          <option value="project">project</option>
+          <option value="area">area</option>
+          <option value="retainer">retainer</option>
+        </select>
+        <select value={newTemplate} onChange={(event) => setNewTemplate(event.target.value)}>
+          <option value="">no template</option>
+          {templates.map((template) => (
+            <option key={template.name} value={template.name}>
+              {template.name} ({template.task_count})
+            </option>
+          ))}
+        </select>
+        {newType === 'retainer' && (
+          <input
+            value={newRecurringItems}
+            onChange={(event) => setNewRecurringItems(event.target.value)}
+            placeholder="Recurring items"
+          />
+        )}
+        <button type="submit">create</button>
+      </form>
       {projects.length === 0 ? (
         <EmptyLine>No projects yet.</EmptyLine>
       ) : (
@@ -399,7 +481,15 @@ export function ProjectsView({ liveKey }: LiveProps) {
                     {['active', 'paused', 'someday', 'done'].map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
+                {detail.type === 'retainer' && <span className="dash-pill">retainer</span>}
                 <KeyValueBlock values={detail.frontmatter}/>
+                <MilestonesBlock
+                  detail={detail}
+                  onAdd={(text) => runMutation(() => addMilestone(text), setErr)}
+                  onToggle={(position, done) => runMutation(() => setMilestoneDone(position, done), setErr)}
+                />
+                <TimeBlock detail={detail} onAdd={(hours, text, entryDate) => runMutation(() => addTime(hours, text, entryDate), setErr)}/>
+                {detail.retainer && <RetainerBlock detail={detail}/>}
                 <h3 className="dash-mini-h">Open tasks</h3>
                 {tasks.length === 0 ? <EmptyLine>No open tasks in this project.</EmptyLine> : (
                   <div className="dash-list compact">
@@ -1108,6 +1198,122 @@ function ProgressBars({ dates }: { dates: string[] }) {
     <div className="routine-bars" aria-label="30-day completion graph">
       {days.map((day) => <span key={day} className={set.has(day) ? 'on' : ''} title={day}/>)}
     </div>
+  );
+}
+
+function MilestonesBlock({
+  detail,
+  onAdd,
+  onToggle,
+}: {
+  detail: ProjectDetail;
+  onAdd: (text: string) => void;
+  onToggle: (position: number, done: boolean) => void;
+}) {
+  const [text, setText] = useState('');
+  const progress = detail.milestone_progress;
+  return (
+    <section className="dash-section nested">
+      <div className="dash-section-head">
+        <h3 className="dash-mini-h">Milestones</h3>
+        <span className="dash-muted">{progress.done}/{progress.total}</span>
+      </div>
+      <div className="project-progress" aria-label="milestone progress">
+        <span style={{ width: `${progress.percent}%` }}/>
+      </div>
+      {detail.milestones.length === 0 ? <EmptyLine>No milestones yet.</EmptyLine> : (
+        <div className="dash-list compact">
+          {detail.milestones.map((milestone) => (
+            <label key={milestone.position} className="project-check-row">
+              <input
+                type="checkbox"
+                checked={milestone.done}
+                onChange={(event) => onToggle(milestone.position, event.target.checked)}
+              />
+              <span>{milestone.text}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      <form className="dash-inline-form" onSubmit={(event) => {
+        event.preventDefault();
+        const clean = text.trim();
+        if (!clean) return;
+        onAdd(clean);
+        setText('');
+      }}>
+        <input value={text} onChange={(event) => setText(event.target.value)} placeholder="Add milestone"/>
+        <button type="submit">add</button>
+      </form>
+    </section>
+  );
+}
+
+function TimeBlock({
+  detail,
+  onAdd,
+}: {
+  detail: ProjectDetail;
+  onAdd: (hours: number, text: string, entryDate: string) => void;
+}) {
+  const [entryDate, setEntryDate] = useState(localIsoToday());
+  const [hours, setHours] = useState('');
+  const [text, setText] = useState('');
+  return (
+    <section className="dash-section nested">
+      <h3 className="dash-mini-h">Time</h3>
+      <div className="dash-tags">
+        <span>{detail.time_totals.total_hours}h total</span>
+        <span>{detail.time_totals.last_30_days_hours}h / 30d</span>
+      </div>
+      <form className="dash-inline-form" onSubmit={(event) => {
+        event.preventDefault();
+        const parsed = Number(hours);
+        const clean = text.trim();
+        if (!Number.isFinite(parsed) || parsed <= 0 || !clean) return;
+        onAdd(parsed, clean, entryDate);
+        setHours('');
+        setText('');
+      }}>
+        <input type="date" value={entryDate} onChange={(event) => setEntryDate(event.target.value)}/>
+        <input type="number" min="0.25" step="0.25" value={hours} onChange={(event) => setHours(event.target.value)} placeholder="Hours"/>
+        <input value={text} onChange={(event) => setText(event.target.value)} placeholder="Work done"/>
+        <button type="submit">add</button>
+      </form>
+      {detail.time_entries.length > 0 && (
+        <div className="dash-list compact">
+          {detail.time_entries.slice(0, 5).map((entry) => (
+            <div key={entry.position} className="dash-row">
+              <span>{entry.date} · {entry.hours}h</span>
+              <b>{entry.text}</b>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RetainerBlock({ detail }: { detail: ProjectDetail }) {
+  if (!detail.retainer) return null;
+  const state = detail.retainer;
+  return (
+    <section className="dash-section nested">
+      <div className="dash-section-head">
+        <h3 className="dash-mini-h">{state.current_month}</h3>
+        <span className="dash-muted">{state.open} open · due {state.month_end}</span>
+      </div>
+      {state.tasks.length === 0 ? <EmptyLine>No current-month retainer tasks.</EmptyLine> : (
+        <div className="dash-list compact">
+          {state.tasks.map((task) => (
+            <div key={task.uid} className="dash-row">
+              <span>{task.status}</span>
+              <b>{task.text}</b>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

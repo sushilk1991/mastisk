@@ -1,7 +1,7 @@
 import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
   BlogPostSummary, CaptureTriageItem, CaptureTriageTarget, Digest, DigestAudit, Domain, Feed,
-  FeedTick, AgentInfo, CalendarStatus, CalendarToday, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
+  FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
   PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, ReminderRow,
   RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
@@ -416,13 +416,40 @@ export const api = {
   projectsApi: {
     list: (): Promise<ProjectSummary[]> => j<ProjectSummary[]>(`${BASE}/projects`),
     get: (slug: string): Promise<ProjectDetail> => j<ProjectDetail>(`${BASE}/projects/${encodeURIComponent(slug)}`),
-    patch: (slug: string, body: { status?: string | null; domain?: string | null; due?: string | null }):
+    create: (body: { name: string; type?: string; domain?: string | null; due?: string | null; template?: string | null; recurring_items?: string[] }):
+      Promise<ProjectDetail> =>
+      j<ProjectDetail>(`${BASE}/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    patch: (slug: string, body: { status?: string | null; domain?: string | null; due?: string | null; recurring_items?: string[] | null }):
       Promise<ProjectSummary> =>
       j<ProjectSummary>(`${BASE}/projects/${encodeURIComponent(slug)}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       }),
+    addMilestone: (slug: string, text: string): Promise<ProjectDetail> =>
+      j<ProjectDetail>(`${BASE}/projects/${encodeURIComponent(slug)}/milestones`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }),
+    setMilestoneDone: (slug: string, position: number, done: boolean): Promise<ProjectDetail> =>
+      j<ProjectDetail>(`${BASE}/projects/${encodeURIComponent(slug)}/milestones/${position}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ done }),
+      }),
+    addTime: (slug: string, body: { date?: string | null; hours: number; text: string }): Promise<ProjectDetail> =>
+      j<ProjectDetail>(`${BASE}/projects/${encodeURIComponent(slug)}/time`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    checklistTemplates: (): Promise<ChecklistTemplate[]> =>
+      j<ChecklistTemplate[]>(`${BASE}/templates/checklists`),
   },
 
   domainsApi: {

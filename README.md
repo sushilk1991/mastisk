@@ -616,6 +616,67 @@ complication** for two-tap access: tap, confirm, speak.
 
 ---
 
+## Project file extras
+
+Projects live in `vault/projects/<slug>.md`; the markdown file is canonical and
+SQLite is only a mirror.
+
+Supported Phase 10 sections:
+
+```markdown
+## Tasks
+- [ ] Real task 📅 2026-06-30 🆔 abc123
+
+## Milestones
+- [ ] Contract signed
+- [x] First launch
+
+## Activity
+- 2026-06-12 1.5h fixed the deploy pipeline
+```
+
+Milestones use normal checkbox syntax, but they are not tasks. The task scanner
+intentionally skips `- [ ]` / `- [x]` lines under `## Milestones`, so those lines
+never receive task UIDs and never appear in the tasks mirror.
+
+Activity grammar is intentionally tiny: `- YYYY-MM-DD <decimal>h <text>`.
+Unparseable activity lines are ignored by the mirror and left untouched on disk.
+
+Checklist templates live at `vault/templates/checklists/<name>.md`. Applying a
+template during project creation copies only unchecked `- [ ]` lines into the new
+project's `## Tasks` section as real tasks with fresh `🆔` values. Mastisk does
+not auto-write templates into the vault; a starter template can be created by
+adding a file like:
+
+```markdown
+# Website launch
+
+- [ ] Confirm domain access
+- [ ] Configure hosting
+- [ ] Install analytics
+- [ ] Prepare launch checklist
+```
+
+Retainers use `type: retainer` and a frontmatter checklist:
+
+```yaml
+type: retainer
+status: active
+recurring_items:
+  - Monthly report
+  - Client call
+```
+
+The monthly rollover runs daily in the configured capture timezone. It acts on
+the first tick Mastisk sees for the current month, so a sleeping Mac catches up
+instead of skipping the month. Idempotency is recorded in file frontmatter as
+`rolled_months: [YYYY-MM]`. On rollover, recurring items are appended under that
+month's heading in `## Tasks` with fresh task UIDs and due dates at month end;
+open overdue tasks already in the retainer file are carried forward by re-dating
+them to the new month end. Done tasks are not changed.
+
+---
+
 ## CLI reference
 
 ```
