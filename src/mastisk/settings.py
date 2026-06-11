@@ -59,6 +59,11 @@ class CaptureSettings(BaseSettings):
     default_timezone: str = "America/Los_Angeles"
 
 
+class RemindersSettings(BaseSettings):
+    """Config for reminder defaults. Reminder rows arrive in Phase 4."""
+    default_lead_minutes: int = 15
+
+
 class RoundtableSettings(BaseSettings):
     """Config for the multi-LLM roundtable subsystem.
     See docs/superpowers/specs/2026-04-22-multi-llm-roundtable-design.md §7."""
@@ -214,6 +219,8 @@ class Settings(BaseSettings):
     notes: NotesSettings = Field(default_factory=NotesSettings)
 
     capture: CaptureSettings = Field(default_factory=CaptureSettings)
+
+    reminders: RemindersSettings = Field(default_factory=RemindersSettings)
 
     roundtable: RoundtableSettings = Field(default_factory=RoundtableSettings)
 
