@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -215,6 +216,70 @@ def test_routine_missed_nudges_dedup_and_respect_windows(db, vault_tmp, data_tmp
     ]
 
 
+def test_routine_missed_rescans_file_before_queueing(db, vault_tmp, data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")
+    from mastisk.agents.reminder_engine import routine_missed_tick
+    from mastisk.routines.sync import create_routine_file
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_routine_file(name="Vitamins", time_of_day="morning", notify=True)
+    path = vault_tmp / "routines" / "vitamins.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "## Completions\n",
+            "## Completions\n- 2026-06-11\n",
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        routine_missed_tick(
+            now=datetime(2026, 6, 11, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        )
+        == 0
+    )
+    count = db.execute(
+        "SELECT COUNT(*) AS n FROM reminders WHERE kind = 'routine_missed'"
+    ).fetchone()["n"]
+    assert count == 0
+
+
+def test_routine_missed_uses_window_close_fire_at_so_wake_is_late(
+    db, vault_tmp, data_tmp, monkeypatch
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "Asia/Kolkata"\n'
+        '[notify]\nbackend = "ntfy"\nntfy_topic = "test"\n',
+        encoding="utf-8",
+    )
+    from mastisk.agents.reminder_engine import reminder_tick
+    from mastisk.routines.sync import create_routine_file
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_routine_file(name="Vitamins", time_of_day="morning", notify=True)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "mastisk.agents.reminder_engine.notify.send",
+        lambda title, body, url=None: sent.append(body) or True,
+    )
+
+    reminder_tick(
+        now=datetime(2026, 6, 11, 23, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        ensure_daily_summary=False,
+    )
+
+    row = db.execute(
+        "SELECT status, fire_at FROM reminders WHERE kind = 'routine_missed'"
+    ).fetchone()
+    assert sent == ["Vitamins was not completed today."]
+    assert row["status"] == "late"
+    assert row["fire_at"] == "2026-06-11T06:30:00+00:00"
+
+
 def test_routine_missed_reminder_cancels_if_completed_before_fire(
     db, vault_tmp, data_tmp, monkeypatch
 ):
@@ -250,4 +315,46 @@ def test_routine_missed_reminder_cancels_if_completed_before_fire(
     assert dict(row) == {
         "status": "cancelled",
         "last_error": "routine completed",
+    }
+
+
+def test_stale_day_routine_missed_reminder_is_cancelled(
+    db, vault_tmp, data_tmp, monkeypatch
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "Asia/Kolkata"\n'
+        '[notify]\nbackend = "ntfy"\nntfy_topic = "test"\n',
+        encoding="utf-8",
+    )
+    from mastisk.agents.reminder_engine import reminder_tick
+    from mastisk.routines.sync import create_routine_file
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    create_routine_file(name="Vitamins", time_of_day="morning", notify=True)
+    reminder_id = db.execute(
+        """INSERT INTO reminders
+           (entity_type, entity_id, fire_at, kind, status, title, body)
+           VALUES ('routine', 'vitamins:2026-06-10', '2026-06-10T06:30:00+00:00',
+                   'routine_missed', 'pending', 'Routine missed',
+                   'Vitamins was not completed today.')"""
+    ).lastrowid
+    monkeypatch.setattr(
+        "mastisk.agents.reminder_engine.notify.send",
+        lambda *args, **kwargs: pytest.fail("stale routine missed reminder should not notify"),
+    )
+
+    reminder_tick(
+        now=datetime(2026, 6, 11, 9, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        ensure_daily_summary=False,
+    )
+
+    row = db.execute(
+        "SELECT status, last_error FROM reminders WHERE id = ?",
+        (reminder_id,),
+    ).fetchone()
+    assert dict(row) == {
+        "status": "cancelled",
+        "last_error": "routine_missed stale day",
     }

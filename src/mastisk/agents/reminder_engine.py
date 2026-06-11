@@ -254,7 +254,8 @@ def routine_missed_tick(*, now: datetime | None = None) -> int:
     17:00, evening at 22:00, a specific_time closes 60 minutes after that time,
     and anytime routines without a specific_time do not nudge.
     """
-    from mastisk.routines.sync import completion_dates, list_routines
+    from mastisk.paths import vault_dir
+    from mastisk.routines.sync import completion_dates, get_routine, list_routines, scan_routines
 
     now_dt = _coerce_datetime(now)
     settings = get_settings()
@@ -263,6 +264,11 @@ def routine_missed_tick(*, now: datetime | None = None) -> int:
     today = local_now.date().isoformat()
     inserted = 0
     for routine in list_routines(include_archived=False):
+        scan_routines([vault_dir() / routine["path"]])
+        refreshed = get_routine(routine["slug"])
+        if refreshed is None:
+            continue
+        routine = refreshed
         if not routine.get("notify"):
             continue
         if today in set(completion_dates(routine["slug"])):
@@ -278,7 +284,7 @@ def routine_missed_tick(*, now: datetime | None = None) -> int:
                    VALUES ('routine', ?, ?, 'routine_missed', 'pending', ?, ?)""",
                 (
                     entity_id,
-                    _utc_iso(now_dt),
+                    _utc_iso(window_end),
                     "Routine missed",
                     f"{routine['name']} was not completed today.",
                 ),
@@ -337,7 +343,7 @@ def _fire_claimed(row: dict, now_dt: datetime) -> bool:
     refreshed = _refresh_claimed_task_due_reminder(row, now_dt)
     if refreshed is None:
         return False
-    refreshed = _refresh_claimed_routine_missed_reminder(refreshed)
+    refreshed = _refresh_claimed_routine_missed_reminder(refreshed, now_dt)
     if refreshed is None:
         return False
     row = refreshed
@@ -486,13 +492,17 @@ def _refresh_claimed_task_due_reminder(row: dict, now_dt: datetime) -> dict | No
     return refreshed
 
 
-def _refresh_claimed_routine_missed_reminder(row: dict) -> dict | None:
+def _refresh_claimed_routine_missed_reminder(row: dict, now_dt: datetime) -> dict | None:
     if row.get("kind") != "routine_missed" or row.get("entity_type") != "routine":
         return row
     entity_id = str(row.get("entity_id") or "")
     slug, sep, day = entity_id.partition(":")
     if not sep or not slug or not day:
         _cancel_claimed(row, "routine_missed entity invalid")
+        return None
+    tz = ZoneInfo(get_settings().capture.default_timezone)
+    if day != now_dt.astimezone(tz).date().isoformat():
+        _cancel_claimed(row, "routine_missed stale day")
         return None
     from mastisk.routines.sync import completion_dates, get_routine
 
