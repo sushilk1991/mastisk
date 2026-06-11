@@ -11,6 +11,7 @@ import re
 import secrets
 import string
 from collections.abc import Callable
+from datetime import date
 from datetime import datetime
 from typing import Any
 
@@ -130,7 +131,7 @@ def rewrite_task_line(
     if due is not _UNSET and due:
         additions.extend(_due_marker_parts(str(due)))
     if scheduled is not _UNSET and scheduled:
-        additions.append(f"⏳ {scheduled}")
+        additions.append(f"⏳ {_date_and_clock(str(scheduled))[0]}")
     if recurrence is not _UNSET and recurrence:
         additions.append(f"🔁 {recurrence}")
     if priority is not _UNSET and priority:
@@ -188,7 +189,7 @@ def format_task_line(
     if due:
         parts.extend(_due_marker_parts(due))
     if scheduled:
-        parts.append(f"⏳ {scheduled}")
+        parts.append(f"⏳ {_date_and_clock(scheduled)[0]}")
     if recurrence:
         parts.append(f"🔁 {recurrence}")
     if priority and priority in _PRIORITY_TO_ICON:
@@ -204,6 +205,21 @@ def format_task_line(
     if uid:
         parts.append(f"🆔 {uid}")
     return " ".join(parts)
+
+
+def normalize_date_or_datetime(value: str) -> str:
+    raw = value.strip()
+    if not raw:
+        raise ValueError("date value must be non-blank")
+    if "T" not in raw:
+        try:
+            return date.fromisoformat(raw[:10]).isoformat()
+        except ValueError as exc:
+            raise ValueError("date value must be ISO date or datetime") from exc
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).isoformat()
+    except ValueError as exc:
+        raise ValueError("date value must be ISO date or datetime") from exc
 
 
 def generate_uid(length: int = 8) -> str:
@@ -258,7 +274,7 @@ def _due_marker_parts(value: str) -> list[str]:
 def _date_and_clock(value: str) -> tuple[str, str | None]:
     raw = value.strip()
     if "T" not in raw:
-        return raw[:10], None
+        return normalize_date_or_datetime(raw), None
     try:
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:

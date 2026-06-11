@@ -23,6 +23,10 @@ from mastisk.tasks.parser import (
 )
 
 
+class TaskLineMissingError(RuntimeError):
+    """Raised when the mirror row exists but its host line no longer does."""
+
+
 def scan_tasks() -> dict[str, int]:
     return scan_task_hosts(None)
 
@@ -173,9 +177,13 @@ def rewrite_task(uid: str, **updates: Any) -> dict[str, Any] | None:
     if task is None:
         return None
     path = vault_dir() / task["host_path"]
-    with host_file_lock(path):
-        markdown = path.read_text(encoding="utf-8")
-        atomic_write(path, rewrite_task_by_uid(markdown, uid, **updates))
+    try:
+        with host_file_lock(path):
+            markdown = path.read_text(encoding="utf-8")
+            atomic_write(path, rewrite_task_by_uid(markdown, uid, **updates))
+    except (FileNotFoundError, KeyError) as exc:
+        scan_task_hosts([path])
+        raise TaskLineMissingError(f"task line not found: {uid}") from exc
     scan_task_hosts([path])
     return get_task(uid)
 

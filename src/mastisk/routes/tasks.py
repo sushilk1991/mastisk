@@ -10,12 +10,14 @@ from pydantic import BaseModel, Field, field_validator
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import get_project
 from mastisk.tasks.sync import (
+    TaskLineMissingError,
     append_task_to_host,
     get_task,
     journal_host_for_today,
     list_tasks,
     rewrite_task,
 )
+from mastisk.tasks.parser import normalize_date_or_datetime
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -38,12 +40,26 @@ class TaskCreate(BaseModel):
             raise ValueError("text must be non-blank")
         return value.strip()
 
+    @field_validator("due", "scheduled")
+    @classmethod
+    def _valid_date_value(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_date_or_datetime(value)
+
 
 class TaskPatch(BaseModel):
     due: str | None = None
     scheduled: str | None = None
     recurrence: str | None = None
     priority: Literal["high", "medium", "low"] | None = None
+
+    @field_validator("due", "scheduled")
+    @classmethod
+    def _valid_date_value(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_date_or_datetime(value)
 
 
 @router.get("")
@@ -81,7 +97,10 @@ async def toggle_task_endpoint(uid: str) -> dict:
     task = get_task(uid)
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
-    updated = rewrite_task(uid, checked=not task["checked"])
+    try:
+        updated = rewrite_task(uid, checked=not task["checked"])
+    except TaskLineMissingError as exc:
+        raise HTTPException(status_code=404, detail="task line not found; mirror refreshed") from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="task not found")
     return updated
@@ -96,7 +115,10 @@ async def patch_task_endpoint(uid: str, req: TaskPatch) -> dict:
         for key, value in req.model_dump().items()
         if key in req.model_fields_set
     }
-    updated = rewrite_task(uid, **updates)
+    try:
+        updated = rewrite_task(uid, **updates)
+    except TaskLineMissingError as exc:
+        raise HTTPException(status_code=404, detail="task line not found; mirror refreshed") from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="task not found")
     return updated

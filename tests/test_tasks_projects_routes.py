@@ -115,6 +115,49 @@ def test_task_routes_create_filter_toggle_and_patch_file_first(client, vault_tmp
     assert "🔽" in host_text
 
 
+def test_task_routes_validate_due_and_emit_time_marker(client, vault_tmp):
+    invalid = client.post("/api/tasks", json={"text": "Bad date", "due": "someday"})
+    assert invalid.status_code == 422
+
+    invalid_scheduled = client.post(
+        "/api/tasks",
+        json={"text": "Bad scheduled", "scheduled": "later-ish"},
+    )
+    assert invalid_scheduled.status_code == 422
+
+    created = client.post(
+        "/api/tasks",
+        json={"text": "Timed task", "due": "2026-06-10T14:00:00-07:00"},
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["due"] == "2026-06-10T14:00:00"
+    host_text = (vault_tmp / body["host_path"]).read_text(encoding="utf-8")
+    assert "📅 2026-06-10 ⏰ 14:00" in host_text
+
+
+def test_task_toggle_missing_file_line_returns_404_and_refreshes_mirror(client, vault_tmp, db):
+    created = client.post("/api/tasks", json={"text": "Delete me"})
+    assert created.status_code == 201, created.text
+    task = created.json()
+    path = vault_tmp / task["host_path"]
+    file_text = path.read_text(encoding="utf-8")
+    path.write_text(
+        "\n".join(line for line in file_text.splitlines() if task["uid"] not in line) + "\n",
+        encoding="utf-8",
+    )
+
+    toggled = client.patch(f"/api/tasks/{task['uid']}/toggle")
+
+    assert toggled.status_code == 404
+    assert "task line not found" in toggled.json()["detail"]
+    row = db.execute(
+        "SELECT deleted_at FROM tasks WHERE uid = ?",
+        (task["uid"],),
+    ).fetchone()
+    assert row["deleted_at"] is not None
+
+
 def test_full_task_scan_includes_existing_non_default_hosts(client, vault_tmp, db):
     created = client.post(
         "/api/tasks",
