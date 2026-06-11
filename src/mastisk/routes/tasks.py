@@ -104,8 +104,6 @@ async def toggle_task_endpoint(uid: str) -> dict:
         raise HTTPException(status_code=404, detail="task line not found; mirror refreshed") from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="task not found")
-    if "due" in req.model_fields_set:
-        reconcile_task_due_reminders(uid)
     return updated
 
 
@@ -124,6 +122,8 @@ async def patch_task_endpoint(uid: str, req: TaskPatch) -> dict:
         raise HTTPException(status_code=404, detail="task line not found; mirror refreshed") from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="task not found")
+    if "due" in req.model_fields_set:
+        reconcile_task_due_reminders(uid)
     return updated
 
 
