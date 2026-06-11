@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from mastisk.agents.reminder_engine import create_task_due_reminder
 from mastisk.capture.router import Capture, route_capture
+from mastisk.journal import append_log
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import append_project_log, find_project
 from mastisk.routes.notes import persist_note_capture
@@ -77,6 +78,13 @@ async def capture(
             return _persist_task_capture(routed, ts=req.ts, needs_triage=needs_triage)
         except Exception:
             log.exception("capture task write failed; falling back to raw inbox note")
+            return _persist_inbox_fallback(req.text, req.source)
+
+    if routed.type == "journal":
+        try:
+            return _persist_journal_capture(routed, ts=req.ts, needs_triage=needs_triage)
+        except Exception:
+            log.exception("capture journal write failed; falling back to raw inbox note")
             return _persist_inbox_fallback(req.text, req.source)
 
     if routed.type == "routine_done" and routed.routine:
@@ -152,6 +160,22 @@ def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: boo
         "id": row["uid"],
         "type": "task",
         "destination": row["host_path"],
+        "needs_triage": needs_triage,
+    }
+
+
+def _persist_journal_capture(capture: Capture, *, ts: str | None, needs_triage: bool) -> dict:
+    at = _parse_client_datetime(ts) or datetime.now().astimezone()
+    body = (
+        f"{capture.body.rstrip()} #needs-triage"
+        if needs_triage and "#needs-triage" not in capture.body
+        else capture.body
+    )
+    result = append_log(at.date().isoformat(), body, at)
+    return {
+        "id": result["date"],
+        "type": "journal",
+        "destination": result["path"],
         "needs_triage": needs_triage,
     }
 

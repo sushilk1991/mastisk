@@ -332,16 +332,49 @@ def test_capture_medium_confidence_marks_needs_triage(
 
     r = client_with_token.post(
         "/api/capture",
-        json={"text": "felt scattered today", "source": "watch"},
+        json={
+            "text": "felt scattered today",
+            "source": "watch",
+            "ts": "2026-06-11T09:00:00-07:00",
+        },
         headers={"Authorization": "Bearer test-token"},
     )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["type"] == "journal"
     assert body["needs_triage"] is True
+    assert body["destination"] == "journal/2026-06-11.md"
     file_text = (vault_tmp / body["destination"]).read_text()
-    assert "needs_triage: true" in file_text
-    assert "confidence: 0.72" in file_text
+    assert "- 09:00 felt scattered #needs-triage" in file_text
+
+
+def test_capture_journal_appends_clean_body_to_today_log(
+    client_with_token, vault_tmp, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="journal",
+        confidence=0.94,
+        body="Felt steady after lunch",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={
+            "text": "um journal that I felt steady after lunch",
+            "source": "watch",
+            "ts": "2026-06-11T13:05:00-07:00",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "journal"
+    assert body["needs_triage"] is False
+    assert body["destination"] == "journal/2026-06-11.md"
+    file_text = (vault_tmp / body["destination"]).read_text(encoding="utf-8")
+    assert "- 13:05 Felt steady after lunch" in file_text
 
 
 def test_capture_task_routes_to_existing_project_host(

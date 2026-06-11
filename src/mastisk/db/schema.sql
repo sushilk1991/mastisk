@@ -468,6 +468,25 @@ CREATE INDEX IF NOT EXISTS idx_routines_time ON routines(time_of_day);
 CREATE INDEX IF NOT EXISTS idx_routines_archived ON routines(archived);
 CREATE INDEX IF NOT EXISTS idx_routine_completions_date ON routine_completions(routine_id, date);
 
+-- ─────────────────────────────── Personal OS Phase 6 ───────────────────────────────
+-- Journal day files are markdown-canonical. This table mirrors journal/*.md for
+-- timeline and dashboard queries.
+
+CREATE TABLE IF NOT EXISTS journal_days (
+  date             TEXT PRIMARY KEY,
+  path             TEXT UNIQUE NOT NULL,
+  mood             INTEGER,
+  energy           INTEGER,
+  log_count        INTEGER NOT NULL DEFAULT 0,
+  has_reflections  INTEGER NOT NULL DEFAULT 0,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at       DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_journal_days_updated ON journal_days(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_days_active ON journal_days(date) WHERE deleted_at IS NULL;
+
 -- ─────────────────────────────── Roundtables ───────────────────────────────
 -- A roundtable is one fan-out of a prompt to multiple LLMs + one synthesis.
 -- Fully DB-stored (no filesystem artifact), because perspectives are transient

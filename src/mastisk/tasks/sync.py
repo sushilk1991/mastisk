@@ -9,6 +9,8 @@ from typing import Any
 
 from mastisk.db.queries import connect
 from mastisk.file_locks import host_file_lock
+from mastisk.journal import ensure_day
+from mastisk.journal import skeleton as journal_skeleton
 from mastisk.markdown_sections import append_to_section
 from mastisk.paths import journal_dir, projects_dir, vault_dir
 from mastisk.projects.sync import get_project, parse_project_file
@@ -154,10 +156,15 @@ def append_task_to_host(
     parsed_line = parse_task_line(line)
     if parsed_line is None or parsed_line.get("uid") != task_uid:
         raise RuntimeError("formatted task line did not round-trip generated uid")
+    if _is_journal_day_path(path):
+        ensure_day(path.stem)
     with host_file_lock(path):
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            atomic_write(path, "## Tasks\n\n## Log\n")
+            atomic_write(
+                path,
+                journal_skeleton() if _is_journal_day_path(path) else "## Tasks\n\n## Log\n",
+            )
         markdown = path.read_text(encoding="utf-8")
         atomic_write(path, append_to_section(markdown, "Tasks", line))
     scan_task_hosts([path])
@@ -241,11 +248,7 @@ def journal_host_for_today(ts: str | None = None) -> Path:
             day = date.today()
     else:
         day = date.today()
-    path = journal_dir() / f"{day.isoformat()}.md"
-    with host_file_lock(path):
-        if not path.exists():
-            atomic_write(path, "## Tasks\n\n## Log\n")
-    return path
+    return ensure_day(day)
 
 
 def _task_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -316,6 +319,20 @@ def _mirror_task_hosts() -> list[Path]:
 
 def _absolute_host_path(path: Path) -> Path:
     return path if path.is_absolute() else vault_dir() / path
+
+
+def _is_journal_day_path(path: Path) -> bool:
+    try:
+        rel = path.relative_to(journal_dir())
+    except ValueError:
+        return False
+    if rel.parent != Path(".") or rel.suffix != ".md":
+        return False
+    try:
+        date.fromisoformat(rel.stem)
+    except ValueError:
+        return False
+    return True
 
 
 def _project_domain_for_host(path: Path, rel_path: str) -> tuple[str | None, str | None]:
