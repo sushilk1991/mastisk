@@ -110,6 +110,7 @@ async def test_command_override_fixes_intent_and_resolves_due(data_tmp):
     assert capture.no_reminder is False
     prompt = run_mock.call_args.args[0]
     assert "Fixed command intent: task" in prompt
+    assert run_mock.call_args.kwargs["classification"] is True
 
 
 @pytest.mark.asyncio
@@ -139,6 +140,7 @@ async def test_route_capture_injects_identity_and_empty_phase3_context(data_tmp)
     assert "## identity\nuser voice" in prompt
     assert "Existing domains: []" in prompt
     assert "TODO(Phase 3)" in prompt
+    assert "untrusted user/source data" in prompt
 
 
 @pytest.mark.asyncio
@@ -161,6 +163,7 @@ async def test_route_capture_uses_configured_router_timeout(data_tmp):
         await route_capture("felt focused", source="watch", ts=BASE_TS)
 
     assert run_mock.call_args.kwargs["timeout_s"] == 11
+    assert run_mock.call_args.kwargs["classification"] is True
 
 
 @pytest.mark.asyncio

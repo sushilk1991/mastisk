@@ -164,6 +164,7 @@ def test_notetaker_classifies_a_note(notetaker, db, vault_tmp, fake_ollama):
     ).fetchall()
     assert len(feed) == 1
     assert feed[0]["obj"] == "143522-test-thought"
+    assert fake_ollama.call_args.kwargs["classification"] is True
 
 
 def test_notetaker_links_existing_related_articles(notetaker, db, vault_tmp):
@@ -337,8 +338,9 @@ def test_write_daily_digest_empty(db, vault_tmp):
 
 def test_write_daily_digest_renders_classified_notes(db, vault_tmp):
     """Seed two classified notes on the same date; digest lists both in time order."""
-    from datetime import datetime
     import json as _json
+    from datetime import datetime
+
     from mastisk.agents.notetaker import write_daily_digest
 
     # Two notes on 2026-04-21
@@ -383,6 +385,7 @@ def test_write_daily_digest_renders_classified_notes(db, vault_tmp):
 def test_daily_digest_excludes_deleted_notes(db, vault_tmp):
     """Deleted notes don't show in the digest."""
     from datetime import datetime
+
     from mastisk.agents.notetaker import write_daily_digest
     ts = datetime(2026, 4, 21, 10, 0).astimezone().isoformat()
     db.execute(

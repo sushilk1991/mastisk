@@ -54,6 +54,7 @@ async def run_claude(
     source_md: str | None = None,
     schema_md: str | None = None,
     timeout_s: int = 300,
+    classification: bool = False,
 ) -> dict:
     """Run Claude headlessly, return parsed JSON from stdout."""
     s = get_settings()
@@ -70,12 +71,15 @@ async def run_claude(
             (workdir / "SCHEMA.md").write_text(schema_md)
         (workdir / "PROMPT.md").write_text(prompt)
 
+        permission_mode = "plan" if classification else "acceptEdits"
         cmd = [
             claude_cmd, "-p", prompt,
             "--output-format", "json",
-            "--permission-mode", "acceptEdits",
+            "--permission-mode", permission_mode,
             "--add-dir", str(workdir),
         ]
+        if classification:
+            cmd += ["--tools", ""]
         log.info("claude %s (workdir=%s)", prompt[:80].replace("\n", " "), workdir)
         # stdin=DEVNULL: when the daemon runs under launchd it inherits a
         # piped stdin, which ``claude -p`` will then try to consume — same
@@ -90,9 +94,9 @@ async def run_claude(
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError as e:
             proc.kill()
-            raise ClaudeError(f"claude timed out after {timeout_s}s")
+            raise ClaudeError(f"claude timed out after {timeout_s}s") from e
 
         if proc.returncode != 0:
             raise ClaudeError(

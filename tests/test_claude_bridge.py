@@ -10,6 +10,10 @@ Claude responses don't have a fence" bugs.
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from mastisk.bridges.claude_bridge import extract_json_block
 
 
@@ -60,3 +64,34 @@ def test_naked_braces_handles_nested_objects():
     """Outermost {...} span captures nested objects correctly."""
     text = 'Result: {"outer": {"inner": [1, 2]}}'
     assert extract_json_block(text) == {"outer": {"inner": [1, 2]}}
+
+
+@pytest.mark.asyncio
+async def test_run_claude_classification_uses_no_tools_plan_mode(data_tmp):
+    from mastisk.bridges.claude_bridge import run_claude
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b'{"result": "{\\"ok\\": true}"}', b"")
+    captured_args: list[str] = []
+
+    async def fake_exec(*args, **kwargs):
+        captured_args.extend(args)
+        return mock_proc
+
+    with (
+        patch("mastisk.bridges.claude_bridge._resolve_cmd", return_value="/usr/bin/claude"),
+        patch(
+            "mastisk.bridges.claude_bridge.asyncio.create_subprocess_exec",
+            side_effect=fake_exec,
+        ),
+    ):
+        result = await run_claude("classify this", classification=True)
+
+    assert result["text"] == '{"ok": true}'
+    mode_idx = captured_args.index("--permission-mode")
+    assert captured_args[mode_idx + 1] == "plan"
+    tools_idx = captured_args.index("--tools")
+    assert captured_args[tools_idx + 1] == ""

@@ -109,9 +109,10 @@ def test_all_three_fail_raises_with_full_chain_context():
         codex=RuntimeError("codex down"),
         ollama_chat=RuntimeError("ollama dead"),
     )
-    with p_claude, p_codex, p_ollama:
-        with pytest.raises(intelligence.IntelligenceUnavailable) as exc_info:
-            asyncio.run(intelligence.run_intelligence("hello"))
+    with p_claude, p_codex, p_ollama, pytest.raises(
+        intelligence.IntelligenceUnavailable
+    ) as exc_info:
+        asyncio.run(intelligence.run_intelligence("hello"))
     msg = str(exc_info.value)
     assert "claude=claude down" in msg
     assert "codex=codex down" in msg
@@ -138,3 +139,18 @@ def test_timeout_kwarg_is_forwarded_to_each_tier():
     # Codex got float(timeout_s) under the kw name 'timeout'.
     assert m_x.call_args.kwargs.get("timeout") == pytest.approx(42.0)
     assert isinstance(m_x.call_args.kwargs.get("timeout"), float)
+
+
+def test_classification_mode_is_forwarded_to_claude_only():
+    """Classification mode constrains Claude; fallback tiers keep their existing API."""
+    from mastisk.bridges import intelligence
+
+    p_claude, p_codex, p_ollama = _patch_chain(
+        claude=RuntimeError("nope"),
+        codex={"text": "ok", "raw": "ok"},
+    )
+    with p_claude as m_c, p_codex as m_x, p_ollama:
+        asyncio.run(intelligence.run_intelligence("hi", classification=True))
+
+    assert m_c.call_args.kwargs["classification"] is True
+    assert "classification" not in m_x.call_args.kwargs

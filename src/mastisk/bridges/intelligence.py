@@ -37,12 +37,17 @@ async def run_intelligence(
     prompt: str,
     *,
     timeout_s: int = 180,
+    classification: bool = False,
 ) -> tuple[dict, ProviderLabel]:
     claude_err: Exception | None = None
     codex_err: Exception | None = None
 
     try:
-        result = await claude_bridge.run_claude(prompt, timeout_s=timeout_s)
+        result = await claude_bridge.run_claude(
+            prompt,
+            timeout_s=timeout_s,
+            classification=classification,
+        )
         return result, "claude"
     except (KeyboardInterrupt, asyncio.CancelledError):
         # Signal-style — must propagate, never fall through.

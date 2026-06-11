@@ -293,7 +293,11 @@ class Notetaker(Agent):
             body=body_core,
         )
 
-        result, _ = await intelligence.run_intelligence(prompt, timeout_s=180)
+        result, _ = await intelligence.run_intelligence(
+            prompt,
+            timeout_s=180,
+            classification=True,
+        )
         raw_text = result.get("text", "") if isinstance(result, dict) else str(result)
         parsed = _extract_json(raw_text)
 
