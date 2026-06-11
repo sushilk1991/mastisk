@@ -73,6 +73,16 @@ def test_due_time_marker_round_trips_as_datetime():
     assert rewritten == line
 
 
+def test_due_time_marker_does_not_become_recurrence_text():
+    from mastisk.tasks.parser import parse_markdown_tasks
+
+    parsed = parse_markdown_tasks(
+        "- [ ] call Sam 🔁 every monday ⏰ 14:00 🆔 timed1\n"
+    )[0]
+
+    assert parsed["recurrence"] == "every monday"
+
+
 def test_toggle_rewrites_only_the_matching_task_line():
     from mastisk.tasks.parser import rewrite_task_by_uid
 

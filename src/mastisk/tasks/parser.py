@@ -22,7 +22,7 @@ _DUE_RE = re.compile(r"\s*📅\s*(?P<value>\d{4}-\d{2}-\d{2})")
 _TIME_RE = re.compile(r"\s*⏰\s*(?P<value>\d{2}:\d{2})")
 _SCHEDULED_RE = re.compile(r"\s*⏳\s*(?P<value>\d{4}-\d{2}-\d{2})")
 _RECURRENCE_RE = re.compile(
-    r"\s*🔁\s*(?P<value>.*?)(?=\s+(?:📅|⏳|⏫|🔼|🔽|🆔|#[^\s#]+|\[\[)|\s*$)"
+    r"\s*🔁\s*(?P<value>.*?)(?=\s+(?:📅|⏰|⏳|⏫|🔼|🔽|🆔|#[^\s#]+|\[\[)|\s*$)"
 )
 _UID_RE = re.compile(r"\s*🆔\s*(?P<value>[A-Za-z0-9_-]+)")
 _TAG_RE = re.compile(r"(?<!\S)#(?P<value>[A-Za-z0-9_/-]+)")
