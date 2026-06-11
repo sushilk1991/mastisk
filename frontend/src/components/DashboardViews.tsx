@@ -45,20 +45,31 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const [journal, setJournal] = useState<JournalDay | null>(null);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [calendar, setCalendar] = useState<CalendarToday | null>(null);
+  const [calendarErr, setCalendarErr] = useState<string | null>(null);
   const [entry, setEntry] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
+  async function loadCalendarToday() {
+    setCalendarErr(null);
+    try {
+      setCalendar(await api.calendar.today(today));
+    } catch (e) {
+      setCalendar(null);
+      setCalendarErr(errorMessage(e));
+    }
+  }
+
   async function load() {
     setErr(null);
+    const calendarLoad = loadCalendarToday();
     try {
-      const [taskRows, routineRows, reminderRows, focusRows, slippingRows, resurfaceItem, calendarToday] = await Promise.all([
+      const [taskRows, routineRows, reminderRows, focusRows, slippingRows, resurfaceItem] = await Promise.all([
         api.tasks.list({ status: 'open' }),
         api.routinesApi.list(false),
         api.remindersApi.list(),
         api.focus.list(today),
         api.slipping.list(),
         api.resurface.get(today),
-        api.calendar.today(today),
       ]);
       setTasks(taskRows);
       setRoutines(routineRows);
@@ -66,7 +77,6 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
       setFocus(focusRows);
       setSlipping(slippingRows);
       setResurface(resurfaceItem);
-      setCalendar(calendarToday);
       try {
         setJournal(await api.journalApi.get(today));
       } catch {
@@ -75,6 +85,7 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
     }
+    await calendarLoad;
   }
 
   useEffect(() => { void load(); }, [today, liveKey]);
@@ -116,7 +127,7 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
 
       <div className="dash-grid dash-grid-2">
         <FocusPanel focus={focus} today={today} onChanged={load}/>
-        <CalendarPanel calendar={calendar}/>
+        <CalendarPanel calendar={calendar} calendarErr={calendarErr}/>
       </div>
 
       {resurface && <ResurfaceCard item={resurface}/>}
@@ -795,7 +806,7 @@ function ResurfaceCard({ item }: { item: ResurfaceItem }) {
   );
 }
 
-function CalendarPanel({ calendar }: { calendar: CalendarToday | null }) {
+function CalendarPanel({ calendar, calendarErr }: { calendar: CalendarToday | null; calendarErr: string | null }) {
   const status = calendar?.status.status ?? 'loading';
   const events = calendar?.events ?? [];
   return (
@@ -804,7 +815,9 @@ function CalendarPanel({ calendar }: { calendar: CalendarToday | null }) {
         <h2>Calendar</h2>
         <span className={`dash-muted ${status === 'disconnected' ? 'warn' : ''}`}>{status}</span>
       </div>
-      {!calendar ? (
+      {calendarErr ? (
+        <p className="dash-error">{calendarErr}</p>
+      ) : !calendar ? (
         <EmptyLine>Loading calendar.</EmptyLine>
       ) : status === 'unconfigured' ? (
         <EmptyLine>Connect Google Calendar with <code>mastisk calendar-connect</code>.</EmptyLine>
