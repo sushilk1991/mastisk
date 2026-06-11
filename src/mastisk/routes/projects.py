@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from mastisk.paths import vault_dir
 from mastisk.projects.sync import (
     create_project_file,
     get_project,
@@ -13,7 +14,6 @@ from mastisk.projects.sync import (
     parse_project_file,
     patch_project_frontmatter,
 )
-from mastisk.paths import vault_dir
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 

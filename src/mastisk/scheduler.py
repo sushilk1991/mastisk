@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -30,7 +30,7 @@ async def start_scheduler():
     # APScheduler's "interval" trigger fires *after* one interval; passing
     # next_run_time forces the first tick a few seconds after startup so
     # queued jobs drain immediately instead of waiting tick_seconds.
-    soon = datetime.now(timezone.utc) + timedelta(seconds=2)
+    soon = datetime.now(UTC) + timedelta(seconds=2)
 
     try:
         from mastisk.agents.scout import Scout
@@ -61,7 +61,7 @@ async def start_scheduler():
             Notetaker().run_once, "interval",
             seconds=Notetaker.tick_seconds, id="notetaker",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=5),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=5),
             coalesce=True,
         )
     except Exception as e:
@@ -75,7 +75,7 @@ async def start_scheduler():
             Escalator().run_once, "interval",
             seconds=Escalator.tick_seconds, id="escalator",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=10),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=10),
             coalesce=True,
         )
     except Exception as e:
@@ -90,7 +90,7 @@ async def start_scheduler():
             vault_integrity_scan, "interval",
             minutes=5, id="vault_integrity",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=30),
             coalesce=True,
         )
         log.info("scheduler: vault_integrity registered (5min tick)")
@@ -115,7 +115,7 @@ async def start_scheduler():
             personal_os_scan, "interval",
             minutes=5, id="personal_os_scan",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=30),
             coalesce=True,
         )
         log.info("scheduler: personal_os_scan registered (5min tick)")
@@ -148,7 +148,7 @@ async def start_scheduler():
             reminder_tick, "interval",
             seconds=settings.reminders.tick_seconds, id="reminder_tick",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=15),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=15),
             coalesce=True,
         )
         log.info("scheduler: reminder_tick registered (%ss tick)", settings.reminders.tick_seconds)
@@ -181,7 +181,7 @@ async def start_scheduler():
             Linter().run_once, "interval",
             seconds=Linter.tick_seconds, id="linter",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=30),
             coalesce=True,
         )
     except Exception as e:
@@ -196,7 +196,7 @@ async def start_scheduler():
             ArtifactAgent().run_once, "interval",
             seconds=ArtifactAgent.tick_seconds, id="artifact-agent",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=30),
             coalesce=True,
         )
     except Exception as e:
@@ -211,7 +211,7 @@ async def start_scheduler():
             Listener().run_once, "interval",
             seconds=Listener.tick_seconds, id="listener",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=30),
             coalesce=True,
         )
     except Exception as e:
@@ -228,7 +228,7 @@ async def start_scheduler():
             Synthesizer().run_once, "interval",
             seconds=Synthesizer.tick_seconds, id="synthesizer",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=60),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=60),
             coalesce=True,
         )
     except Exception as e:
@@ -244,7 +244,7 @@ async def start_scheduler():
             Roundtable().run_once, "interval",
             seconds=Roundtable.tick_seconds, id="roundtable",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=5),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=5),
             coalesce=True,
         )
         log.info("scheduler: roundtable registered (10s tick)")
@@ -256,7 +256,7 @@ async def start_scheduler():
         sched.add_job(
             GithubPoller().run_once, "interval",
             seconds=600, id="github_poller",  # 10-min tick, filters by per-repo cadence
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=30),
             max_instances=1, coalesce=True,
         )
         log.info("scheduler: github_poller registered (10min tick)")
@@ -268,7 +268,7 @@ async def start_scheduler():
         sched.add_job(
             GithubIdeator().run_once, "interval",
             seconds=600, id="github_ideator",
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=90),
             max_instances=1, coalesce=True,
         )
         log.info("scheduler: github_ideator registered (10min tick, 24h per-repo cadence)")
@@ -285,7 +285,7 @@ async def start_scheduler():
             BlogWriter().run_once, "interval",
             seconds=BlogWriter.tick_seconds, id="blog_writer",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=5),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=5),
             coalesce=True,
         )
         log.info("scheduler: blog_writer registered (10s tick)")
@@ -298,7 +298,7 @@ async def start_scheduler():
             TweetWriter().run_once, "interval",
             seconds=TweetWriter.tick_seconds, id="tweet_writer",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=5),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=5),
             coalesce=True,
         )
         log.info("scheduler: tweet_writer registered (10s tick)")
@@ -315,7 +315,7 @@ async def start_scheduler():
             TopicSuggester().run_once, "interval",
             seconds=TopicSuggester.tick_seconds, id="topic_suggester",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90),
+            next_run_time=datetime.now(UTC) + timedelta(seconds=90),
             coalesce=True,
         )
         log.info("scheduler: topic_suggester registered (10min tick)")
@@ -333,7 +333,7 @@ async def start_scheduler():
             OpinionGapMiner().run_once, "interval",
             seconds=OpinionGapMiner.tick_seconds, id="opinion_gap_miner",
             max_instances=1,
-            next_run_time=datetime.now(timezone.utc) + timedelta(minutes=5),
+            next_run_time=datetime.now(UTC) + timedelta(minutes=5),
             coalesce=True,
         )
         log.info("scheduler: opinion_gap_miner registered (1h tick, 7d cadence)")
