@@ -65,7 +65,7 @@ export interface Note {
   id: number;
   slug: string;
   path: string;
-  source: 'pwa' | 'cli' | 'file';
+  source: 'pwa' | 'cli' | 'file' | 'watch' | 'phone';
   created_at: string;
   classified_at: string | null;
   classification: string | null;
@@ -318,15 +318,162 @@ export interface Roundtable extends RoundtableSummary {
 }
 
 export type View =
-  | 'article' | 'digest' | 'digest_audit' | 'feed' | 'agents'
+  | 'article' | 'today' | 'digest' | 'digest_audit' | 'feed' | 'agents'
   | 'graph' | 'mobile' | 'queue' | 'ingest' | 'lint' | 'settings'
   | 'open_questions'
   | 'notes' | 'note'
+  | 'tasks' | 'projects' | 'routines' | 'journal' | 'inbox_triage'
   | 'roundtables' | 'roundtable'
   | 'repos' | 'repo'
   | 'blog' | 'blog_post'
   | 'tweets' | 'tweet_thread'
   | 'podcasts' | 'podcast';
+
+export type TaskStatus = 'open' | 'done' | string;
+export type Priority = 'high' | 'medium' | 'low' | null;
+export type TimeOfDay = 'morning' | 'afternoon' | 'evening' | 'anytime';
+
+export interface Domain {
+  slug: string;
+  name: string;
+  created_at?: string;
+  deleted_at?: string | null;
+}
+
+export interface TaskRow {
+  uid: string;
+  host_path: string;
+  line_number: number;
+  text: string;
+  checked: boolean;
+  status: TaskStatus;
+  due: string | null;
+  scheduled: string | null;
+  priority: Priority;
+  domain: string | null;
+  project: string | null;
+  recurrence: string | null;
+  tags: string[];
+  links: string[];
+  needs_triage: boolean;
+  reminder_lead_minutes?: number | null;
+  no_reminder?: boolean;
+  review_at?: string | null;
+  recurrence_unparsed: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProjectSummary {
+  slug: string;
+  path: string;
+  name: string;
+  type: 'project' | 'area' | string;
+  domain: string | null;
+  status: 'active' | 'someday' | 'paused' | 'done' | string;
+  due: string | null;
+  last_activity_at: string | null;
+  open_task_count: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProjectDetail extends ProjectSummary {
+  frontmatter: Record<string, unknown>;
+  body: string;
+}
+
+export interface RoutineStreak {
+  current: number;
+  longest: number;
+  rate_30d: number;
+  fixed?: {
+    days_done: number;
+    target_days: number;
+    remaining: number;
+    complete: boolean;
+  };
+}
+
+export interface RoutineRow {
+  slug: string;
+  path: string;
+  name: string;
+  description: string | null;
+  domain: string | null;
+  time_of_day: TimeOfDay;
+  specific_time: string | null;
+  notify: boolean;
+  streak_type: 'ongoing' | 'fixed' | string;
+  target_days: number | null;
+  start_date: string | null;
+  archived: boolean;
+  completed_today: boolean;
+  streak: RoutineStreak;
+}
+
+export type RoutineGroups = Record<TimeOfDay, RoutineRow[]>;
+
+export interface RoutineProgress {
+  slug: string;
+  completion_dates: string[];
+}
+
+export interface ReminderRow {
+  id: number;
+  entity_type: string | null;
+  entity_id: string | null;
+  fire_at: string;
+  lead_minutes: number | null;
+  kind: string;
+  status: 'pending' | 'firing' | 'sent' | 'late' | 'notify_failed' | 'cancelled' | string;
+  title: string | null;
+  body: string | null;
+  url: string | null;
+  created_at: string;
+  fired_at: string | null;
+  last_error?: string | null;
+}
+
+export interface JournalDaySummary {
+  date: string;
+  path: string;
+  mood: number | null;
+  energy: number | null;
+  log_count: number;
+  has_reflections: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface JournalDay extends JournalDaySummary {
+  frontmatter: Record<string, unknown>;
+  body_md: string;
+  sections: Record<string, string>;
+  tasks: TaskRow[];
+  routine_completions: {
+    routine_id: string;
+    date: string;
+    created_at: string;
+    name: string;
+    time_of_day: TimeOfDay;
+  }[];
+  fired_reminders: ReminderRow[];
+}
+
+export type CaptureTriageTarget =
+  | 'task' | 'note' | 'journal' | 'project_update' | 'routine_done'
+  | 'person' | 'quote' | 'inventory' | 'content' | 'inbox' | 'dismiss';
+
+export interface CaptureTriageItem {
+  id: string;
+  kind: string;
+  detected_type: CaptureTriageTarget | string;
+  original_text: string;
+  confidence: number | null;
+  capture: Record<string, unknown>;
+  source: Record<string, unknown>;
+}
 
 export interface PodcastListItem {
   article_id: string;

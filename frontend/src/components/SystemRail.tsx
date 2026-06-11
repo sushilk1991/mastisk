@@ -10,7 +10,13 @@ interface Props {
 }
 
 const JUMPS: { id: View; l: string; d: string }[] = [
-  { id: 'digest',         l: 'Daily Digest',   d: 'Today' },
+  { id: 'today',          l: 'Today',          d: 'Tasks, routines, log' },
+  { id: 'tasks',          l: 'Tasks',          d: 'Due and open loops' },
+  { id: 'projects',       l: 'Projects',       d: 'Areas and logs' },
+  { id: 'routines',       l: 'Routines',       d: 'Streaks' },
+  { id: 'journal',        l: 'Journal',        d: 'Timeline' },
+  { id: 'inbox_triage',   l: 'Inbox triage',   d: 'Needs classification' },
+  { id: 'digest',         l: 'Daily Digest',   d: 'Agent reading' },
   { id: 'queue',          l: 'Reading queue',  d: 'Jobs & ingest' },
   { id: 'open_questions', l: 'Open questions', d: 'Unresolved threads' },
   { id: 'graph',          l: 'Graph view',     d: 'Browse the wiki' },

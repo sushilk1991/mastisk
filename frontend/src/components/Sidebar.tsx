@@ -13,7 +13,11 @@ interface Props {
   onCreateBlog: () => void;
 }
 
-const SYS_VIEWS = new Set<View>(['digest', 'queue', 'feed', 'agents', 'graph', 'ingest', 'lint', 'settings', 'open_questions', 'notes', 'roundtables', 'repos', 'blog', 'tweets']);
+const SYS_VIEWS = new Set<View>([
+  'today', 'digest', 'queue', 'feed', 'agents', 'graph', 'ingest', 'lint', 'settings',
+  'open_questions', 'notes', 'tasks', 'projects', 'routines', 'journal', 'inbox_triage',
+  'roundtables', 'repos', 'blog', 'tweets',
+]);
 
 export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNavigate, onAddRepo, onCaptureNote, onCreateBlog }: Props) {
   // Folders are collapsed by default. A label appearing in `opened` with value
@@ -57,6 +61,14 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
         return <Row key={item.id} item={item} currentArticle={currentArticle} currentView={currentView} onNavigate={onNavigate} />;
       })}
       {/* Hand-coded extras (not in backend vault_tree yet) */}
+      <div className="side-section">Personal OS</div>
+      <SideNavRow currentView={currentView} view="today" glyph="◆" label="Today" onNavigate={onNavigate}/>
+      <SideNavRow currentView={currentView} view="tasks" glyph="☑" label="Tasks" onNavigate={onNavigate}/>
+      <SideNavRow currentView={currentView} view="projects" glyph="▣" label="Projects" onNavigate={onNavigate}/>
+      <SideNavRow currentView={currentView} view="routines" glyph="↻" label="Routines" onNavigate={onNavigate}/>
+      <SideNavRow currentView={currentView} view="journal" glyph="◷" label="Journal" onNavigate={onNavigate}/>
+      <SideNavRow currentView={currentView} view="inbox_triage" glyph="?" label="Inbox triage" onNavigate={onNavigate}/>
+      <div className="side-section">Wiki</div>
       <div className="side-row-group" style={{ display: 'flex', alignItems: 'center' }}>
         <div
           className={`side-row ${currentView === 'notes' || currentView === 'note' ? 'active' : ''}`}
@@ -155,6 +167,26 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
         </div>
       )}
     </aside>
+  );
+}
+
+function SideNavRow({
+  currentView, view, glyph, label, onNavigate,
+}: {
+  currentView: View;
+  view: View;
+  glyph: string;
+  label: string;
+  onNavigate: Props['onNavigate'];
+}) {
+  return (
+    <div
+      className={`side-row ${currentView === view ? 'active' : ''}`}
+      onClick={() => onNavigate(view)}
+    >
+      <span className="glyph">{glyph}</span>
+      <span className="label">{label}</span>
+    </div>
   );
 }
 

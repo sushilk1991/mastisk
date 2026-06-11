@@ -13,8 +13,9 @@ export interface Route {
 }
 
 const VIEW_PATHS: Record<string, View> = {
-  '': 'digest',
-  '/': 'digest',
+  '': 'today',
+  '/': 'today',
+  '/today': 'today',
   '/digest': 'digest',
   '/digest/audit': 'digest_audit',
   '/queue': 'queue',
@@ -28,6 +29,11 @@ const VIEW_PATHS: Record<string, View> = {
   '/open-questions': 'open_questions',
   '/settings': 'settings',
   '/notes': 'notes',
+  '/tasks': 'tasks',
+  '/projects': 'projects',
+  '/routines': 'routines',
+  '/journal': 'journal',
+  '/inbox-triage': 'inbox_triage',
   '/roundtables': 'roundtables',
   '/repos': 'repos',
   '/blog': 'blog',
@@ -37,7 +43,8 @@ const VIEW_PATHS: Record<string, View> = {
 
 const PATH_FOR_VIEW: Record<View, string> = {
   article: '/a/',
-  digest: '/',
+  today: '/',
+  digest: '/digest',
   digest_audit: '/digest/audit',
   queue: '/queue',
   feed: '/feed',
@@ -50,6 +57,11 @@ const PATH_FOR_VIEW: Record<View, string> = {
   settings: '/settings',
   notes: '/notes',
   note: '/notes/',
+  tasks: '/tasks',
+  projects: '/projects',
+  routines: '/routines',
+  journal: '/journal',
+  inbox_triage: '/inbox-triage',
   roundtables: '/roundtables',
   roundtable: '/roundtables/',
   repos: '/repos',

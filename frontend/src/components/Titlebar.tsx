@@ -2,6 +2,7 @@ import { Icon } from './icons';
 import type { View } from '../types';
 
 const CRUMB: Record<string, readonly string[]> = {
+  today:   ['Personal OS', 'Today'],
   digest:  ['Today',  'Daily Digest'],
   article: ['Wiki',   'Concepts'],
   feed:    ['Today',  'Agent feed'],
@@ -13,6 +14,11 @@ const CRUMB: Record<string, readonly string[]> = {
   ingest:  ['System', 'Sources & ingest'],
   lint:    ['System', 'Health check'],
   settings:['System', 'Settings'],
+  tasks: ['Personal OS', 'Tasks'],
+  projects: ['Personal OS', 'Projects'],
+  routines: ['Personal OS', 'Routines'],
+  journal: ['Personal OS', 'Journal'],
+  inbox_triage: ['Personal OS', 'Inbox triage'],
   blog:       ['Wiki', 'Blog Posts'],
   blog_post:  ['Wiki', 'Blog Posts', 'Draft'],
   tweets:     ['Wiki', 'Tweet Threads'],

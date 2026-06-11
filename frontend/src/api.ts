@@ -1,10 +1,11 @@
 import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
-  BlogPostSummary, Digest, DigestAudit, Feed,
+  BlogPostSummary, CaptureTriageItem, CaptureTriageTarget, Digest, DigestAudit, Domain, Feed,
   FeedTick, AgentInfo, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
-  PinnedItem, PodcastListItem, PodcastView, RepoDetail, RepoIdeasResponse, RepoSummary,
+  PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, ReminderRow,
+  RepoDetail, RepoIdeasResponse, RepoSummary, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
-  SettingsBundle, SettingsPatch, TranscriptAnchor,
+  SettingsBundle, SettingsPatch, TaskRow, TranscriptAnchor, JournalDay, JournalDaySummary,
   SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem,
 } from './types';
 
@@ -310,6 +311,93 @@ export const api = {
         if (!r.ok) throw new Error(`${r.status}`);
         return r.json();
       }),
+  },
+
+  tasks: {
+    list: (opts: { status?: string; domain?: string; project?: string; due_before?: string } = {}):
+      Promise<TaskRow[]> => {
+      const params = new URLSearchParams();
+      if (opts.status) params.set('status', opts.status);
+      if (opts.domain) params.set('domain', opts.domain);
+      if (opts.project) params.set('project', opts.project);
+      if (opts.due_before) params.set('due_before', opts.due_before);
+      const qs = params.toString();
+      return j<TaskRow[]>(qs ? `${BASE}/tasks?${qs}` : `${BASE}/tasks`);
+    },
+    toggle: (uid: string): Promise<TaskRow> =>
+      j<TaskRow>(`${BASE}/tasks/${encodeURIComponent(uid)}/toggle`, { method: 'PATCH' }),
+    patch: (uid: string, body: { due?: string | null; scheduled?: string | null; recurrence?: string | null; priority?: 'high' | 'medium' | 'low' | null }):
+      Promise<TaskRow> =>
+      j<TaskRow>(`${BASE}/tasks/${encodeURIComponent(uid)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+  },
+
+  projectsApi: {
+    list: (): Promise<ProjectSummary[]> => j<ProjectSummary[]>(`${BASE}/projects`),
+    get: (slug: string): Promise<ProjectDetail> => j<ProjectDetail>(`${BASE}/projects/${encodeURIComponent(slug)}`),
+    patch: (slug: string, body: { status?: string | null; domain?: string | null; due?: string | null }):
+      Promise<ProjectSummary> =>
+      j<ProjectSummary>(`${BASE}/projects/${encodeURIComponent(slug)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+  },
+
+  domainsApi: {
+    list: (): Promise<Domain[]> => j<Domain[]>(`${BASE}/domains`),
+  },
+
+  routinesApi: {
+    list: (archived = false): Promise<RoutineGroups> =>
+      j<RoutineGroups>(archived ? `${BASE}/routines?archived=true` : `${BASE}/routines`),
+    toggle: (slug: string): Promise<RoutineRow> =>
+      j<RoutineRow>(`${BASE}/routines/${encodeURIComponent(slug)}/toggle`, { method: 'POST' }),
+    archive: (slug: string): Promise<RoutineRow> =>
+      j<RoutineRow>(`${BASE}/routines/${encodeURIComponent(slug)}/archive`, { method: 'POST' }),
+    progress: (slug: string, days = 30): Promise<RoutineProgress> =>
+      j<RoutineProgress>(`${BASE}/routines/${encodeURIComponent(slug)}/progress?days=${days}`),
+  },
+
+  journalApi: {
+    list: (limit = 30): Promise<JournalDaySummary[]> =>
+      j<JournalDaySummary[]>(`${BASE}/journal?limit=${limit}`),
+    get: (day: string): Promise<JournalDay> => j<JournalDay>(`${BASE}/journal/${encodeURIComponent(day)}`),
+    appendLog: (day: string, text: string): Promise<{ date: string; path: string; line: string }> =>
+      j<{ date: string; path: string; line: string }>(`${BASE}/journal/${encodeURIComponent(day)}/log`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }),
+    patch: (day: string, body: { mood?: number | null; energy?: number | null; reflections?: string | null }):
+      Promise<JournalDay> =>
+      j<JournalDay>(`${BASE}/journal/${encodeURIComponent(day)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+  },
+
+  remindersApi: {
+    list: (status?: string): Promise<ReminderRow[]> =>
+      j<ReminderRow[]>(status ? `${BASE}/reminders?status=${encodeURIComponent(status)}` : `${BASE}/reminders`),
+  },
+
+  captureTriage: {
+    list: (limit = 100): Promise<CaptureTriageItem[]> =>
+      j<CaptureTriageItem[]>(`${BASE}/capture/triage?limit=${limit}`),
+    reclassify: (id: string, type: CaptureTriageTarget): Promise<{ ok: boolean; id: string; type: CaptureTriageTarget }> =>
+      j<{ ok: boolean; id: string; type: CaptureTriageTarget }>(
+        `${BASE}/capture/triage/${encodeURIComponent(id)}/reclassify`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ type }),
+        },
+      ),
   },
 
   roundtables: {
