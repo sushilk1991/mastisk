@@ -201,13 +201,35 @@ def clear_content_triage(slug: str) -> dict[str, Any] | None:
     return content_payload(slug)
 
 
+def archive_content(slug: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM content_items WHERE slug = ? AND deleted_at IS NULL",
+            (slug,),
+        ).fetchone()
+    if row is None:
+        return None
+    path = vault_dir() / row["path"]
+    if not path.exists():
+        _soft_delete_content(slug)
+        return None
+    with host_file_lock(path):
+        parsed = parse_content_file(path)
+        meta = dict(parsed["frontmatter"])
+        meta["archived"] = True
+        atomic_write(path, dump_content_file(meta, parsed["body"]))
+    scan_content([path])
+    return content_payload(slug, include_archived=True)
+
+
 def list_content(
     *,
     kind: str | None = None,
     status: str | None = None,
     domain: str | None = None,
+    include_archived: bool = False,
 ) -> list[dict[str, Any]]:
-    clauses = ["deleted_at IS NULL"]
+    clauses = [] if include_archived else ["deleted_at IS NULL"]
     params: list[Any] = []
     if kind:
         clauses.append("kind = ?")
@@ -224,7 +246,7 @@ def list_content(
     with connect() as conn:
         rows = conn.execute(
             f"""SELECT * FROM content_items
-                WHERE {' AND '.join(clauses)}
+                WHERE {_where_clause(clauses)}
                 ORDER BY CASE status {order_case} ELSE 99 END,
                          updated_at DESC, lower(title), slug""",
             tuple(params),
@@ -232,10 +254,11 @@ def list_content(
     return [_content_row(dict(row)) for row in rows]
 
 
-def content_payload(slug: str) -> dict[str, Any] | None:
+def content_payload(slug: str, *, include_archived: bool = False) -> dict[str, Any] | None:
+    archived_clause = "" if include_archived else " AND deleted_at IS NULL"
     with connect() as conn:
         row = conn.execute(
-            "SELECT * FROM content_items WHERE slug = ? AND deleted_at IS NULL",
+            f"SELECT * FROM content_items WHERE slug = ?{archived_clause}",
             (slug,),
         ).fetchone()
     if row is None:
@@ -246,7 +269,7 @@ def content_payload(slug: str) -> dict[str, Any] | None:
         _soft_delete_content(slug)
         return None
     parsed = parse_content_file(path)
-    if parsed.get("archived"):
+    if parsed.get("archived") and not include_archived:
         _soft_delete_content(slug)
         return None
     from mastisk.tasks.sync import list_tasks, scan_task_hosts
@@ -262,6 +285,7 @@ def content_payload(slug: str) -> dict[str, Any] | None:
         "url": parsed.get("url"),
         "publish_date": parsed.get("publish_date"),
         "needs_triage": parsed.get("needs_triage", False),
+        "archived": parsed.get("archived", False),
         "frontmatter": parsed["frontmatter"],
         "body": parsed["body"],
         "tasks": list_tasks_by_host(payload["path"], list_tasks(status="open")),
@@ -417,7 +441,12 @@ def _clean_patch_date(value: object, *, field: str) -> str | None:
 
 def _content_row(row: dict[str, Any]) -> dict[str, Any]:
     row["needs_triage"] = bool(row.get("needs_triage"))
+    row["archived"] = row.get("deleted_at") is not None
     return row
+
+
+def _where_clause(clauses: list[str]) -> str:
+    return " AND ".join(clauses) if clauses else "1 = 1"
 
 
 def _soft_delete_missing_path(conn, path: Path) -> None:

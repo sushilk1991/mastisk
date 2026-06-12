@@ -1092,6 +1092,7 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const [editUrl, setEditUrl] = useState('');
   const [editPublishDate, setEditPublishDate] = useState('');
   const [draftingSlug, setDraftingSlug] = useState<string | null>(null);
+  const [archivingSlug, setArchivingSlug] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   async function loadList() {
@@ -1193,6 +1194,20 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
     }
   }
 
+  async function archiveDetail() {
+    if (!detail) return;
+    const slug = detail.slug;
+    setArchivingSlug(slug);
+    try {
+      await api.contentApi.delete(slug);
+      setDetail(null);
+      setSelected(null);
+      await loadList();
+    } finally {
+      setArchivingSlug(null);
+    }
+  }
+
   const items = data?.items ?? [];
   const kanban = data?.kanban ?? {};
 
@@ -1279,17 +1294,27 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
               <>
                 <div className="dash-section-head">
                   <h2>{detail.title}</h2>
-                  <button
-                    className="chip"
-                    type="button"
-                    disabled={
-                      !['article', 'newsletter'].includes(detail.kind)
-                        || draftingSlug === detail.slug
-                    }
-                    onClick={() => runMutation(spawnDraft, setErr)}
-                  >
-                    {draftingSlug === detail.slug ? 'spawning' : 'spawn draft'}
-                  </button>
+                  <div className="dash-actions">
+                    <button
+                      className="chip"
+                      type="button"
+                      disabled={
+                        !['article', 'newsletter'].includes(detail.kind)
+                          || draftingSlug === detail.slug
+                      }
+                      onClick={() => runMutation(spawnDraft, setErr)}
+                    >
+                      {draftingSlug === detail.slug ? 'spawning' : 'spawn draft'}
+                    </button>
+                    <button
+                      className="chip muted"
+                      type="button"
+                      disabled={archivingSlug === detail.slug}
+                      onClick={() => runMutation(archiveDetail, setErr)}
+                    >
+                      {archivingSlug === detail.slug ? 'archiving' : 'archive'}
+                    </button>
+                  </div>
                 </div>
                 <div className="dash-tags">
                   <span>{detail.kind}</span>

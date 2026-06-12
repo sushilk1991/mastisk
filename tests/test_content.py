@@ -183,6 +183,40 @@ def test_content_draft_rejects_video_and_podcast(db, vault_tmp, data_tmp):
     assert "article or newsletter" in drafted.json()["detail"]
 
 
+def test_content_delete_archives_file_and_hides_by_default(db, vault_tmp, data_tmp):
+    from mastisk.content.sync import create_content_file
+
+    item = create_content_file(
+        title="Local-first personal OS",
+        kind="article",
+        outline="## Outline\n\n- Files are the API.",
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        deleted = client.delete(f"/api/content/{item['slug']}")
+        assert deleted.status_code == 204, deleted.text
+
+        hidden_detail = client.get(f"/api/content/{item['slug']}")
+        hidden_list = client.get("/api/content")
+        archived_detail = client.get(f"/api/content/{item['slug']}?archived=true")
+        archived_list = client.get("/api/content?archived=true")
+
+    assert hidden_detail.status_code == 404
+    assert hidden_list.status_code == 200, hidden_list.text
+    assert hidden_list.json()["items"] == []
+    assert archived_detail.status_code == 200, archived_detail.text
+    assert archived_detail.json()["archived"] is True
+    assert archived_list.status_code == 200, archived_list.text
+    assert [row["slug"] for row in archived_list.json()["items"]] == [item["slug"]]
+
+    file_text = (vault_tmp / item["path"]).read_text(encoding="utf-8")
+    assert "archived: true" in file_text
+    row = db.execute(
+        "SELECT deleted_at FROM content_items WHERE slug = ?", (item["slug"],)
+    ).fetchone()
+    assert row["deleted_at"] is not None
+
+
 def test_content_triage_accept_clears_file_marker(db, vault_tmp, data_tmp):
     from mastisk.content.sync import create_content_file
 

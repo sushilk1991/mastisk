@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from mastisk.agents.base import enqueue
 from mastisk.content.sync import (
     CONTENT_STATUSES,
+    archive_content,
     blog_content_source,
     content_payload,
     create_content_file,
@@ -57,8 +58,11 @@ async def list_content_endpoint(
     kind: ContentKind | None = None,
     status: ContentStatus | None = None,
     domain: str | None = None,
+    archived: bool = False,
 ) -> dict[str, Any]:
-    items = list_content(kind=kind, status=status, domain=domain)
+    items = list_content(
+        kind=kind, status=status, domain=domain, include_archived=archived,
+    )
     return {"items": items, "kanban": _kanban(items)}
 
 
@@ -71,11 +75,18 @@ async def create_content_endpoint(req: ContentCreate) -> dict[str, Any]:
 
 
 @router.get("/{slug}")
-async def get_content_endpoint(slug: str) -> dict[str, Any]:
-    item = content_payload(slug)
+async def get_content_endpoint(slug: str, archived: bool = False) -> dict[str, Any]:
+    item = content_payload(slug, include_archived=archived)
     if item is None:
         raise HTTPException(status_code=404, detail="content item not found")
     return item
+
+
+@router.delete("/{slug}", status_code=204)
+async def delete_content_endpoint(slug: str) -> None:
+    item = archive_content(slug)
+    if item is None:
+        raise HTTPException(status_code=404, detail="content item not found")
 
 
 @router.patch("/{slug}")
@@ -161,4 +172,3 @@ def _blog_theme(item: dict[str, Any]) -> str:
     if outline:
         return f"{item['title']} — {outline}"[:500]
     return str(item["title"])[:500]
-

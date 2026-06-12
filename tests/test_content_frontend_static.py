@@ -19,8 +19,10 @@ def test_content_frontend_route_nav_api_and_kanban_are_wired() -> None:
     assert 'view="content"' in sidebar
     assert "contentApi" in api
     assert "draft: (slug: string)" in api
+    assert "delete: (slug: string)" in api
     assert "export function ContentView" in dashboard
     assert "CONTENT_STATUSES" in dashboard
     assert "kanban" in dashboard
     assert "spawn draft" in dashboard
+    assert "archive" in dashboard
     assert "view === 'content'" in app

@@ -664,6 +664,7 @@ export interface ContentSummary {
   url: string | null;
   publish_date: string | null;
   needs_triage: boolean;
+  archived?: boolean;
   created_at?: string;
   updated_at?: string;
 }

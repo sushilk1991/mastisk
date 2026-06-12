@@ -572,6 +572,10 @@ export const api = {
         `${BASE}/content/${encodeURIComponent(slug)}/draft`,
         { method: 'POST' },
       ),
+    delete: (slug: string): Promise<void> =>
+      fetch(`${BASE}/content/${encodeURIComponent(slug)}`, { method: 'DELETE' }).then(async (r) => {
+        if (!r.ok) await throwApiError(r);
+      }),
   },
 
   libraryApi: {
