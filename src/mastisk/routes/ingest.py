@@ -137,25 +137,24 @@ async def ingest_journal_photo(
     try:
         extracted = (await extract_journal_photo_text(image_path)).strip()
     except VisionUnavailable as exc:
-        line = (
-            "OCR pending: vision path unavailable. "
-            f"{uploaded['markdown']} #needs-triage"
+        return _journal_photo_needs_triage(
+            day,
+            uploaded,
+            now,
+            reason=str(exc),
+            line_reason="vision path unavailable",
+            ocr_status="unavailable",
+            status_code=501,
         )
-        try:
-            result = append_log(day, line, now, source="handwritten")
-        except JournalFrontmatterError as fm_exc:
-            raise HTTPException(status_code=409, detail=str(fm_exc)) from fm_exc
-        _emit_feed("needs_triage", uploaded["path"], "journal-photo", {"reason": str(exc)})
-        return {
-            "status": "needs_triage",
-            "ocr_status": "unavailable",
-            "status_code": 501,
-            "reason": str(exc),
-            "attachment": uploaded,
-            "journal": result,
-        }
     if not extracted:
-        raise HTTPException(status_code=422, detail="OCR returned no text")
+        return _journal_photo_needs_triage(
+            day,
+            uploaded,
+            now,
+            reason="OCR returned no text",
+            ocr_status="empty",
+            status_code=422,
+        )
     try:
         result = append_log(
             day,
@@ -170,6 +169,38 @@ async def ingest_journal_photo(
         "status": "done",
         "ocr_status": "done",
         "text": extracted,
+        "attachment": uploaded,
+        "journal": result,
+    }
+
+
+def _journal_photo_needs_triage(
+    day: str,
+    uploaded: dict,
+    now: datetime,
+    *,
+    reason: str,
+    line_reason: str | None = None,
+    ocr_status: str,
+    status_code: int,
+) -> dict:
+    journal_reason = line_reason or reason
+    line = f"OCR pending: {journal_reason.rstrip('.')}. {uploaded['markdown']} #needs-triage"
+    try:
+        result = append_log(day, line, now, source="handwritten")
+    except JournalFrontmatterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _emit_feed(
+        "needs_triage",
+        uploaded["path"],
+        "journal-photo",
+        {"reason": reason, "ocr_status": ocr_status},
+    )
+    return {
+        "status": "needs_triage",
+        "ocr_status": ocr_status,
+        "status_code": status_code,
+        "reason": reason,
         "attachment": uploaded,
         "journal": result,
     }

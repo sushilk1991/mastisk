@@ -794,6 +794,34 @@ def test_journal_photo_unavailable_path_is_honest_needs_triage(vault_tmp, data_t
     assert "#needs-triage" in journal_text
 
 
+def test_journal_photo_empty_ocr_preserves_attachment_in_triage_journal(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    monkeypatch.setattr(
+        "mastisk.routes.ingest.extract_journal_photo_text",
+        AsyncMock(return_value="   "),
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        res = client.post(
+            "/api/ingest/journal-photo",
+            data={"date": "2026-06-12"},
+            files={"photo": ("journal.jpg", b"jpg-bytes", "image/jpeg")},
+        )
+
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["status"] == "needs_triage"
+    assert body["ocr_status"] == "empty"
+    assert body["status_code"] == 422
+    assert body["attachment"]["path"].startswith("attachments/")
+    assert (vault_tmp / body["attachment"]["path"]).read_bytes() == b"jpg-bytes"
+    journal_text = (vault_tmp / "journal" / "2026-06-12.md").read_text(encoding="utf-8")
+    assert "OCR pending: OCR returned no text." in journal_text
+    assert body["attachment"]["markdown"] in journal_text
+    assert "#needs-triage" in journal_text
+
+
 def test_journal_photo_unavailable_path_maps_bad_frontmatter_to_409(
     vault_tmp, data_tmp, db
 ):
