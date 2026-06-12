@@ -597,3 +597,14 @@ def test_frontend_agent_studio_static_contract() -> None:
     assert "/agents/" in router
     assert ".agent-studio-layout" in css
     assert ".agent-card.clickable" in css
+
+
+def test_agent_studio_prompt_control_warning_static_contract() -> None:
+    route_source = (ROOT / "src/mastisk/routes/agents_route.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "prompt-control surfaces" in route_source
+    assert "NEVER be tunnel-exposed" in route_source
+    assert "/api/agents" in readme
+    assert "/api/agent-skills" in readme
+    assert "prompt-control" in readme

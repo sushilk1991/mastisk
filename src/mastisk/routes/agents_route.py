@@ -21,6 +21,9 @@ from mastisk.db.queries import connect
 from mastisk.routes.feed_route import _agents_snapshot
 
 router = APIRouter(tags=["agents"])
+# /api/agents* and /api/agent-skills* are prompt-control surfaces under the
+# local trust model. They must NEVER be tunnel-exposed; the PWA carries no auth
+# token that could make these safe on the public internet.
 
 
 class AgentProfileUpdate(BaseModel):

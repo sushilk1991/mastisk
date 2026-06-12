@@ -561,6 +561,7 @@ from the wrist. Use Cloudflare Tunnel — and scope it to the capture surface on
 backstop, not the only control):
 
 Warning: only `/api/capture` (the ingress `POST`) is safe to expose; nothing else under `/api` may be tunneled.
+Agent Studio routes (`/api/agents*`, `/api/agent-skills*`) are prompt-control surfaces and must never be exposed through a tunnel.
 
 ```bash
 brew install cloudflared
