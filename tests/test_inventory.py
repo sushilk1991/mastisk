@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
@@ -293,6 +295,26 @@ def test_inventory_scan_does_not_archive_quoted_false_frontmatter(db, vault_tmp)
         "SELECT deleted_at FROM inventory WHERE id = 'quoted-false-2026-06-10'"
     ).fetchone()
     assert row["deleted_at"] is None
+
+
+def test_inventory_export_escapes_formula_cells(db, vault_tmp, data_tmp):
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/inventory",
+            json={
+                "name": '=HYPERLINK("https://example.com","click")',
+                "acquired": "2026-01-01",
+                "location": "+Office",
+            },
+        )
+        assert created.status_code == 201, created.text
+
+        exported = client.get("/api/inventory/export")
+
+    assert exported.status_code == 200, exported.text
+    rows = list(csv.reader(io.StringIO(exported.text)))
+    assert rows[1][0] == '\'=HYPERLINK("https://example.com","click")'
+    assert rows[1][4] == "'+Office"
 
 
 def test_capture_inventory_command_creates_item_and_medium_confidence_triages(

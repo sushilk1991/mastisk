@@ -81,11 +81,11 @@ async def export_inventory_endpoint() -> Response:
     writer.writerow(["name", "acquired", "value", "status", "location"])
     for item in list_inventory():
         writer.writerow([
-            item["name"],
-            item.get("acquired") or "",
+            _csv_safe_cell(item["name"]),
+            _csv_safe_cell(item.get("acquired") or ""),
             "" if item.get("value") is None else item["value"],
-            item["status"],
-            item.get("location") or "",
+            _csv_safe_cell(item["status"]),
+            _csv_safe_cell(item.get("location") or ""),
         ])
     return Response(
         content=output.getvalue(),
@@ -100,6 +100,14 @@ async def get_inventory_endpoint(item_id: str) -> dict[str, Any]:
     if item is None:
         raise HTTPException(status_code=404, detail="inventory item not found")
     return item
+
+
+def _csv_safe_cell(value: object) -> object:
+    if not isinstance(value, str) or not value:
+        return value
+    if value[0] in {"=", "+", "-", "@"}:
+        return f"'{value}"
+    return value
 
 
 @router.delete("/{item_id}")
