@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 
 import yaml
@@ -15,6 +16,7 @@ from mastisk.vault_paths import VaultPathError, vault_markdown_file
 from mastisk.vault_rescan import rescan_vault_markdown_path
 
 router = APIRouter(tags=["vault"])
+log = logging.getLogger("mastisk.routes.vault_route")
 
 _SELF_FILES = ("identity", "interests", "dislikes", "style", "learnings")
 
@@ -88,11 +90,22 @@ def write_vault_file(req: VaultFileIn) -> dict[str, str | bool]:
                 detail="vault file changed since editor opened",
             )
         atomic_write(target, req.content)
+    content_sha256 = _sha256_text(req.content)
     try:
         rescan_vault_markdown_path(rel_path, target)
     except Exception as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"ok": True, "path": rel_path}
+        log.exception(
+            "rescan failed after successful vault write: %s",
+            rel_path,
+        )
+        return {
+            "ok": True,
+            "path": rel_path,
+            "content_sha256": content_sha256,
+            "rescan_failed": True,
+            "rescan_error": str(exc),
+        }
+    return {"ok": True, "path": rel_path, "content_sha256": content_sha256}
 
 
 def _sha256_text(content: str) -> str:

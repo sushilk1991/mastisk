@@ -105,12 +105,18 @@ export function MarkdownEditor({
   const split = useMemo(() => splitFrontmatter(initialContent), [initialContent]);
   const [body, setBody] = useState(split.body);
   const bodyRef = useRef(split.body);
+  const [currentBaseSha256, setCurrentBaseSha256] = useState(baseSha256);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [rescanWarning, setRescanWarning] = useState<string | null>(null);
 
   useEffect(() => {
     bodyRef.current = body;
   }, [body]);
+
+  useEffect(() => {
+    setCurrentBaseSha256(baseSha256);
+  }, [baseSha256]);
 
   useEffect(() => {
     let active = true;
@@ -130,8 +136,18 @@ export function MarkdownEditor({
   const save = useCallback(async () => {
     setSaving(true);
     setErr(null);
+    setRescanWarning(null);
     try {
-      await api.vaultFile.write(path, `${split.frontmatter}${bodyRef.current}`, baseSha256);
+      const saved = await api.vaultFile.write(
+        path,
+        `${split.frontmatter}${bodyRef.current}`,
+        currentBaseSha256,
+      );
+      setCurrentBaseSha256(saved.content_sha256);
+      if (saved.rescan_failed) {
+        setRescanWarning('Saved, but the derived views did not refresh. Try again after closing the editor.');
+        return;
+      }
       await onSaved?.();
       onClose();
     } catch (e) {
@@ -139,7 +155,7 @@ export function MarkdownEditor({
     } finally {
       setSaving(false);
     }
-  }, [baseSha256, onClose, onSaved, path, split.frontmatter]);
+  }, [currentBaseSha256, onClose, onSaved, path, split.frontmatter]);
 
   return (
     <div className="markdown-editor-shell">
@@ -157,6 +173,7 @@ export function MarkdownEditor({
           </div>
         </div>
         {err && <p className="dash-error">{err}</p>}
+        {rescanWarning && <p className="dash-warning">{rescanWarning}</p>}
         {split.frontmatter && (
           <details className="frontmatter-readonly">
             <summary>Frontmatter</summary>

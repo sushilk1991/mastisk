@@ -252,8 +252,8 @@ export const api = {
       path: string,
       content: string,
       base_sha256: string,
-    ): Promise<{ ok: boolean; path: string }> =>
-      j<{ ok: boolean; path: string }>(`${BASE}/vault/file`, {
+    ): Promise<{ ok: boolean; path: string; content_sha256: string; rescan_failed?: boolean; rescan_error?: string }> =>
+      j<{ ok: boolean; path: string; content_sha256: string; rescan_failed?: boolean; rescan_error?: string }>(`${BASE}/vault/file`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path, content, base_sha256 }),

@@ -206,6 +206,42 @@ def test_vault_file_write_rejects_stale_editor_save_after_user_append(
     assert "local editor change" not in path.read_text(encoding="utf-8")
 
 
+def test_vault_file_write_reports_success_when_rescan_fails(
+    db, vault_tmp, data_tmp, monkeypatch, caplog
+):
+    from mastisk.routes import vault_route
+
+    path = vault_tmp / "journal" / "2026-06-11.md"
+    path.parent.mkdir(parents=True)
+    original = "---\nmood: 4\n---\n\n## Tasks\n\n## Log\n"
+    updated = "---\nmood: 4\n---\n\n## Tasks\n\n## Log\n- 09:00 saved\n"
+    path.write_text(original, encoding="utf-8")
+
+    def fail_rescan(*_args, **_kwargs):
+        raise RuntimeError("mirror refresh failed")
+
+    monkeypatch.setattr(vault_route, "rescan_vault_markdown_path", fail_rescan)
+
+    with caplog.at_level("ERROR", logger="mastisk.routes.vault_route"):
+        with _client(vault_tmp, data_tmp, db) as client:
+            loaded = client.get("/api/vault/file?path=journal/2026-06-11.md").json()
+            response = client.put(
+                "/api/vault/file",
+                json={
+                    "path": "journal/2026-06-11.md",
+                    "content": updated,
+                    "base_sha256": loaded["content_sha256"],
+                },
+            )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    assert response.json()["rescan_failed"] is True
+    assert response.json()["content_sha256"] != loaded["content_sha256"]
+    assert path.read_text(encoding="utf-8") == updated
+    assert "rescan failed after successful vault write" in caplog.text
+
+
 def test_editor_save_rescans_tasks_even_before_unlock(db, vault_tmp, data_tmp):
     from mastisk.editing import lock_path
 

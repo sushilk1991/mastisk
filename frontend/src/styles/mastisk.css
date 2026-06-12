@@ -1270,6 +1270,7 @@ a { color: inherit; }
 }
 .dash-empty { margin: 8px 0; }
 .dash-error { color: #c53030; font-size: 13px; }
+.dash-warning { color: var(--warn, #c07030); font-size: 13px; }
 .dash-tags {
   display: flex; flex-wrap: wrap; gap: 5px;
   margin-top: 4px;

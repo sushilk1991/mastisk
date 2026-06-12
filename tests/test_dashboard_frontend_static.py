@@ -85,6 +85,10 @@ def test_markdown_editor_uses_codemirror_and_protects_frontmatter():
     assert "previewAttachmentUrl" in source
     assert "/api/attachments/" in source
     assert "domEventHandlers" in source
+    assert "const [currentBaseSha256, setCurrentBaseSha256]" in source
+    assert "setCurrentBaseSha256(saved.content_sha256)" in source
+    assert "rescanWarning" in source
+    assert "saved.rescan_failed" in source
 
 
 def test_editor_affordances_cover_journal_notes_projects_and_content():
