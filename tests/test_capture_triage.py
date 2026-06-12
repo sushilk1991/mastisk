@@ -367,6 +367,89 @@ def test_capture_triage_accepts_medium_confidence_quote_to_library(
     assert client.get("/api/triage").json() == []
 
 
+def test_capture_triage_inventory_uses_command_name_and_capture_date(
+    db, vault_tmp, data_tmp
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\nbearer_token = "test-token"\ndefault_timezone = "Asia/Kolkata"\n',
+        encoding="utf-8",
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client, patch(
+        "mastisk.routes.capture.route_capture", new_callable=AsyncMock
+    ) as router:
+        router.return_value = _capture(
+            type="inventory",
+            confidence=0.7,
+            command_detected=False,
+            title=None,
+            body="add LG monitor to inventory",
+            tags=[],
+        )
+        captured = client.post(
+            "/api/capture",
+            json={
+                "text": "add LG monitor to inventory",
+                "source": "watch",
+                "ts": "2026-06-10T09:00:00+05:30",
+            },
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert captured.status_code == 201, captured.text
+        assert captured.json()["type"] == "inventory"
+        assert captured.json()["needs_triage"] is True
+
+        item = next(
+            row for row in client.get("/api/triage").json()
+            if row["detected_type"] == "inventory"
+        )
+        accepted = client.post(
+            f"/api/triage/{item['id']}/reclassify",
+            json={"type": "inventory"},
+        )
+
+    assert accepted.status_code == 200, accepted.text
+    inventory_row = db.execute(
+        "SELECT id, name, acquired FROM inventory WHERE deleted_at IS NULL"
+    ).fetchone()
+    assert dict(inventory_row) == {
+        "id": "lg-monitor-2026-06-10",
+        "name": "LG monitor",
+        "acquired": "2026-06-10",
+    }
+
+
+def test_capture_triage_inventory_uses_journal_source_date(db, vault_tmp, data_tmp):
+    from mastisk.journal import append_log
+
+    append_log(
+        "2026-05-20",
+        "add camera bag to inventory #needs-triage",
+        datetime(2026, 5, 20, 8, 30),
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        item = next(
+            row for row in client.get("/api/triage").json()
+            if row["kind"] == "journal"
+        )
+        accepted = client.post(
+            f"/api/triage/{item['id']}/reclassify",
+            json={"type": "inventory"},
+        )
+
+    assert accepted.status_code == 200, accepted.text
+    inventory_row = db.execute(
+        "SELECT id, name, acquired FROM inventory WHERE deleted_at IS NULL"
+    ).fetchone()
+    assert dict(inventory_row) == {
+        "id": "camera-bag-2026-05-20",
+        "name": "camera bag",
+        "acquired": "2026-05-20",
+    }
+
+
 def test_capture_triage_routine_done_without_candidate_returns_422_and_keeps_marker(
     db, vault_tmp, data_tmp
 ):

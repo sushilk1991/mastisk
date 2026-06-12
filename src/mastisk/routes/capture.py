@@ -5,7 +5,7 @@ import hmac
 import logging
 import re
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -166,6 +166,7 @@ async def capture(
             body=routed.body,
             source=req.source,
             slug_text=req.text,
+            ts=_capture_local_datetime(req.ts) if req.ts else None,
             file_content=(
                 _body_with_capture_frontmatter(routed, needs_triage=needs_triage)
                 if _has_typed_capture_metadata(routed)
@@ -377,9 +378,10 @@ def _persist_inventory_capture(
     }
 
 
-def _inventory_name(capture: Capture, raw_text: str) -> str | None:
-    if capture.title and capture.title.strip():
-        return capture.title.strip()
+def _inventory_name(capture: Capture | dict[str, Any], raw_text: str) -> str | None:
+    title = _capture_text_field(capture, "title")
+    if title:
+        return title
     match = re.match(
         r"^\s*add\s+(?P<name>.+?)\s+to\s+(?:my\s+)?inventory\b",
         raw_text,
@@ -387,7 +389,15 @@ def _inventory_name(capture: Capture, raw_text: str) -> str | None:
     )
     if match:
         return match.group("name").strip()
-    return capture.body.strip() if capture.body.strip() else None
+    return _capture_text_field(capture, "body")
+
+
+def _capture_text_field(capture: Capture | dict[str, Any], key: str) -> str | None:
+    value = capture.get(key) if isinstance(capture, dict) else getattr(capture, key, None)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _has_source_word(text: str, word: str) -> bool:

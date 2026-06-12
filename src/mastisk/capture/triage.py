@@ -225,6 +225,7 @@ def _typed_note_items() -> list[dict[str, Any]]:
                 "source": {
                     "path": note["path"],
                     "note_id": note["id"],
+                    "created_at": note.get("created_at"),
                 },
                 "sort_key": note.get("created_at") or "",
             }
@@ -404,10 +405,17 @@ def _file_as_target(item: dict[str, Any], target_type: str) -> None:
         return
     if target_type == "inventory":
         from mastisk.inventory.sync import create_inventory_file
+        from mastisk.routes.capture import _inventory_name
 
-        name = _str_or_none(capture.get("title")) or text
+        name = _inventory_name(capture, text)
+        if not name:
+            return
         notes = text if text.casefold() != name.casefold() else None
-        create_inventory_file(name=name, notes=notes)
+        create_inventory_file(
+            name=name,
+            acquired=_capture_date_for_item(item),
+            notes=notes,
+        )
         return
     if target_type in {"note", "inbox"}:
         persist_note_capture(body=text, source="pwa")
@@ -436,6 +444,24 @@ def _journal_day_for_item(item: dict[str, Any]) -> str:
     date_value = source.get("date")
     if isinstance(date_value, str) and re.match(r"^\d{4}-\d{2}-\d{2}$", date_value):
         return date_value
+    return _now_in_capture_timezone().date().isoformat()
+
+
+def _capture_date_for_item(item: dict[str, Any]) -> str:
+    source = item.get("source") if isinstance(item.get("source"), dict) else {}
+    source_date = _str_or_none(source.get("date"))
+    if source_date and re.match(r"^\d{4}-\d{2}-\d{2}$", source_date):
+        try:
+            datetime.strptime(source_date, "%Y-%m-%d")
+            return source_date
+        except ValueError:
+            pass
+    created_at = _str_or_none(source.get("created_at"))
+    if created_at:
+        try:
+            return datetime.fromisoformat(created_at.replace("Z", "+00:00")).date().isoformat()
+        except ValueError:
+            pass
     return _now_in_capture_timezone().date().isoformat()
 
 
