@@ -355,6 +355,56 @@ def test_agent_scanners_flag_malformed_files_and_continue(db, vault_tmp, data_tm
     assert good_skill["body"] == "Good body"
 
 
+def test_malformed_profile_can_be_disabled_and_stays_flagged(db, vault_tmp, data_tmp) -> None:
+    from mastisk.agents.studio import scan_agent_profiles
+
+    profile = vault_tmp / "_agents" / "notetaker.md"
+    profile.parent.mkdir(parents=True)
+    profile.write_text(
+        "---\n"
+        "enabled: [\n"
+        "---\n\n"
+        "BROKEN\n",
+        encoding="utf-8",
+    )
+    scan_agent_profiles([profile])
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        disabled = client.put("/api/agents/notetaker/profile", json={"enabled": False})
+
+    assert disabled.status_code == 200, disabled.text
+    payload = disabled.json()["profile"]
+    assert payload["enabled"] is False
+    assert payload["invalid"] is True
+
+
+def test_malformed_profile_scan_preserves_disabled_mirror_state(db, vault_tmp, data_tmp) -> None:
+    from mastisk.agents.registry import agent_enabled
+    from mastisk.agents.studio import scan_agent_profiles
+
+    profile = vault_tmp / "_agents" / "capture_router.md"
+    with _client(vault_tmp, data_tmp, db) as client:
+        saved = client.put("/api/agents/capture_router/profile", json={"enabled": False})
+        assert saved.status_code == 200, saved.text
+    profile.write_text(
+        "---\n"
+        "enabled: [\n"
+        "---\n\n"
+        "BROKEN {identity}\n",
+        encoding="utf-8",
+    )
+
+    scan_agent_profiles([profile])
+
+    row = db.execute(
+        "SELECT enabled, invalid, invalid_reason FROM agent_profiles WHERE agent_id='capture_router'"
+    ).fetchone()
+    assert row["enabled"] == 0
+    assert row["invalid"] == 1
+    assert "parse" in row["invalid_reason"].lower()
+    assert agent_enabled("capture_router") is False
+
+
 def test_agent_get_routes_read_mirror_without_scanning(db, vault_tmp, data_tmp) -> None:
     from mastisk.agents.studio import scan_agent_profiles, scan_agent_skills
 
@@ -381,14 +431,12 @@ def test_agent_get_routes_read_mirror_without_scanning(db, vault_tmp, data_tmp) 
 
     with (
         patch(
-            "mastisk.routes.agents_route.scan_agent_profiles",
+            "mastisk.agents.studio.scan_agent_profiles",
             side_effect=AssertionError("GET routes must not scan profiles"),
-            create=True,
         ),
         patch(
-            "mastisk.routes.agents_route.scan_agent_skills",
+            "mastisk.agents.studio.scan_agent_skills",
             side_effect=AssertionError("GET routes must not scan skills"),
-            create=True,
         ),
         _client(vault_tmp, data_tmp, db) as client,
     ):

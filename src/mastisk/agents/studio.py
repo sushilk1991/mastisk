@@ -55,7 +55,15 @@ def scan_agent_profiles(paths: list[Path] | None = None) -> dict[str, int]:
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 parse_error = _parse_error_reason("profile", exc)
                 log.info("agent studio: skipping malformed profile %s: %s", path, exc)
-                profile = _invalid_profile(path, parse_error)
+                previous = conn.execute(
+                    "SELECT * FROM agent_profiles WHERE agent_id = ?",
+                    (path.stem,),
+                ).fetchone()
+                profile = _invalid_profile(
+                    path,
+                    parse_error,
+                    dict(previous) if previous is not None else None,
+                )
             agent_id = profile["agent_id"]
             seen.add(agent_id)
             if parse_error is None:
@@ -194,15 +202,17 @@ def parse_agent_skill_file(path: Path) -> dict[str, Any]:
     }
 
 
-def _invalid_profile(path: Path, reason: str) -> dict[str, Any]:
+def _invalid_profile(path: Path, reason: str, previous: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "agent_id": path.stem,
         "path": _relative_path(path),
-        "enabled": True,
-        "model": None,
-        "skills": [],
-        "prompt_override": "",
-        "slot_overrides": {},
+        "enabled": bool(previous["enabled"]) if previous is not None else True,
+        "model": previous.get("model") if previous is not None else None,
+        "skills": _loads_list(previous.get("skills_json")) if previous is not None else [],
+        "prompt_override": (previous.get("prompt_override") or "") if previous is not None else "",
+        "slot_overrides": (
+            _loads_dict(previous.get("slot_overrides_json")) if previous is not None else {}
+        ),
         "frontmatter": {},
         "body": "",
         "invalid_reason": reason,
@@ -227,10 +237,20 @@ def write_agent_profile(agent_id: str, updates: dict[str, Any]) -> dict[str, Any
     path = agents_dir() / f"{definition.id}.md"
     with _WRITE_PROFILE_LOCK, host_file_lock(path):
         if path.exists():
-            parsed = parse_agent_profile_file(path)
-            meta = dict(parsed["frontmatter"])
-            body = parsed["prompt_override"]
-            slot_overrides = dict(parsed["slot_overrides"])
+            try:
+                parsed = parse_agent_profile_file(path)
+                meta = dict(parsed["frontmatter"])
+                body = parsed["prompt_override"]
+                slot_overrides = dict(parsed["slot_overrides"])
+            except (OSError, ValueError, yaml.YAMLError):
+                previous = profile_payload(definition.id)
+                meta = {
+                    "enabled": previous.get("enabled", True),
+                    "model": previous.get("model"),
+                    "skills": previous.get("skills", []),
+                }
+                body = _raw_body_after_frontmatter(path.read_text(encoding="utf-8"))
+                slot_overrides = dict(previous.get("slot_overrides") or {})
         else:
             meta = {"enabled": True, "model": None, "skills": []}
             body = ""
@@ -584,6 +604,17 @@ def _skill_row(row: dict[str, Any]) -> dict[str, Any]:
 def _parse_error_reason(kind: str, exc: Exception) -> str:
     message = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
     return f"{kind} parse error: {message}"
+
+
+def _raw_body_after_frontmatter(markdown: str) -> str:
+    opener = re.match(r"\A---[ \t]*\r?\n", markdown)
+    if opener is None:
+        return markdown.strip()
+    closer = re.search(r"^---[ \t]*\r?$", markdown[opener.end():], re.MULTILINE)
+    if closer is None:
+        return markdown.strip()
+    close_end = opener.end() + closer.end()
+    return markdown[close_end:].lstrip("\r\n").strip()
 
 
 def _string_list(value: object) -> list[str]:
