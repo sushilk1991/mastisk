@@ -204,6 +204,36 @@ def test_scan_library_tombstones_deleted_book_highlights_without_resurrecting_qu
     assert quote_row["deleted_at"] is not None
 
 
+def test_find_book_slug_shortcut_respects_author(db, vault_tmp):
+    from mastisk.library.sync import find_book, scan_books
+
+    book_dir = vault_tmp / "library" / "books"
+    book_dir.mkdir(parents=True)
+    (book_dir / "becoming.md").write_text(
+        "---\n"
+        "title: Becoming\n"
+        "author: Michelle Obama\n"
+        "status: want\n"
+        "---\n\n"
+        "## Highlights\n",
+        encoding="utf-8",
+    )
+    (book_dir / "becoming-2.md").write_text(
+        "---\n"
+        "title: Becoming\n"
+        "author: Cindy Crawford\n"
+        "status: want\n"
+        "---\n\n"
+        "## Highlights\n",
+        encoding="utf-8",
+    )
+    scan_books()
+
+    assert find_book("Becoming", author="Michelle Obama")["slug"] == "becoming"
+    assert find_book("Becoming", author="Cindy Crawford")["slug"] == "becoming-2"
+    assert find_book("becoming", author="Cindy Crawford")["slug"] == "becoming-2"
+
+
 def test_quotes_routes_append_thoughts_file_first(db, vault_tmp, data_tmp):
     with _client(vault_tmp, data_tmp, db) as client:
         created = client.post(

@@ -693,6 +693,7 @@ def find_book(ref: str | None, *, author: str | None = None) -> dict[str, Any] |
     if not clean:
         return None
     slug_ref = slugify(clean)
+    target_author = _normalize_title(author)
     with connect() as conn:
         if slug_ref:
             row = conn.execute(
@@ -700,12 +701,13 @@ def find_book(ref: str | None, *, author: str | None = None) -> dict[str, Any] |
                 (slug_ref,),
             ).fetchone()
             if row:
-                return _book_row(dict(row))
+                book = _book_row(dict(row))
+                if not target_author or _normalize_title(book.get("author")) == target_author:
+                    return book
         rows = conn.execute(
             "SELECT * FROM books WHERE deleted_at IS NULL ORDER BY updated_at DESC"
         ).fetchall()
     target_title = _normalize_title(clean)
-    target_author = _normalize_title(author)
     for row in rows:
         book = _book_row(dict(row))
         if _normalize_title(book["title"]) != target_title:
