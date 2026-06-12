@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
+import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -41,6 +43,7 @@ from mastisk.settings import get_settings
 
 _CREATE_BOOK_LOCK = threading.Lock()
 _CREATE_QUOTE_LOCK = threading.Lock()
+log = logging.getLogger("mastisk.library.sync")
 _VALID_BOOK_STATUSES = {"want", "reading", "finished", "abandoned"}
 _VALID_SOURCE_TYPES = {"book", "article", "podcast", "conversation"}
 _HIGHLIGHT_RE = re.compile(r"^\s*-\s+(?P<text>.+?)\s*$")
@@ -140,6 +143,11 @@ def scan_books(paths: list[Path] | None = None, *, recover: bool = False) -> dic
 
 
 def scan_quotes(paths: list[Path] | None = None) -> dict[str, int]:
+    """Mirror quote files.
+
+    If two quote files declare the same source/content identity, the first one
+    mirrored wins and later duplicate files are left on disk but ignored.
+    """
     quote_paths = paths if paths is not None else _quote_paths()
     seen: set[str] = set()
     upserted = 0
@@ -154,29 +162,62 @@ def scan_quotes(paths: list[Path] | None = None) -> dict[str, int]:
                 quote = parse_quote_file(path)
             quote_id = quote["id"]
             seen.add(quote_id)
-            conn.execute(
-                """INSERT INTO quotes
-                   (id, path, text, content_hash, source_type, source_ref, tags_json, deleted_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
-                   ON CONFLICT(id) DO UPDATE SET
-                     path=excluded.path,
-                     text=excluded.text,
-                     content_hash=excluded.content_hash,
-                     source_type=excluded.source_type,
-                     source_ref=excluded.source_ref,
-                     tags_json=excluded.tags_json,
-                     deleted_at=NULL,
-                     updated_at=CURRENT_TIMESTAMP""",
-                (
-                    quote_id,
+            duplicate = _find_quote_by_source_hash_in_conn(
+                conn,
+                quote["source_type"],
+                quote.get("source_ref"),
+                quote["content_hash"],
+            )
+            if duplicate is not None and duplicate["id"] != quote_id:
+                log.warning(
+                    "duplicate quote source hash ignored: path=%s existing_id=%s duplicate_id=%s",
                     quote["path"],
-                    quote["text"],
-                    quote["content_hash"],
+                    duplicate["id"],
+                    quote_id,
+                )
+                seen.discard(quote_id)
+                continue
+            try:
+                conn.execute(
+                    """INSERT INTO quotes
+                       (id, path, text, content_hash, source_type, source_ref, tags_json, deleted_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+                       ON CONFLICT(id) DO UPDATE SET
+                         path=excluded.path,
+                         text=excluded.text,
+                         content_hash=excluded.content_hash,
+                         source_type=excluded.source_type,
+                         source_ref=excluded.source_ref,
+                         tags_json=excluded.tags_json,
+                         deleted_at=NULL,
+                         updated_at=CURRENT_TIMESTAMP""",
+                    (
+                        quote_id,
+                        quote["path"],
+                        quote["text"],
+                        quote["content_hash"],
+                        quote["source_type"],
+                        quote.get("source_ref"),
+                        json.dumps(quote["tags"], ensure_ascii=False),
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                duplicate = _find_quote_by_source_hash_in_conn(
+                    conn,
                     quote["source_type"],
                     quote.get("source_ref"),
-                    json.dumps(quote["tags"], ensure_ascii=False),
-                ),
-            )
+                    quote["content_hash"],
+                )
+                if duplicate is None or duplicate["id"] == quote_id:
+                    raise
+                log.warning(
+                    "duplicate quote source hash ignored: path=%s existing_id=%s duplicate_id=%s",
+                    quote["path"],
+                    duplicate["id"],
+                    quote_id,
+                )
+                seen.discard(quote_id)
+                continue
             conn.execute("DELETE FROM quote_thoughts WHERE quote_id = ?", (quote_id,))
             for thought in quote["thoughts"]:
                 conn.execute(
@@ -428,12 +469,6 @@ def create_quote_file(
     source = _clean_source_type(source_type)
     ref = _clean_text(source_ref)
     digest = content_hash(clean)
-    existing = _find_quote_by_source_hash(source, ref, digest)
-    if existing is not None:
-        if not (vault_dir() / existing["path"]).exists():
-            _write_quote_file(existing["id"], clean, source, ref, _clean_tags(tags or existing["tags"]))
-            scan_quotes([vault_dir() / existing["path"]])
-        return existing
     meta = {
         "source_type": source,
         "source_ref": ref,
@@ -441,9 +476,21 @@ def create_quote_file(
     }
     content = dump_quote_file(meta, clean, [])
     with _CREATE_QUOTE_LOCK:
+        existing = _find_quote_by_source_hash(source, ref, digest)
+        if existing is not None:
+            if not (vault_dir() / existing["path"]).exists():
+                _write_quote_file(
+                    existing["id"],
+                    clean,
+                    source,
+                    ref,
+                    _clean_tags(tags or existing["tags"]),
+                )
+                scan_quotes([vault_dir() / existing["path"]])
+            return existing
         path = _create_quote_file_exclusive(clean, content, now=now)
-    scan_quotes([path])
-    quote = quote_payload(path.stem)
+        scan_quotes([path])
+        quote = quote_payload(path.stem)
     if quote is None:
         raise RuntimeError(f"quote mirror missing after write: {path.stem}")
     return quote
@@ -805,17 +852,26 @@ def _find_quote_by_source_hash(
     digest: str,
 ) -> dict[str, Any] | None:
     with connect() as conn:
-        row = conn.execute(
-            """SELECT * FROM quotes
-               WHERE source_type = ?
-                 AND COALESCE(source_ref, '') = ?
-                 AND content_hash = ?
-                 AND deleted_at IS NULL
-               ORDER BY created_at ASC
-               LIMIT 1""",
-            (source_type, source_ref or "", digest),
-        ).fetchone()
+        row = _find_quote_by_source_hash_in_conn(conn, source_type, source_ref, digest)
     return _quote_row(dict(row)) if row else None
+
+
+def _find_quote_by_source_hash_in_conn(
+    conn,
+    source_type: str,
+    source_ref: str | None,
+    digest: str,
+):
+    return conn.execute(
+        """SELECT * FROM quotes
+           WHERE source_type = ?
+             AND COALESCE(source_ref, '') = ?
+             AND content_hash = ?
+             AND deleted_at IS NULL
+           ORDER BY created_at ASC
+           LIMIT 1""",
+        (source_type, source_ref or "", digest),
+    ).fetchone()
 
 
 def _clean_frontmatter(meta: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -208,6 +211,57 @@ def test_quotes_routes_append_thoughts_file_first(db, vault_tmp, data_tmp):
         )
         assert "- 2026-06-11 10:00 This is about product surfaces too." in file_text
         assert "- 2026-06-11 10:05 Append-only means no quiet rewrite." in file_text
+
+
+def test_scan_quotes_skips_duplicate_source_hash_file(db, vault_tmp, caplog):
+    from mastisk.library.sync import dump_quote_file, scan_quotes
+
+    quote_dir = vault_tmp / "library" / "quotes"
+    quote_dir.mkdir(parents=True)
+    content = dump_quote_file(
+        {"source_type": "book", "source_ref": "same-book", "tags": []},
+        "Duplicate quote text.",
+        [],
+    )
+    (quote_dir / "20260611-a.md").write_text(content, encoding="utf-8")
+    (quote_dir / "20260611-b.md").write_text(content, encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="mastisk.library.sync"):
+        result = scan_quotes()
+
+    assert result == {"upserted": 1}
+    rows = db.execute("SELECT id, path FROM quotes WHERE deleted_at IS NULL").fetchall()
+    assert len(rows) == 1
+    assert "duplicate quote source hash" in caplog.text
+
+
+def test_create_quote_file_dedupes_concurrent_create_race(db, vault_tmp, monkeypatch):
+    from mastisk.library import sync
+
+    original_find = sync._find_quote_by_source_hash
+
+    def slow_miss(*args, **kwargs):
+        found = original_find(*args, **kwargs)
+        if found is None:
+            time.sleep(0.05)
+        return found
+
+    monkeypatch.setattr(sync, "_find_quote_by_source_hash", slow_miss)
+
+    def create():
+        return sync.create_quote_file(
+            text="Race-safe quote.",
+            source_type="conversation",
+            source_ref="same-source",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: create(), range(2)))
+
+    assert {result["id"] for result in results} == {results[0]["id"]}
+    assert len(list((vault_tmp / "library" / "quotes").glob("*.md"))) == 1
+    rows = db.execute("SELECT id FROM quotes WHERE deleted_at IS NULL").fetchall()
+    assert len(rows) == 1
 
 
 def test_kindle_parser_handles_good_bad_bom_and_crlf():
