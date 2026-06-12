@@ -41,7 +41,7 @@ import { TweetThreadView } from './components/TweetThreadView';
 import { PodcastsListView } from './components/PodcastsListView';
 import { PodcastView } from './components/PodcastView';
 import {
-  InboxTriageView, InventoryView, JournalView, PeopleView, ProjectsView, RoutinesView, TasksView, TodayView,
+  ContentView, InboxTriageView, InventoryView, JournalView, PeopleView, ProjectsView, RoutinesView, TasksView, TodayView,
 } from './components/DashboardViews';
 
 export function App() {
@@ -253,6 +253,7 @@ export function App() {
         {view === 'journal' && <JournalView liveKey={tickKey}/>}
         {view === 'people' && <PeopleView liveKey={tickKey}/>}
         {view === 'inventory' && <InventoryView liveKey={tickKey}/>}
+        {view === 'content' && <ContentView liveKey={tickKey} onNavigate={navigate}/>}
         {view === 'inbox_triage' && <InboxTriageView liveKey={tickKey}/>}
         {view === 'roundtables' && <RoundtablesListView onNavigate={navigate}/>}
         {view === 'roundtable' && currentRoundtable !== null && (

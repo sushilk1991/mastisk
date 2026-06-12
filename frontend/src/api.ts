@@ -1,6 +1,6 @@
 import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
-  BlogPostSummary, BookDetail, BookHighlight, BookStatus, BookSummary, CaptureTriageItem, CaptureTriageTarget, Digest, DigestAudit, Domain, Feed,
+  BlogPostSummary, BookDetail, BookHighlight, BookStatus, BookSummary, CaptureTriageItem, CaptureTriageTarget, ContentDetail, ContentKind, ContentList, ContentStatus, Digest, DigestAudit, Domain, Feed,
   FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, InventoryDetail, InventoryList, InventoryStatus, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
   KindleImportResult, KindleReviewItem, PersonDetail, PersonSummary, PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, QuoteDetail, QuoteSourceType, QuoteSummary, ReminderRow,
   RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
@@ -540,6 +540,38 @@ export const api = {
     delete: (id: string): Promise<InventoryDetail> =>
       j<InventoryDetail>(`${BASE}/inventory/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     exportUrl: `${BASE}/inventory/export`,
+  },
+
+  contentApi: {
+    list: (filters: { kind?: string; status?: string; domain?: string } = {}): Promise<ContentList> => {
+      const params = new URLSearchParams();
+      if (filters.kind) params.set('kind', filters.kind);
+      if (filters.status) params.set('status', filters.status);
+      if (filters.domain) params.set('domain', filters.domain);
+      const qs = params.toString();
+      return j<ContentList>(qs ? `${BASE}/content?${qs}` : `${BASE}/content`);
+    },
+    get: (slug: string): Promise<ContentDetail> =>
+      j<ContentDetail>(`${BASE}/content/${encodeURIComponent(slug)}`),
+    create: (body: { title: string; kind: ContentKind | string; status?: ContentStatus | string; domain?: string | null; channel?: string | null; url?: string | null; publish_date?: string | null; outline?: string | null; checklist_template?: string | null }):
+      Promise<ContentDetail> =>
+      j<ContentDetail>(`${BASE}/content`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    patch: (slug: string, body: { status?: ContentStatus | string | null; domain?: string | null; channel?: string | null; url?: string | null; publish_date?: string | null }):
+      Promise<ContentDetail> =>
+      j<ContentDetail>(`${BASE}/content/${encodeURIComponent(slug)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    draft: (slug: string): Promise<{ blog_post_id: number; status: string }> =>
+      j<{ blog_post_id: number; status: string }>(
+        `${BASE}/content/${encodeURIComponent(slug)}/draft`,
+        { method: 'POST' },
+      ),
   },
 
   libraryApi: {

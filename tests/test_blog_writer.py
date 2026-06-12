@@ -200,6 +200,57 @@ def test_no_sources_in_window_fails(agent, db):
     assert "no sources in window" in row["error"]
 
 
+def test_content_seed_source_drafts_without_recent_sources(agent, db, vault_tmp):
+    """A content item draft should use its outline as the blog-writer source."""
+    from mastisk.agents.base import enqueue
+
+    bp_id = _seed_blog_post(db, theme="Local-first personal OS")
+    enqueue(
+        "blog_writer",
+        "draft",
+        {
+            "blog_post_id": bp_id,
+            "content_slug": "local-first-personal-os",
+            "content_source": {
+                "slug": "local-first-personal-os",
+                "title": "Local-first personal OS",
+                "kind": "article",
+                "body": "## Outline\n\n- Files are the API.",
+                "updated_at": datetime.now().astimezone().isoformat(),
+            },
+        },
+    )
+
+    async def fake_claude(prompt, **kwargs):
+        assert "Files are the API" in prompt
+        return {
+            "text": json.dumps(
+                {"title": "Content Draft", "tags": [], "body_md": "draft [source 1]"}
+            )
+        }
+
+    with patch(
+        "mastisk.agents.blog_writer.claude_bridge.run_claude",
+        new_callable=AsyncMock,
+        side_effect=fake_claude,
+    ):
+        asyncio.run(agent.run_once())
+
+    row = db.execute(
+        "SELECT status, title FROM blog_posts WHERE id=?", (bp_id,)
+    ).fetchone()
+    assert dict(row) == {"status": "done", "title": "Content Draft"}
+    source = db.execute(
+        "SELECT kind, ref, origin FROM blog_post_sources WHERE blog_post_id=?",
+        (bp_id,),
+    ).fetchone()
+    assert dict(source) == {
+        "kind": "content",
+        "ref": "local-first-personal-os",
+        "origin": "content_pipeline",
+    }
+
+
 # ─────────────────────────────── Claude → Ollama fallback ───────────────────────────────
 
 

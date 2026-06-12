@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from mastisk.agents.reminder_engine import create_task_due_reminder
 from mastisk.capture.router import Capture, route_capture
+from mastisk.content.sync import create_content_file
 from mastisk.inventory.sync import create_inventory_file
 from mastisk.journal import JournalFrontmatterError, append_log
 from mastisk.library.sync import create_quote_file, find_book, match_book_in_text
@@ -159,6 +160,19 @@ async def capture(
                 return filed
         except Exception:
             log.exception("capture inventory write failed; falling back to raw inbox note")
+            return _persist_inbox_fallback(req.text, req.source)
+
+    if routed.type == "content":
+        try:
+            filed = _persist_content_capture(
+                routed,
+                raw_text=req.text,
+                needs_triage=needs_triage,
+            )
+            if filed is not None:
+                return filed
+        except Exception:
+            log.exception("capture content write failed; falling back to raw inbox note")
             return _persist_inbox_fallback(req.text, req.source)
 
     try:
@@ -378,6 +392,31 @@ def _persist_inventory_capture(
     }
 
 
+def _persist_content_capture(
+    capture: Capture,
+    *,
+    raw_text: str,
+    needs_triage: bool,
+) -> dict | None:
+    title = _content_title(capture, raw_text)
+    if not title:
+        return None
+    item = create_content_file(
+        title=title,
+        kind=_content_kind(raw_text),
+        status="idea",
+        domain=capture.domain,
+        outline=capture.body,
+        needs_triage=needs_triage,
+    )
+    return {
+        "id": item["slug"],
+        "type": "content",
+        "destination": item["path"],
+        "needs_triage": needs_triage,
+    }
+
+
 def _inventory_name(capture: Capture | dict[str, Any], raw_text: str) -> str | None:
     title = _capture_text_field(capture, "title")
     if title:
@@ -389,6 +428,32 @@ def _inventory_name(capture: Capture | dict[str, Any], raw_text: str) -> str | N
     )
     if match:
         return match.group("name").strip()
+    return _capture_text_field(capture, "body")
+
+
+def _content_kind(raw_text: str) -> str:
+    match = re.match(
+        r"^\s*new\s+(?P<kind>video|article|podcast|newsletter|content)\s+idea\b",
+        raw_text,
+        re.I,
+    )
+    if not match:
+        return "article"
+    kind = match.group("kind").lower()
+    return "article" if kind == "content" else kind
+
+
+def _content_title(capture: Capture, raw_text: str) -> str | None:
+    title = _capture_text_field(capture, "title")
+    if title:
+        return title
+    match = re.match(
+        r"^\s*new\s+(?:video|article|podcast|newsletter|content)\s+idea\s*:?\s*(?P<title>.+?)\s*$",
+        raw_text,
+        re.I,
+    )
+    if match:
+        return match.group("title").strip()
     return _capture_text_field(capture, "body")
 
 

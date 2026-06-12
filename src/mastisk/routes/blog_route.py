@@ -338,6 +338,23 @@ def _resolve_source(conn: Any, row: dict) -> dict:
                 "url": url_row["url"] if url_row else None,
                 "deleted": False,
             }
+    elif kind == "content":
+        c = conn.execute(
+            """SELECT slug, title, kind, status, path
+               FROM content_items
+               WHERE slug = ? AND deleted_at IS NULL""",
+            (ref,),
+        ).fetchone()
+        if c is None:
+            resolved = {"title": "(content item deleted)", "deleted": True}
+        else:
+            resolved = {
+                "title": c["title"],
+                "summary": f"{c['kind']} / {c['status']}",
+                "slug": c["slug"],
+                "path": c["path"],
+                "deleted": False,
+            }
     elif kind == "roundtable":
         try:
             rt_id = int(ref)

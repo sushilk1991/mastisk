@@ -70,6 +70,9 @@ def test_capture_schema_matches_spec():
         ("save that quote from the podcast: stay hungry", "quote"),
         ("add my new monitor to inventory", "inventory"),
         ("new video idea: local-first personal OS", "content"),
+        ("new article idea: local-first personal OS", "content"),
+        ("new podcast idea: local-first personal OS", "content"),
+        ("new newsletter idea: local-first personal OS", "content"),
     ],
 )
 def test_command_override_detection_is_deterministic(text, intent):

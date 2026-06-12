@@ -121,7 +121,7 @@ async def test_scheduler_runs_daily_cron_catchups_on_boot(data_tmp, db, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_personal_os_scan_includes_inventory(db, monkeypatch):
+async def test_personal_os_scan_includes_inventory_and_content(db, monkeypatch):
     from mastisk import scheduler
 
     calls: list[str] = []
@@ -138,6 +138,7 @@ async def test_personal_os_scan_includes_inventory(db, monkeypatch):
     monkeypatch.setattr("mastisk.people.sync.scan_people", lambda: calls.append("people"))
     monkeypatch.setattr("mastisk.library.sync.scan_library", lambda: calls.append("library"))
     monkeypatch.setattr("mastisk.inventory.sync.scan_inventory", lambda: calls.append("inventory"))
+    monkeypatch.setattr("mastisk.content.sync.scan_content", lambda: calls.append("content"))
     monkeypatch.setattr("mastisk.journal.scan_journal_days", lambda: calls.append("journal"))
 
     class FakeScheduler:
@@ -167,5 +168,6 @@ async def test_personal_os_scan_includes_inventory(db, monkeypatch):
         "people",
         "library",
         "inventory",
+        "content",
         "journal",
     ]

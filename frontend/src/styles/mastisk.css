@@ -1582,6 +1582,39 @@ a { color: inherit; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
+.content-kanban-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(160px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.content-column {
+  min-height: 120px;
+}
+.content-card-main {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.content-column .dash-card,
+.project-card .content-card-main + select {
+  margin-top: 6px;
+}
+.project-card select {
+  width: 100%;
+  background: var(--bg-card);
+  color: var(--fg);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 12px;
+}
 .routine-card p {
   margin: 6px 0 10px;
   color: var(--fg-mute);
@@ -1929,6 +1962,7 @@ a { color: inherit; }
   .thread-title { font-size: 20px; }
   .dash-grid-2,
   .dash-split,
+  .content-kanban-grid,
   .routine-grid,
   .kv-block {
     grid-template-columns: 1fr;

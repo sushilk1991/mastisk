@@ -588,6 +588,48 @@ def test_capture_project_update_appends_to_project_log(
     assert "shipped capture routing" in project_text
 
 
+def test_capture_medium_confidence_content_creates_content_item_for_triage(
+    client_with_token,
+    vault_tmp,
+    fake_capture_router,
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="content",
+        confidence=0.72,
+        title="Local-first personal OS",
+        body="## Outline\n\n- Files are the API.",
+        domain="mastisk",
+    )
+
+    r = client_with_token.post(
+        "/api/capture",
+        json={
+            "text": "new newsletter idea: local-first personal OS",
+            "source": "watch",
+            "ts": "2026-06-11T09:00:00-07:00",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "content"
+    assert body["needs_triage"] is True
+    assert body["destination"] == "content/local-first-personal-os.md"
+
+    file_text = (vault_tmp / body["destination"]).read_text(encoding="utf-8")
+    assert "kind: newsletter" in file_text
+    assert "status: idea" in file_text
+    assert "needs_triage: true" in file_text
+    assert "Files are the API." in file_text
+
+    triage = client_with_token.get("/api/triage")
+    assert triage.status_code == 200, triage.text
+    item = next(row for row in triage.json() if row["detected_type"] == "content")
+    assert item["id"] == "content:local-first-personal-os"
+
+
 def test_capture_mid_confidence_project_update_persists_triage_tag(
     client_with_token, vault_tmp, fake_capture_router
 ):

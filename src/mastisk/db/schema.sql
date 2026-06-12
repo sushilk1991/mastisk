@@ -654,6 +654,31 @@ CREATE INDEX IF NOT EXISTS idx_inventory_status ON inventory(status);
 CREATE INDEX IF NOT EXISTS idx_inventory_location ON inventory(location);
 CREATE INDEX IF NOT EXISTS idx_inventory_active ON inventory(id) WHERE deleted_at IS NULL;
 
+-- ─────────────────────────────── Personal OS Phase 14 ───────────────────────────────
+-- Content files are markdown-canonical creator workflow items. The mirror
+-- powers list/kanban/filter views and draft spawning.
+
+CREATE TABLE IF NOT EXISTS content_items (
+  slug         TEXT PRIMARY KEY,
+  path         TEXT UNIQUE NOT NULL,
+  title        TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'idea',
+  domain       TEXT,
+  channel      TEXT,
+  url          TEXT,
+  publish_date TEXT,
+  needs_triage INTEGER NOT NULL DEFAULT 0,
+  deleted_at   DATETIME,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_items_kind ON content_items(kind);
+CREATE INDEX IF NOT EXISTS idx_content_items_status ON content_items(status);
+CREATE INDEX IF NOT EXISTS idx_content_items_domain ON content_items(domain);
+CREATE INDEX IF NOT EXISTS idx_content_items_active ON content_items(slug) WHERE deleted_at IS NULL;
+
 -- ─────────────────────────────── Personal OS Phase 6 ───────────────────────────────
 -- Journal day files are markdown-canonical. This table mirrors journal/*.md for
 -- timeline and dashboard queries.
@@ -923,7 +948,7 @@ END;
 CREATE TABLE IF NOT EXISTS blog_post_sources (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   blog_post_id  INTEGER NOT NULL REFERENCES blog_posts(id) ON DELETE CASCADE,
-  kind          TEXT NOT NULL,                   -- 'note' | 'article' | 'roundtable'
+  kind          TEXT NOT NULL,                   -- 'note' | 'article' | 'roundtable' | 'content'
   ref           TEXT NOT NULL,                   -- stringified (note_id | article_id | roundtable_id)
   rank          INTEGER NOT NULL,                -- N in `[source N]` — 1-indexed, matches the Sources block
   used          INTEGER NOT NULL DEFAULT 0,      -- 1 if cited in body, 0 if offered-but-unused

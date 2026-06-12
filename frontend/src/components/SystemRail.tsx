@@ -18,6 +18,7 @@ const JUMPS: { id: View; l: string; d: string }[] = [
   { id: 'routines',       l: 'Routines',       d: 'Streaks' },
   { id: 'journal',        l: 'Journal',        d: 'Timeline' },
   { id: 'inventory',      l: 'Inventory',      d: 'Possessions' },
+  { id: 'content',        l: 'Content',        d: 'Draft pipeline' },
   { id: 'library',        l: 'Library',        d: 'Books and quotes' },
   { id: 'inbox_triage',   l: 'Inbox triage',   d: 'Needs classification' },
   { id: 'digest',         l: 'Daily Digest',   d: 'Agent reading' },

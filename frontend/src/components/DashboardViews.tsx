@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { api, FocusFullError } from '../api';
 import type {
   CalendarToday, CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
-  ChecklistTemplate, InventoryDetail, InventoryStatus, InventorySummary, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
+  ChecklistTemplate, ContentDetail, ContentKind, ContentList, ContentStatus, ContentSummary, InventoryDetail, InventoryStatus, InventorySummary, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
   RoutineGroups, RoutineProgress, RoutineRow, SlippingItem, TaskRow, TimeOfDay, View,
 } from '../types';
 
@@ -24,6 +24,8 @@ const PRIORITIES: { value: '' | 'high' | 'medium' | 'low'; label: string }[] = [
   { value: 'low', label: 'low' },
 ];
 const INVENTORY_STATUSES: InventoryStatus[] = ['owned', 'sold', 'discarded'];
+const CONTENT_STATUSES: ContentStatus[] = ['idea', 'outline', 'editing', 'waiting', 'published', 'done'];
+const CONTENT_KINDS: ContentKind[] = ['video', 'article', 'podcast', 'newsletter'];
 type ErrorSetter = (message: string | null) => void;
 type ChangeHandler = () => void | Promise<void>;
 
@@ -1072,6 +1074,270 @@ export function InventoryView({ liveKey }: LiveProps) {
   );
 }
 
+export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
+  const [data, setData] = useState<ContentList | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ContentDetail | null>(null);
+  const [kindFilter, setKindFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [domainFilter, setDomainFilter] = useState('');
+  const [newTitle, setNewTitle] = useState('');
+  const [newKind, setNewKind] = useState<ContentKind>('article');
+  const [newDomain, setNewDomain] = useState('');
+  const [newChannel, setNewChannel] = useState('');
+  const [newOutline, setNewOutline] = useState('');
+  const [newTemplate, setNewTemplate] = useState('');
+  const [editStatus, setEditStatus] = useState<ContentStatus>('idea');
+  const [editChannel, setEditChannel] = useState('');
+  const [editUrl, setEditUrl] = useState('');
+  const [editPublishDate, setEditPublishDate] = useState('');
+  const [draftingSlug, setDraftingSlug] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function loadList() {
+    setErr(null);
+    try {
+      const result = await api.contentApi.list({
+        kind: kindFilter || undefined,
+        status: statusFilter || undefined,
+        domain: domainFilter.trim() || undefined,
+      });
+      setData(result);
+      setSelected((current) => (
+        current && result.items.some((item) => item.slug === current)
+          ? current
+          : result.items[0]?.slug ?? null
+      ));
+    } catch (e) {
+      setErr(errorMessage(e));
+    }
+  }
+
+  async function loadDetail(slug: string | null) {
+    if (!slug) {
+      setDetail(null);
+      return;
+    }
+    setErr(null);
+    try {
+      setDetail(await api.contentApi.get(slug));
+    } catch (e) {
+      setDetail(null);
+      setErr(errorMessage(e));
+    }
+  }
+
+  useEffect(() => { void loadList(); }, [liveKey, kindFilter, statusFilter, domainFilter]);
+  useEffect(() => { void loadDetail(selected); }, [selected, liveKey]);
+  useEffect(() => {
+    if (!detail) return;
+    setEditStatus(CONTENT_STATUSES.includes(detail.status as ContentStatus) ? detail.status as ContentStatus : 'idea');
+    setEditChannel(detail.channel ?? '');
+    setEditUrl(detail.url ?? '');
+    setEditPublishDate(detail.publish_date ?? '');
+  }, [detail]);
+
+  async function createItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const title = newTitle.trim();
+    if (!title) return;
+    const created = await api.contentApi.create({
+      title,
+      kind: newKind,
+      status: 'idea',
+      domain: newDomain.trim() || null,
+      channel: newChannel.trim() || null,
+      outline: newOutline.trim() || null,
+      checklist_template: newTemplate.trim() || null,
+    });
+    setNewTitle('');
+    setNewDomain('');
+    setNewChannel('');
+    setNewOutline('');
+    setNewTemplate('');
+    await loadList();
+    setSelected(created.slug);
+  }
+
+  async function saveDetail() {
+    if (!detail) return;
+    const updated = await api.contentApi.patch(detail.slug, {
+      status: editStatus,
+      channel: editChannel.trim() || null,
+      url: editUrl.trim() || null,
+      publish_date: editPublishDate || null,
+    });
+    setDetail(updated);
+    await loadList();
+  }
+
+  async function moveStatus(slug: string, status: ContentStatus) {
+    const updated = await api.contentApi.patch(slug, { status });
+    if (detail?.slug === slug) setDetail(updated);
+    await loadList();
+  }
+
+  async function advanceDetail() {
+    if (!detail) return;
+    await moveStatus(detail.slug, nextContentStatus(detail.status));
+  }
+
+  async function spawnDraft() {
+    if (!detail) return;
+    setDraftingSlug(detail.slug);
+    try {
+      const result = await api.contentApi.draft(detail.slug);
+      onNavigate('blog_post', String(result.blog_post_id));
+    } finally {
+      setDraftingSlug(null);
+    }
+  }
+
+  const items = data?.items ?? [];
+  const kanban = data?.kanban ?? {};
+
+  return (
+    <div className="view dash-view">
+      <div className="view-h">Personal OS</div>
+      <h1 className="view-title">Content</h1>
+      {err && <p className="dash-error">{err}</p>}
+
+      <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createItem(event), setErr)}>
+        <input value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="Title"/>
+        <select value={newKind} onChange={(event) => setNewKind(event.target.value as ContentKind)}>
+          {CONTENT_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+        </select>
+        <input value={newDomain} onChange={(event) => setNewDomain(event.target.value)} placeholder="Domain"/>
+        <input value={newChannel} onChange={(event) => setNewChannel(event.target.value)} placeholder="Channel"/>
+        <input value={newTemplate} onChange={(event) => setNewTemplate(event.target.value)} placeholder="Checklist template"/>
+        <textarea value={newOutline} onChange={(event) => setNewOutline(event.target.value)} placeholder="Outline"/>
+        <button type="submit">create</button>
+      </form>
+
+      <div className="dash-filters">
+        <Select label="Kind" value={kindFilter} onChange={setKindFilter} options={[
+          ['', 'all'], ...CONTENT_KINDS.map((kind) => [kind, kind] as [string, string]),
+        ]}/>
+        <Select label="Status" value={statusFilter} onChange={setStatusFilter} options={[
+          ['', 'all'], ...CONTENT_STATUSES.map((status) => [status, status] as [string, string]),
+        ]}/>
+        <label>
+          <span>Domain</span>
+          <input value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} placeholder="exact match"/>
+        </label>
+      </div>
+
+      <section className="dash-section content-kanban">
+        <div className="dash-section-head">
+          <h2>Kanban</h2>
+          <span className="dash-muted">{items.length} items</span>
+        </div>
+        <div className="content-kanban-grid">
+          {CONTENT_STATUSES.map((status) => (
+            <div className="dash-card content-column" key={status}>
+              <div className="dash-section-head">
+                <h3>{status}</h3>
+                <span className="dash-muted">{(kanban[status] ?? []).length}</span>
+              </div>
+              {(kanban[status] ?? []).length === 0 ? (
+                <EmptyLine>Empty.</EmptyLine>
+              ) : (
+                <div className="dash-list compact">
+                  {(kanban[status] ?? []).map((item) => (
+                    <ContentCard
+                      key={item.slug}
+                      item={item}
+                      active={selected === item.slug}
+                      onSelect={() => setSelected(item.slug)}
+                      onMove={(next) => runMutation(() => moveStatus(item.slug, next), setErr)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {items.length === 0 ? (
+        <EmptyLine>No content items match these filters.</EmptyLine>
+      ) : (
+        <div className="dash-split">
+          <div className="dash-list">
+            {items.map((item) => (
+              <ContentCard
+                key={item.slug}
+                item={item}
+                active={selected === item.slug}
+                onSelect={() => setSelected(item.slug)}
+                onMove={(next) => runMutation(() => moveStatus(item.slug, next), setErr)}
+              />
+            ))}
+          </div>
+          <div className="dash-panel">
+            {!detail ? <EmptyLine>Select a content item.</EmptyLine> : (
+              <>
+                <div className="dash-section-head">
+                  <h2>{detail.title}</h2>
+                  <button
+                    className="chip"
+                    type="button"
+                    disabled={
+                      !['article', 'newsletter'].includes(detail.kind)
+                        || draftingSlug === detail.slug
+                    }
+                    onClick={() => runMutation(spawnDraft, setErr)}
+                  >
+                    {draftingSlug === detail.slug ? 'spawning' : 'spawn draft'}
+                  </button>
+                </div>
+                <div className="dash-tags">
+                  <span>{detail.kind}</span>
+                  <span>{detail.status}</span>
+                  {detail.domain && <span>{detail.domain}</span>}
+                  {detail.channel && <span>{detail.channel}</span>}
+                  {detail.needs_triage && <span className="warn">needs triage</span>}
+                </div>
+                <div className="dash-inline-form">
+                  <select value={editStatus} onChange={(event) => setEditStatus(event.target.value as ContentStatus)}>
+                    {CONTENT_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+                  </select>
+                  <input value={editChannel} onChange={(event) => setEditChannel(event.target.value)} placeholder="Channel"/>
+                  <input value={editUrl} onChange={(event) => setEditUrl(event.target.value)} placeholder="URL"/>
+                  <input type="date" value={editPublishDate} onChange={(event) => setEditPublishDate(event.target.value)} />
+                  <button type="button" onClick={() => runMutation(saveDetail, setErr)}>save</button>
+                  <button type="button" className="muted" onClick={() => runMutation(advanceDetail, setErr)}>advance</button>
+                </div>
+                <KeyValueBlock values={{
+                  path: detail.path,
+                  publish_date: detail.publish_date,
+                  url: detail.url,
+                }}/>
+                <SectionBlock title="Outline" body={detail.body}/>
+                <section className="dash-section nested">
+                  <h3 className="dash-mini-h">Linked tasks</h3>
+                  {detail.tasks.length === 0 ? <EmptyLine>No open tasks.</EmptyLine> : (
+                    <div className="dash-list compact">
+                      {detail.tasks.map((task) => (
+                        <TaskLine
+                          key={task.uid}
+                          task={task}
+                          today={localIsoToday()}
+                          onChanged={() => { void loadDetail(detail.slug); }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function InboxTriageView({ liveKey }: LiveProps) {
   const [items, setItems] = useState<CaptureTriageItem[]>([]);
   const [needsReview, setNeedsReview] = useState<NeedsReviewItem[]>([]);
@@ -1758,6 +2024,39 @@ function SectionBlock({ title, body }: { title: string; body?: string }) {
   );
 }
 
+function ContentCard({
+  item,
+  active,
+  onSelect,
+  onMove,
+}: {
+  item: ContentSummary;
+  active: boolean;
+  onSelect: () => void;
+  onMove: (status: ContentStatus) => void;
+}) {
+  return (
+    <div className={`dash-card project-card ${active ? 'active' : ''}`}>
+      <button className="content-card-main" type="button" onClick={onSelect}>
+        <div className="dash-card-title">{item.title}</div>
+        <div className="dash-tags">
+          <span>{item.kind}</span>
+          <span>{item.status}</span>
+          {item.domain && <span>{item.domain}</span>}
+          {item.needs_triage && <span className="warn">needs triage</span>}
+        </div>
+      </button>
+      <select
+        value={CONTENT_STATUSES.includes(item.status as ContentStatus) ? item.status : 'idea'}
+        onChange={(event) => onMove(event.target.value as ContentStatus)}
+        aria-label={`Move ${item.title}`}
+      >
+        {CONTENT_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+      </select>
+    </div>
+  );
+}
+
 function ScaleSetter({ label, value, onSet }: { label: string; value: number | null; onSet: (value: number | null) => void }) {
   return (
     <div className="scale-setter">
@@ -1774,6 +2073,12 @@ function optionalNumber(value: string): number | null | undefined {
   if (!text) return null;
   const number = Number(text);
   return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+function nextContentStatus(status: string): ContentStatus {
+  const current = CONTENT_STATUSES.indexOf(status as ContentStatus);
+  if (current < 0) return 'idea';
+  return CONTENT_STATUSES[Math.min(current + 1, CONTENT_STATUSES.length - 1)];
 }
 
 function formatInventoryValue(value: number | null | undefined): string {

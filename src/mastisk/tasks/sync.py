@@ -12,7 +12,7 @@ from mastisk.file_locks import host_file_lock
 from mastisk.journal import ensure_day, scan_journal_days
 from mastisk.journal import skeleton as journal_skeleton
 from mastisk.markdown_sections import append_to_section
-from mastisk.paths import journal_dir, projects_dir, vault_dir
+from mastisk.paths import content_dir, journal_dir, projects_dir, vault_dir
 from mastisk.projects.sync import get_project, parse_project_file
 from mastisk.routes.notes import atomic_write
 from mastisk.tasks.parser import (
@@ -64,7 +64,7 @@ def scan_task_hosts(
                     atomic_write(path, markdown_with_uids)
                     markdown = markdown_with_uids
                     assigned += len(new_uids)
-                project, domain = _project_domain_for_host(path, rel_path)
+                project, domain = _task_context_for_host(path, rel_path)
                 for task in parse_markdown_tasks(
                     markdown,
                     host_path=rel_path,
@@ -351,6 +351,8 @@ def _default_task_hosts() -> list[Path]:
         paths.extend(sorted(p for p in journal_dir().glob("*.md") if p.is_file()))
     if projects_dir().exists():
         paths.extend(sorted(p for p in projects_dir().glob("*.md") if p.is_file()))
+    if content_dir().exists():
+        paths.extend(sorted(p for p in content_dir().glob("*.md") if p.is_file()))
     return paths
 
 
@@ -390,8 +392,10 @@ def _is_journal_day_path(path: Path) -> bool:
     return True
 
 
-def _project_domain_for_host(path: Path, rel_path: str) -> tuple[str | None, str | None]:
+def _task_context_for_host(path: Path, rel_path: str) -> tuple[str | None, str | None]:
     if not rel_path.startswith("projects/") or not rel_path.endswith(".md"):
+        if rel_path.startswith("content/") and rel_path.endswith(".md"):
+            return None, _content_domain_for_host(path)
         return None, None
     slug = Path(rel_path).stem
     project = get_project(slug)
@@ -401,6 +405,15 @@ def _project_domain_for_host(path: Path, rel_path: str) -> tuple[str | None, str
         except Exception:
             project = None
     return slug, project.get("domain") if project else None
+
+
+def _content_domain_for_host(path: Path) -> str | None:
+    try:
+        from mastisk.content.sync import parse_content_file
+
+        return parse_content_file(path).get("domain")
+    except Exception:
+        return None
 
 
 def _soft_delete_disappeared(conn, scanned_hosts: list[str], seen: set[str]) -> None:

@@ -189,6 +189,29 @@ def _collapse_ws(text: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(text or "")).strip()
 
 
+def _content_source_from_payload(payload: dict[str, Any]) -> dict | None:
+    raw = payload.get("content_source")
+    if not isinstance(raw, dict):
+        return None
+    slug = _collapse_ws(str(raw.get("slug") or payload.get("content_slug") or ""))
+    title = _collapse_ws(str(raw.get("title") or slug))
+    body = str(raw.get("body") or "").strip()
+    if not slug or not (title or body):
+        return None
+    return {
+        "kind": "content",
+        "ref": slug,
+        "slug": slug,
+        "title": title,
+        "summary": title,
+        "body": body or title,
+        "classification": raw.get("kind") or "content",
+        "tags": ["content"],
+        "ts": raw.get("updated_at") or datetime.now().astimezone().isoformat(),
+        "origin": "content_pipeline",
+    }
+
+
 RERANK_PROMPT_TEMPLATE = """You are ranking knowledge-base sources by relevance to a theme. Return STRICT JSON only.
 
 Theme: {theme}
@@ -257,7 +280,10 @@ class BlogWriter(Agent):
             q.update_blog_post_status(conn, bp_id=bp_id, status="running")
 
         try:
+            content_source = _content_source_from_payload(payload)
             candidates = self._gather_sources(bp["window_days"])
+            if content_source is not None:
+                candidates.insert(0, content_source)
             if not candidates:
                 raise RuntimeError("no sources in window")
 
@@ -917,6 +943,13 @@ class BlogWriter(Agent):
             title_bit = c.get("title") or ref
             lines.append(f'### Source {n} — article "{title_bit}" (slug: {slug})')
             lines.append("- kind: article")
+            if c.get("ts"):
+                lines.append(f"- updated: {c['ts']}")
+        elif kind == "content":
+            slug = c.get("slug") or ref
+            title_bit = c.get("title") or ref
+            lines.append(f'### Source {n} — content item "{title_bit}" (slug: {slug})')
+            lines.append(f"- kind: content pipeline {c.get('classification') or 'item'}")
             if c.get("ts"):
                 lines.append(f"- updated: {c['ts']}")
         else:  # roundtable

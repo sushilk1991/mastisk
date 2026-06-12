@@ -146,6 +146,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     )
     _ensure_library_schema(conn)
     _ensure_inventory_schema(conn)
+    _ensure_content_schema(conn)
     conn.execute(
         """CREATE TABLE IF NOT EXISTS calendar_events (
              id          TEXT NOT NULL,
@@ -336,6 +337,40 @@ def _ensure_inventory_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_inventory_location ON inventory(location)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_inventory_active ON inventory(id) WHERE deleted_at IS NULL"
+    )
+
+
+def _ensure_content_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS content_items (
+             slug         TEXT PRIMARY KEY,
+             path         TEXT UNIQUE NOT NULL,
+             title        TEXT NOT NULL,
+             kind         TEXT NOT NULL,
+             status       TEXT NOT NULL DEFAULT 'idea',
+             domain       TEXT,
+             channel      TEXT,
+             url          TEXT,
+             publish_date TEXT,
+             needs_triage INTEGER NOT NULL DEFAULT 0,
+             deleted_at   DATETIME,
+             created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+             updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+    for column, decl in (
+        ("channel", "TEXT"),
+        ("url", "TEXT"),
+        ("publish_date", "TEXT"),
+        ("needs_triage", "INTEGER NOT NULL DEFAULT 0"),
+        ("deleted_at", "DATETIME"),
+    ):
+        _add_column_if_missing(conn, "content_items", column, decl)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_content_items_kind ON content_items(kind)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_content_items_status ON content_items(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_content_items_domain ON content_items(domain)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_content_items_active ON content_items(slug) WHERE deleted_at IS NULL"
     )
 
 

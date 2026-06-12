@@ -12,11 +12,17 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from mastisk.agents.reminder_engine import create_task_due_reminder
+from mastisk.content.sync import (
+    clear_content_triage,
+    create_content_file,
+    parse_content_file,
+    scan_content,
+)
 from mastisk.db.queries import connect
 from mastisk.file_locks import host_file_lock
 from mastisk.journal import append_log, scan_journal_days
 from mastisk.library.sync import create_quote_file
-from mastisk.paths import journal_dir, projects_dir, vault_dir
+from mastisk.paths import content_dir, journal_dir, projects_dir, vault_dir
 from mastisk.projects.sync import append_project_log, find_project, get_project
 from mastisk.routes.notes import atomic_write, persist_note_capture
 from mastisk.routines.sync import RoutineArchivedError, complete_routine_completion
@@ -56,6 +62,7 @@ def list_triage_items(limit: int = 100) -> list[dict[str, Any]]:
         *_typed_note_items(),
         *_journal_log_items(),
         *_project_log_items(),
+        *_content_items(),
     ]
     items.sort(key=lambda item: item.get("sort_key") or "", reverse=True)
     return [_public_item(item) for item in items[:limit]]
@@ -109,6 +116,8 @@ def _should_file_as_target(item: dict[str, Any], target_type: str) -> bool:
         return False
     if target_type == "project_update" and kind == "project_update":
         return False
+    if target_type == "content" and kind == "content":
+        return False
     return not _is_note_in_place_reclassify(item, target_type)
 
 
@@ -131,7 +140,7 @@ def _source_path_for_item(item: dict[str, Any]) -> Path | None:
         if task is None:
             return None
         return vault_dir() / task["host_path"]
-    if kind in {"journal", "project_update", "note"}:
+    if kind in {"journal", "project_update", "note", "content"}:
         return vault_dir() / str(source.get("path") or "")
     return None
 
@@ -155,6 +164,8 @@ def _restore_source_file_snapshot(snapshot: _SourceFileSnapshot) -> None:
         scan_task_hosts([snapshot.path])
     elif snapshot.kind == "journal":
         scan_journal_days([snapshot.path])
+    elif snapshot.kind == "content":
+        scan_content([snapshot.path])
 
 
 def _task_items() -> list[dict[str, Any]]:
@@ -298,6 +309,51 @@ def _project_log_items() -> list[dict[str, Any]]:
     return items
 
 
+def _content_items() -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    if not content_dir().exists():
+        return items
+    scan_content()
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT * FROM content_items
+               WHERE deleted_at IS NULL AND needs_triage = 1
+               ORDER BY updated_at DESC"""
+        ).fetchall()
+    for row in rows:
+        item = dict(row)
+        try:
+            parsed = parse_content_file(vault_dir() / item["path"])
+            title = parsed["title"]
+            body = parsed["body"].strip()
+            original = f"{title}\n\n{body}".strip() if body else title
+        except (OSError, ValueError):
+            title = item["title"]
+            original = title
+        items.append(
+            {
+                "id": f"content:{item['slug']}",
+                "kind": "content",
+                "detected_type": "content",
+                "original_text": original,
+                "confidence": None,
+                "capture": {
+                    "type": "content",
+                    "title": title,
+                    "body": original,
+                    "domain": item.get("domain"),
+                    "kind": item.get("kind"),
+                },
+                "source": {
+                    "path": item["path"],
+                    "slug": item["slug"],
+                },
+                "sort_key": item.get("updated_at") or item.get("created_at") or "",
+            }
+        )
+    return items
+
+
 def _triage_section_lines(path: Path, heading: str) -> list[tuple[int, str]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     in_frontmatter = bool(lines and lines[0] == "---")
@@ -417,6 +473,15 @@ def _file_as_target(item: dict[str, Any], target_type: str) -> None:
             notes=notes,
         )
         return
+    if target_type == "content":
+        title = _str_or_none(capture.get("title")) or text
+        create_content_file(
+            title=title,
+            kind=_str_or_none(capture.get("kind")) or "article",
+            domain=_str_or_none(capture.get("domain")),
+            outline=text,
+        )
+        return
     if target_type in {"note", "inbox"}:
         persist_note_capture(body=text, source="pwa")
         return
@@ -496,6 +561,9 @@ def _clear_triage_marker(item: dict[str, Any], *, target_type: str) -> None:
     if kind == "note":
         path = vault_dir() / str(source["path"])
         _clear_note_frontmatter(path, target_type=target_type)
+        return
+    if kind == "content":
+        clear_content_triage(str(source.get("slug") or ""))
 
 
 def _rewrite_line_containing(path: Path, needle: str, transform) -> None:

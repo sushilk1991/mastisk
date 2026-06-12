@@ -322,7 +322,7 @@ export type View =
   | 'graph' | 'mobile' | 'queue' | 'ingest' | 'lint' | 'settings'
   | 'open_questions'
   | 'notes' | 'note' | 'library'
-  | 'tasks' | 'projects' | 'routines' | 'journal' | 'people' | 'inventory' | 'inbox_triage'
+  | 'tasks' | 'projects' | 'routines' | 'journal' | 'people' | 'inventory' | 'content' | 'inbox_triage'
   | 'roundtables' | 'roundtable'
   | 'repos' | 'repo'
   | 'blog' | 'blog_post'
@@ -648,6 +648,35 @@ export interface ReminderRow {
   created_at: string;
   fired_at: string | null;
   last_error?: string | null;
+}
+
+export type ContentKind = 'video' | 'article' | 'podcast' | 'newsletter';
+export type ContentStatus = 'idea' | 'outline' | 'editing' | 'waiting' | 'published' | 'done';
+
+export interface ContentSummary {
+  slug: string;
+  path: string;
+  title: string;
+  kind: ContentKind | string;
+  status: ContentStatus | string;
+  domain: string | null;
+  channel: string | null;
+  url: string | null;
+  publish_date: string | null;
+  needs_triage: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ContentDetail extends ContentSummary {
+  frontmatter: Record<string, unknown>;
+  body: string;
+  tasks: TaskRow[];
+}
+
+export interface ContentList {
+  items: ContentSummary[];
+  kanban: Record<ContentStatus | string, ContentSummary[]>;
 }
 
 export interface CalendarStatus {
