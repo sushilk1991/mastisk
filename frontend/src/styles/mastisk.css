@@ -1325,6 +1325,19 @@ a { color: inherit; }
 }
 .dash-inline-form input { flex: 1; min-width: 0; }
 .dash-inline-form select { min-width: 120px; }
+.dash-notes-edit {
+  width: 100%;
+  min-height: 96px;
+  margin-top: 10px;
+  background: var(--bg-card);
+  color: var(--fg);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
 .dash-inline-form button,
 .mini-toggle,
 .task-check {

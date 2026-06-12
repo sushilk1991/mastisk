@@ -874,9 +874,12 @@ export function InventoryView({ liveKey }: LiveProps) {
   const [newValue, setNewValue] = useState('');
   const [newLocation, setNewLocation] = useState('');
   const [editName, setEditName] = useState('');
+  const [editAcquired, setEditAcquired] = useState('');
   const [editValue, setEditValue] = useState('');
   const [editStatus, setEditStatus] = useState<InventoryStatus>('owned');
   const [editLocation, setEditLocation] = useState('');
+  const [editPhoto, setEditPhoto] = useState('');
+  const [editNotes, setEditNotes] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
   async function loadList() {
@@ -917,9 +920,12 @@ export function InventoryView({ liveKey }: LiveProps) {
   useEffect(() => {
     if (!detail) return;
     setEditName(detail.name);
+    setEditAcquired(detail.acquired ?? '');
     setEditValue(detail.value == null ? '' : String(detail.value));
     setEditStatus(INVENTORY_STATUSES.includes(detail.status as InventoryStatus) ? detail.status as InventoryStatus : 'owned');
     setEditLocation(detail.location ?? '');
+    setEditPhoto(detail.photo ?? '');
+    setEditNotes(detail.body ?? '');
   }, [detail]);
 
   async function createItem(event: FormEvent<HTMLFormElement>) {
@@ -960,11 +966,21 @@ export function InventoryView({ liveKey }: LiveProps) {
     }
     const updated = await api.inventoryApi.patch(detail.id, {
       name,
+      acquired: editAcquired || null,
       value,
       status: editStatus,
       location: editLocation.trim() || null,
+      photo: editPhoto.trim() || null,
+      notes: editNotes,
     });
     setDetail(updated);
+    await loadList();
+  }
+
+  async function archiveDetail() {
+    if (!detail) return;
+    await api.inventoryApi.delete(detail.id);
+    setDetail(null);
     await loadList();
   }
 
@@ -1024,17 +1040,20 @@ export function InventoryView({ liveKey }: LiveProps) {
               <>
                 <div className="dash-section-head">
                   <h2>{detail.name}</h2>
-                  <span className="dash-muted">{detail.acquired ?? 'no acquired date'}</span>
+                  <button className="chip muted" type="button" onClick={() => runMutation(archiveDetail, setErr)}>archive</button>
                 </div>
                 <div className="dash-inline-form">
                   <input value={editName} onChange={(event) => setEditName(event.target.value)} placeholder="Name"/>
+                  <input type="date" value={editAcquired} onChange={(event) => setEditAcquired(event.target.value)} />
                   <select value={editStatus} onChange={(event) => setEditStatus(event.target.value as InventoryStatus)}>
                     {INVENTORY_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
                   </select>
                   <input type="number" min="0" step="0.01" value={editValue} onChange={(event) => setEditValue(event.target.value)} placeholder="Value"/>
                   <input value={editLocation} onChange={(event) => setEditLocation(event.target.value)} placeholder="Location"/>
+                  <input value={editPhoto} onChange={(event) => setEditPhoto(event.target.value)} placeholder="Photo path"/>
                   <button type="button" onClick={() => runMutation(saveDetail, setErr)}>save</button>
                 </div>
+                <textarea className="dash-notes-edit" value={editNotes} onChange={(event) => setEditNotes(event.target.value)} placeholder="Notes"/>
                 <KeyValueBlock values={{
                   acquired: detail.acquired,
                   value: detail.value,

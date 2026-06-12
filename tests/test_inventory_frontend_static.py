@@ -15,6 +15,13 @@ def test_inventory_frontend_route_nav_and_api_are_wired() -> None:
     assert "inventory: '/inventory'" in router
     assert 'view="inventory"' in sidebar
     assert "inventoryApi" in api
+    assert "inventoryApi.delete" in Path(
+        "frontend/src/components/DashboardViews.tsx"
+    ).read_text(encoding="utf-8")
+    assert "archive" in Path("frontend/src/components/DashboardViews.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "delete: (id: string)" in api
     assert "export function InventoryView" in Path(
         "frontend/src/components/DashboardViews.tsx"
     ).read_text(encoding="utf-8")

@@ -1,6 +1,7 @@
 """Inventory item file-first sync."""
 
 from mastisk.inventory.sync import (
+    archive_inventory,
     create_inventory_file,
     inventory_payload,
     list_inventory,
@@ -9,6 +10,7 @@ from mastisk.inventory.sync import (
 )
 
 __all__ = [
+    "archive_inventory",
     "create_inventory_file",
     "inventory_payload",
     "list_inventory",

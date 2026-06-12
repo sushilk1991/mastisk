@@ -530,13 +530,15 @@ export const api = {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       }),
-    patch: (id: string, body: { name?: string | null; value?: number | null; status?: InventoryStatus | string | null; location?: string | null }):
+    patch: (id: string, body: { name?: string | null; acquired?: string | null; value?: number | null; status?: InventoryStatus | string | null; location?: string | null; photo?: string | null; notes?: string | null }):
       Promise<InventoryDetail> =>
       j<InventoryDetail>(`${BASE}/inventory/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       }),
+    delete: (id: string): Promise<InventoryDetail> =>
+      j<InventoryDetail>(`${BASE}/inventory/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     exportUrl: `${BASE}/inventory/export`,
   },
 

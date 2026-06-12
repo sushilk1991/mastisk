@@ -536,6 +536,7 @@ export interface InventorySummary {
   status: InventoryStatus | string;
   location: string | null;
   photo: string | null;
+  archived?: boolean;
   deleted_at?: string | null;
   created_at?: string;
   updated_at?: string;

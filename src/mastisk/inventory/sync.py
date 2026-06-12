@@ -36,10 +36,11 @@ def scan_inventory(paths: list[Path] | None = None) -> dict[str, int]:
                 item = parse_inventory_file(path)
             item_id = item["id"]
             seen.add(item_id)
+            deleted_at_sql = "CURRENT_TIMESTAMP" if item.get("archived") else "NULL"
             conn.execute(
-                """INSERT INTO inventory
+                f"""INSERT INTO inventory
                    (id, path, name, acquired, value, status, location, photo, deleted_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, {deleted_at_sql})
                    ON CONFLICT(id) DO UPDATE SET
                      path=excluded.path,
                      name=excluded.name,
@@ -48,7 +49,7 @@ def scan_inventory(paths: list[Path] | None = None) -> dict[str, int]:
                      status=excluded.status,
                      location=excluded.location,
                      photo=excluded.photo,
-                     deleted_at=NULL,
+                     deleted_at={deleted_at_sql},
                      updated_at=CURRENT_TIMESTAMP""",
                 (
                     item_id,
@@ -79,6 +80,7 @@ def parse_inventory_file(path: Path) -> dict[str, Any]:
         "status": _clean_status(meta.get("status")),
         "location": _clean_text(meta.get("location")),
         "photo": _clean_text(meta.get("photo")),
+        "archived": _clean_archived(meta.get("archived")),
         "body": body,
         "frontmatter": meta,
     }
@@ -131,13 +133,34 @@ def patch_inventory(item_id: str, updates: dict[str, Any]) -> dict[str, Any] | N
             meta["name"] = clean_name
         if "status" in updates:
             meta["status"] = _clean_status(updates["status"])
+        if "acquired" in updates:
+            meta["acquired"] = _clean_patch_date(updates["acquired"], field="acquired")
         if "value" in updates:
             meta["value"] = _clean_value(updates["value"])
         if "location" in updates:
             meta["location"] = _clean_text(updates["location"])
-        atomic_write(path, dump_inventory_file(meta, parsed["body"]))
+        if "photo" in updates:
+            meta["photo"] = _clean_text(updates["photo"])
+        body = parsed["body"]
+        if "notes" in updates:
+            body = "" if updates["notes"] is None else str(updates["notes"])
+        atomic_write(path, dump_inventory_file(meta, body))
     scan_inventory([path])
     return inventory_payload(item_id)
+
+
+def archive_inventory(item_id: str) -> dict[str, Any] | None:
+    item = inventory_payload(item_id, include_archived=True)
+    if item is None:
+        return None
+    path = vault_dir() / item["path"]
+    with host_file_lock(path):
+        parsed = parse_inventory_file(path)
+        meta = dict(parsed["frontmatter"])
+        meta["archived"] = True
+        atomic_write(path, dump_inventory_file(meta, parsed["body"]))
+    scan_inventory([path])
+    return inventory_payload(item_id, include_archived=True)
 
 
 def list_inventory(
@@ -163,10 +186,13 @@ def list_inventory(
     return [_inventory_row(dict(row)) for row in rows]
 
 
-def inventory_payload(item_id: str) -> dict[str, Any] | None:
+def inventory_payload(item_id: str, *, include_archived: bool = False) -> dict[str, Any] | None:
+    clauses = ["id = ?"]
+    if not include_archived:
+        clauses.append("deleted_at IS NULL")
     with connect() as conn:
         row = conn.execute(
-            "SELECT * FROM inventory WHERE id = ? AND deleted_at IS NULL",
+            "SELECT * FROM inventory WHERE " + " AND ".join(clauses),
             (item_id,),
         ).fetchone()
     if row is None:
@@ -177,6 +203,9 @@ def inventory_payload(item_id: str) -> dict[str, Any] | None:
         _soft_delete_inventory(item_id)
         return None
     parsed = parse_inventory_file(path)
+    if parsed.get("archived") and not include_archived:
+        _soft_delete_inventory(item_id)
+        return None
     return {
         **payload,
         "name": parsed["name"],
@@ -185,6 +214,7 @@ def inventory_payload(item_id: str) -> dict[str, Any] | None:
         "status": parsed["status"],
         "location": parsed.get("location"),
         "photo": parsed.get("photo"),
+        "archived": parsed.get("archived", False),
         "frontmatter": parsed["frontmatter"],
         "body": parsed["body"],
     }
@@ -249,6 +279,10 @@ def _clean_text(value: object) -> str | None:
         return None
     text = re.sub(r"\s+", " ", str(value)).strip()
     return text or None
+
+
+def _clean_archived(value: object) -> bool:
+    return value is True
 
 
 def _clean_date(value: object) -> str | None:

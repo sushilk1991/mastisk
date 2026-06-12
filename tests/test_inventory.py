@@ -181,6 +181,120 @@ def test_inventory_patch_preserves_hand_edited_unparseable_frontmatter(
     }
 
 
+def test_inventory_patch_supports_all_fields_and_notes_body(db, vault_tmp, data_tmp):
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/inventory",
+            json={
+                "name": "Camera",
+                "acquired": "2026-01-01",
+                "value": 500,
+                "status": "owned",
+                "location": "Shelf",
+                "photo": "attachments/camera.jpg",
+                "notes": "Original notes.",
+            },
+        )
+        assert created.status_code == 201, created.text
+        item_id = created.json()["id"]
+
+        patched = client.patch(
+            f"/api/inventory/{item_id}",
+            json={
+                "name": "Travel camera",
+                "acquired": "2026-02-03",
+                "value": 450.75,
+                "status": "sold",
+                "location": "Gear box",
+                "photo": "attachments/travel-camera.jpg",
+                "notes": "Sold to Rahul.",
+            },
+        )
+
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["name"] == "Travel camera"
+    assert body["acquired"] == "2026-02-03"
+    assert body["value"] == 450.75
+    assert body["status"] == "sold"
+    assert body["location"] == "Gear box"
+    assert body["photo"] == "attachments/travel-camera.jpg"
+    assert body["body"].strip() == "Sold to Rahul."
+
+
+def test_inventory_patch_rejects_invalid_acquired_from_api(db, vault_tmp, data_tmp):
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/inventory",
+            json={"name": "Tripod", "acquired": "2026-01-01"},
+        )
+        assert created.status_code == 201, created.text
+
+        patched = client.patch(
+            f"/api/inventory/{created.json()['id']}",
+            json={"acquired": "Christmas 2024"},
+        )
+
+    assert patched.status_code == 422, patched.text
+    assert patched.json()["detail"] == "acquired must be YYYY-MM-DD"
+
+
+def test_inventory_delete_archives_file_and_hides_item(db, vault_tmp, data_tmp):
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/inventory",
+            json={
+                "name": "Old backpack",
+                "acquired": "2024-05-01",
+                "status": "discarded",
+                "notes": "Broken zip.",
+            },
+        )
+        assert created.status_code == 201, created.text
+        item_id = created.json()["id"]
+
+        deleted = client.delete(f"/api/inventory/{item_id}")
+
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["status"] == "discarded"
+        assert deleted.json()["archived"] is True
+        assert client.get(f"/api/inventory/{item_id}").status_code == 404
+        listed = client.get("/api/inventory")
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["items"] == []
+
+    row = db.execute(
+        "SELECT status, deleted_at FROM inventory WHERE id = ?",
+        (item_id,),
+    ).fetchone()
+    assert row["status"] == "discarded"
+    assert row["deleted_at"] is not None
+    file_text = (vault_tmp / created.json()["path"]).read_text(encoding="utf-8")
+    assert "archived: true" in file_text
+
+
+def test_inventory_scan_does_not_archive_quoted_false_frontmatter(db, vault_tmp):
+    from mastisk.inventory.sync import scan_inventory
+
+    path = vault_tmp / "inventory" / "quoted-false-2026-06-10.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\n"
+        "name: Quoted false\n"
+        "acquired: 2026-06-10\n"
+        'archived: "false"\n'
+        "---\n",
+        encoding="utf-8",
+    )
+
+    scan_inventory()
+
+    row = db.execute(
+        "SELECT deleted_at FROM inventory WHERE id = 'quoted-false-2026-06-10'"
+    ).fetchone()
+    assert row["deleted_at"] is None
+
+
 def test_capture_inventory_command_creates_item_and_medium_confidence_triages(
     db, vault_tmp, data_tmp
 ):

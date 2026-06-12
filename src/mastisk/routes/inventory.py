@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 
 from mastisk.inventory.sync import (
+    archive_inventory,
     create_inventory_file,
     inventory_payload,
     list_inventory,
@@ -41,9 +42,12 @@ class InventoryCreate(BaseModel):
 
 class InventoryPatch(BaseModel):
     name: str | None = None
+    acquired: str | None = None
     value: float | None = Field(default=None, ge=0)
     status: InventoryStatus | None = None
     location: str | None = None
+    photo: str | None = None
+    notes: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -93,6 +97,14 @@ async def export_inventory_endpoint() -> Response:
 @router.get("/{item_id}")
 async def get_inventory_endpoint(item_id: str) -> dict[str, Any]:
     item = inventory_payload(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="inventory item not found")
+    return item
+
+
+@router.delete("/{item_id}")
+async def delete_inventory_endpoint(item_id: str) -> dict[str, Any]:
+    item = archive_inventory(item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="inventory item not found")
     return item
