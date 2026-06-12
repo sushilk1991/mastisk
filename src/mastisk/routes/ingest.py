@@ -79,6 +79,19 @@ async def ingest_document(file: Annotated[UploadFile, File(...)]) -> dict:
         raise HTTPException(status_code=415, detail="unsupported document type")
     raw = await _read_capped(file, kind="document")
     source_path, rel_path, digest = store_vault_source_file(raw, file.filename or f"source.{ext}")
+    existing = _existing_document_job_for_sha256(digest)
+    if existing is not None:
+        existing_status = str(existing["status"])
+        return JSONResponse(
+            {
+                "queued": existing_status != "done",
+                "job_id": existing["job_id"],
+                "status": existing_status,
+                "source_path": existing["source_path"],
+                "result": existing["result"],
+            },
+            status_code=200 if existing_status == "done" else status.HTTP_202_ACCEPTED,
+        )
     job_id = enqueue(
         "ingest",
         "document",
@@ -96,6 +109,41 @@ async def ingest_document(file: Annotated[UploadFile, File(...)]) -> dict:
         "status": "queued",
         "source_path": rel_path,
     }
+
+
+def _existing_document_job_for_sha256(digest: str) -> dict | None:
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT id, status, payload_json
+               FROM jobs
+               WHERE agent = 'ingest'
+                 AND kind = 'document'
+                 AND status IN ('queued', 'running', 'done')
+                 AND json_valid(payload_json)
+                 AND json_extract(payload_json, '$.sha256') = ?
+               ORDER BY CASE status
+                          WHEN 'done' THEN 0
+                          WHEN 'running' THEN 1
+                          ELSE 2
+                        END,
+                        id ASC""",
+            (digest,),
+        ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        result = payload.get("result")
+        if row["status"] == "done" and not isinstance(result, dict):
+            continue
+        return {
+            "job_id": row["id"],
+            "status": row["status"],
+            "source_path": payload.get("source_rel_path"),
+            "result": result if isinstance(result, dict) else None,
+        }
+    return None
 
 
 @router.get("/jobs/{job_id}")

@@ -312,6 +312,83 @@ def test_document_companion_note_is_bounded_and_skips_notetaker(
     assert db.execute("SELECT COUNT(*) AS n FROM jobs WHERE agent='notetaker'").fetchone()["n"] == 0
 
 
+def test_document_duplicate_upload_returns_existing_done_job_without_requeue(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    from mastisk.agents.ingest import IngestAgent
+    from mastisk.ingest.converters import ConversionResult
+    from mastisk.ingest.pipeline import SourceMetadata
+
+    convert_calls = 0
+
+    def fake_convert(path):
+        nonlocal convert_calls
+        convert_calls += 1
+        return ConversionResult(markdown="# Converted\n\nBody", provider="markitdown")
+
+    monkeypatch.setattr("mastisk.routes.ingest.document_converter_available", lambda: True)
+    monkeypatch.setattr("mastisk.ingest.pipeline.convert_document", fake_convert)
+    monkeypatch.setattr(
+        "mastisk.ingest.pipeline.extract_source_metadata",
+        AsyncMock(
+            return_value=SourceMetadata(
+                summary="A useful report.",
+                tags=["reports"],
+                entities=[],
+                source_type="report",
+            )
+        ),
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        first = client.post(
+            "/api/ingest/document",
+            files={"file": ("report.pdf", b"same-pdf", "application/pdf")},
+        )
+        assert first.status_code == 202, first.text
+        first_job_id = first.json()["job_id"]
+        asyncio.run(IngestAgent().run_once())
+
+        duplicate = client.post(
+            "/api/ingest/document",
+            files={"file": ("report-again.pdf", b"same-pdf", "application/pdf")},
+        )
+
+    assert duplicate.status_code == 200, duplicate.text
+    body = duplicate.json()
+    assert body["queued"] is False
+    assert body["job_id"] == first_job_id
+    assert body["status"] == "done"
+    assert body["result"]["note_id"]
+    assert db.execute("SELECT COUNT(*) AS n FROM jobs WHERE agent='ingest'").fetchone()["n"] == 1
+    assert db.execute("SELECT COUNT(*) AS n FROM notes WHERE source='document'").fetchone()["n"] == 1
+    assert convert_calls == 1
+
+def test_document_duplicate_upload_reuses_existing_queued_job(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    monkeypatch.setattr("mastisk.routes.ingest.document_converter_available", lambda: True)
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        first = client.post(
+            "/api/ingest/document",
+            files={"file": ("report.pdf", b"same-pdf", "application/pdf")},
+        )
+        assert first.status_code == 202, first.text
+        duplicate = client.post(
+            "/api/ingest/document",
+            files={"file": ("report-again.pdf", b"same-pdf", "application/pdf")},
+        )
+
+    assert duplicate.status_code == 202, duplicate.text
+    body = duplicate.json()
+    assert body["queued"] is True
+    assert body["job_id"] == first.json()["job_id"]
+    assert body["status"] == "queued"
+    assert body["result"] is None
+    assert db.execute("SELECT COUNT(*) AS n FROM jobs WHERE agent='ingest'").fetchone()["n"] == 1
+
+
 def test_document_ingest_enforces_type_size_and_converter_503(
     vault_tmp, data_tmp, db, monkeypatch
 ):
