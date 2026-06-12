@@ -187,6 +187,75 @@ export interface AgentInfo {
   implemented: boolean;
   queued: number;
   running: number;
+  profile?: {
+    enabled: boolean;
+    skills: string[];
+    invalid: boolean;
+    invalid_reason: string | null;
+  };
+}
+
+export interface AgentSkill {
+  slug: string;
+  path: string;
+  name: string;
+  description: string | null;
+  tags: string[];
+  body: string;
+}
+
+export interface AgentPromptSlot {
+  slot_id: string;
+  label: string;
+  module: string;
+  module_attr: string;
+  primary: boolean;
+  editable: boolean;
+  default: string;
+  override: string;
+  required_placeholders: string[];
+  invalid: boolean;
+  invalid_reason: string | null;
+}
+
+export interface AgentProfile {
+  agent_id: string;
+  path: string;
+  enabled: boolean;
+  model: string | null;
+  skills: string[];
+  prompt_override: string;
+  slot_overrides: Record<string, string>;
+  invalid: boolean;
+  invalid_reason: string | null;
+  invalid_slots: Record<string, string[]>;
+  model_supported: boolean;
+  model_note: string;
+}
+
+export interface AgentDetail {
+  agent: AgentInfo;
+  definition: {
+    id: string;
+    name: string;
+    role: string;
+    module: string;
+    model_supported: boolean;
+    model_note: string;
+  };
+  profile: AgentProfile;
+  slots: AgentPromptSlot[];
+  skills: AgentSkill[];
+  recent_feed: FeedTick[];
+  queue: { queued: number; running: number; failed: number };
+}
+
+export interface AgentProfileUpdate {
+  enabled?: boolean;
+  model?: string | null;
+  skills?: string[];
+  prompt_override?: string | null;
+  slot_overrides?: Record<string, string | null>;
 }
 
 export interface DigestThreadScores {
@@ -324,7 +393,7 @@ export interface Roundtable extends RoundtableSummary {
 }
 
 export type View =
-  | 'article' | 'today' | 'digest' | 'digest_audit' | 'feed' | 'agents'
+  | 'article' | 'today' | 'digest' | 'digest_audit' | 'feed' | 'agents' | 'agent_detail'
   | 'graph' | 'mobile' | 'queue' | 'ingest' | 'lint' | 'settings'
   | 'open_questions'
   | 'notes' | 'note' | 'library'

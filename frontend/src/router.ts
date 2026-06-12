@@ -4,6 +4,7 @@ import type { View } from './types';
 export interface Route {
   view: View;
   articleId: string | null;
+  agentId: string | null;
   noteId: number | null;
   roundtableId: number | null;
   repoSlug: string | null;
@@ -55,6 +56,7 @@ const PATH_FOR_VIEW: Record<View, string> = {
   queue: '/queue',
   feed: '/feed',
   agents: '/agents',
+  agent_detail: '/agents/',
   graph: '/graph',
   ingest: '/ingest',
   lint: '/health',
@@ -88,7 +90,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function emptyRoute(view: View): Route {
   return {
-    view, articleId: null, noteId: null, roundtableId: null, repoSlug: null,
+    view, articleId: null, agentId: null, noteId: null, roundtableId: null, repoSlug: null,
     blogPostId: null, tweetThreadId: null, libraryBookSlug: null, libraryQuoteId: null,
     date: null,
   };
@@ -98,6 +100,11 @@ export function parseRoute(pathname: string): Route {
   if (pathname.startsWith('/a/')) {
     const raw = pathname.slice(3).split('/')[0];
     if (raw) return { ...emptyRoute('article'), articleId: decodeURIComponent(raw) };
+  }
+  if (pathname.startsWith('/agents/')) {
+    const raw = pathname.slice('/agents/'.length).split('/')[0];
+    if (raw) return { ...emptyRoute('agent_detail'), agentId: decodeURIComponent(raw) };
+    return emptyRoute('agents');
   }
   if (pathname === '/digest/audit' || pathname.startsWith('/digest/audit/')) {
     const raw = pathname.slice('/digest/audit'.length).replace(/^\//, '').split('/')[0];
@@ -174,6 +181,7 @@ export function parseRoute(pathname: string): Route {
 
 export function routeToPath(view: View, arg?: string | null): string {
   if (view === 'article' && arg) return `/a/${encodeURIComponent(arg)}`;
+  if (view === 'agent_detail' && arg) return `/agents/${encodeURIComponent(arg)}`;
   if (view === 'podcast' && arg) return `/p/${encodeURIComponent(arg)}`;
   if (view === 'digest' && arg && ISO_DATE.test(arg)) return `/digest/${arg}`;
   if (view === 'digest_audit' && arg && ISO_DATE.test(arg)) return `/digest/audit/${arg}`;
@@ -199,6 +207,7 @@ export function useRoute() {
   const buildRoute = (view: View, arg?: string): Route => {
     const next = emptyRoute(view);
     if (view === 'article' && arg) next.articleId = arg;
+    else if (view === 'agent_detail' && arg) next.agentId = arg;
     else if (view === 'podcast' && arg) next.articleId = arg;
     else if (view === 'digest' && arg && ISO_DATE.test(arg)) next.date = arg;
     else if (view === 'digest_audit' && arg && ISO_DATE.test(arg)) next.date = arg;

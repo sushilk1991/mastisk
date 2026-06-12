@@ -50,7 +50,7 @@ export function App() {
   );
 
   const { route, navigate: routeNavigate, replace } = useRoute();
-  const { view, articleId: currentArticle, noteId: currentNote, date: currentDate } = route;
+  const { view, articleId: currentArticle, agentId: currentAgent, noteId: currentNote, date: currentDate } = route;
   const currentRoundtable = route.roundtableId;
   const currentBlogPost = route.blogPostId;
   const currentTweetThread = route.tweetThreadId;
@@ -164,6 +164,12 @@ export function App() {
     if (window.innerWidth <= 900) setSideOpen(false);
   }, [routeNavigate]);
 
+  const refreshAgents = useCallback(async () => {
+    const data = await api.feed();
+    setFeed(data.feed);
+    setAgents(data.agents);
+  }, []);
+
   const openAsk = useCallback((prompt: string, selection: string | null) => {
     setAskCtx({ prompt, selection, article_id: currentArticle ?? undefined });
     setAskOpen(true);
@@ -225,7 +231,17 @@ export function App() {
         {view === 'digest' && digest && <DigestView digest={digest} onNavigate={navigate} onAsk={openAsk}/>}
         {view === 'digest' && !digest && <Loading/>}
         {view === 'digest_audit' && <DigestAuditView date={currentDate ?? undefined} onNavigate={navigate}/>}
-        {(view === 'feed' || view === 'agents') && <AgentsView agents={agents} feed={mergedFeed}/>}
+        {view === 'feed' && <AgentsView agents={agents} feed={mergedFeed} onNavigate={navigate}/>}
+        {view === 'agents' && <AgentsView agents={agents} feed={mergedFeed} onNavigate={navigate}/>}
+        {view === 'agent_detail' && currentAgent && (
+          <AgentsView
+            agents={agents}
+            feed={mergedFeed}
+            agentId={currentAgent}
+            onNavigate={navigate}
+            onAgentsChanged={refreshAgents}
+          />
+        )}
         {view === 'graph' && <GraphView onNavigate={navigate}/>}
         {view === 'ingest' && <IngestView/>}
         {view === 'open_questions' && <OpenQuestionsView onNavigate={navigate}/>}

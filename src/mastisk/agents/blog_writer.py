@@ -27,6 +27,7 @@ import trafilatura
 from slugify import slugify
 
 from mastisk.agents.base import Agent
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import claude_bridge, codex_bridge, ollama_bridge
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -775,7 +776,7 @@ class BlogWriter(Agent):
             )
             preview = preview.strip().replace("\n", " ")[:120]
             lines.append(f"{i}. [{kind}] {preview}")
-        prompt = RERANK_PROMPT_TEMPLATE.format(
+        prompt = resolve_prompt("blog_writer", "rerank", RERANK_PROMPT_TEMPLATE).format(
             theme=theme.strip(),
             source_list="\n".join(lines),
         )

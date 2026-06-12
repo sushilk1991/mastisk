@@ -667,6 +667,41 @@ CREATE INDEX IF NOT EXISTS idx_inventory_status ON inventory(status);
 CREATE INDEX IF NOT EXISTS idx_inventory_location ON inventory(location);
 CREATE INDEX IF NOT EXISTS idx_inventory_active ON inventory(id) WHERE deleted_at IS NULL;
 
+-- ─────────────────────────────── Agent Studio ───────────────────────────────
+-- Agent profile and skill files are markdown-canonical. The mirror records
+-- validation state so hand-edited prompt overrides can fail loud in the UI but
+-- fail safe at runtime.
+
+CREATE TABLE IF NOT EXISTS agent_profiles (
+  agent_id            TEXT PRIMARY KEY,
+  path                TEXT UNIQUE NOT NULL,
+  enabled             INTEGER NOT NULL DEFAULT 1,
+  model               TEXT,
+  skills_json         TEXT NOT NULL DEFAULT '[]',
+  prompt_override     TEXT,
+  slot_overrides_json TEXT NOT NULL DEFAULT '{}',
+  invalid             INTEGER NOT NULL DEFAULT 0,
+  invalid_reason      TEXT,
+  invalid_slots_json  TEXT NOT NULL DEFAULT '{}',
+  deleted_at          DATETIME,
+  created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_profiles_active ON agent_profiles(agent_id) WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS agent_skills (
+  slug        TEXT PRIMARY KEY,
+  path        TEXT UNIQUE NOT NULL,
+  name        TEXT NOT NULL,
+  description TEXT,
+  tags_json   TEXT NOT NULL DEFAULT '[]',
+  body        TEXT NOT NULL DEFAULT '',
+  deleted_at  DATETIME,
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_skills_active ON agent_skills(slug) WHERE deleted_at IS NULL;
+
 -- ─────────────────────────────── Personal OS Phase 14 ───────────────────────────────
 -- Content files are markdown-canonical creator workflow items. The mirror
 -- powers list/kanban/filter views and draft spawning.

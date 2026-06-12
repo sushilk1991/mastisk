@@ -86,6 +86,8 @@ class GithubPoller(Agent):
 
     async def run_once(self) -> None:
         """Enqueue due repos, then process one job (standard Agent.run_once semantics)."""
+        if self.disabled_tick():
+            return
         settings = get_settings().github
         now = datetime.now(timezone.utc)
         due_cutoff = now - timedelta(minutes=settings.poll_interval_minutes)

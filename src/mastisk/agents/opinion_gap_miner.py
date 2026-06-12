@@ -23,6 +23,7 @@ from typing import ClassVar
 
 from mastisk.agents.base import Agent
 from mastisk.agents.blog_writer import STOP_WORDS
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import intelligence
 from mastisk.db.queries import connect
 from mastisk.settings import get_settings
@@ -117,6 +118,8 @@ class OpinionGapMiner(Agent):
     async def run_once(self) -> None:
         """Tick. Return early if an 'opinion' suggestion was written within
         the cadence window; otherwise generate."""
+        if self.disabled_tick():
+            return
         with connect() as conn:
             recent = conn.execute(
                 f"""SELECT 1 FROM topic_suggestions
@@ -394,7 +397,7 @@ class OpinionGapMiner(Agent):
     async def _llm_suggest(self, pairs: list[dict]) -> list[dict] | None:
         """Single Claude call. Returns the parsed topics list or None on
         transport / parse failure (caller logs and writes zero rows)."""
-        prompt = SUGGEST_PROMPT_TEMPLATE.format(
+        prompt = resolve_prompt("opinion_gap_miner", "suggest", SUGGEST_PROMPT_TEMPLATE).format(
             identity_preamble=self._identity_preamble(),
             pairs_block=self._format_pairs_block(pairs),
         )

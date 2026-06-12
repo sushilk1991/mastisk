@@ -20,6 +20,8 @@ class Agent(ABC):
 
     async def run_once(self) -> None:
         """Pick one job for this agent and handle it. Called by the scheduler."""
+        if self.disabled_tick():
+            return
         job = self._pick_job()
         if not job:
             return
@@ -34,6 +36,17 @@ class Agent(ABC):
 
     @abstractmethod
     async def _handle(self, job: dict) -> None: ...
+
+    def is_enabled(self) -> bool:
+        from mastisk.agents.registry import agent_enabled
+
+        return agent_enabled(self.name)
+
+    def disabled_tick(self) -> bool:
+        if self.is_enabled():
+            return False
+        log.info("%s: disabled by agent profile; skipping tick", self.name)
+        return True
 
     # ───── job queue helpers ─────
 

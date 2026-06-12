@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from mastisk.paths import pwa_dir
 from mastisk.routes import (
+    agents_route,
     articles,
     artifacts_route,
     ask,
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.add_middleware(ingest.CaptureBearerAuthMiddleware)
 
     app.include_router(articles.router, prefix="/api")
+    app.include_router(agents_route.router, prefix="/api")
     app.include_router(attachments.router)
     app.include_router(artifacts_route.router, prefix="/api")
     app.include_router(digest_route.router, prefix="/api")

@@ -147,6 +147,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     )
     _ensure_library_schema(conn)
     _ensure_inventory_schema(conn)
+    _ensure_agent_studio_schema(conn)
     _ensure_content_schema(conn)
     conn.execute(
         """CREATE TABLE IF NOT EXISTS calendar_events (
@@ -369,6 +370,63 @@ def _ensure_inventory_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_inventory_location ON inventory(location)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_inventory_active ON inventory(id) WHERE deleted_at IS NULL"
+    )
+
+
+def _ensure_agent_studio_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS agent_profiles (
+             agent_id            TEXT PRIMARY KEY,
+             path                TEXT UNIQUE NOT NULL,
+             enabled             INTEGER NOT NULL DEFAULT 1,
+             model               TEXT,
+             skills_json         TEXT NOT NULL DEFAULT '[]',
+             prompt_override     TEXT,
+             slot_overrides_json TEXT NOT NULL DEFAULT '{}',
+             invalid             INTEGER NOT NULL DEFAULT 0,
+             invalid_reason      TEXT,
+             invalid_slots_json  TEXT NOT NULL DEFAULT '{}',
+             deleted_at          DATETIME,
+             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+             updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+    for column, decl in (
+        ("model", "TEXT"),
+        ("skills_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("prompt_override", "TEXT"),
+        ("slot_overrides_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("invalid", "INTEGER NOT NULL DEFAULT 0"),
+        ("invalid_reason", "TEXT"),
+        ("invalid_slots_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("deleted_at", "DATETIME"),
+    ):
+        _add_column_if_missing(conn, "agent_profiles", column, decl)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_profiles_active ON agent_profiles(agent_id) WHERE deleted_at IS NULL"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS agent_skills (
+             slug        TEXT PRIMARY KEY,
+             path        TEXT UNIQUE NOT NULL,
+             name        TEXT NOT NULL,
+             description TEXT,
+             tags_json   TEXT NOT NULL DEFAULT '[]',
+             body        TEXT NOT NULL DEFAULT '',
+             deleted_at  DATETIME,
+             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+             updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+    for column, decl in (
+        ("description", "TEXT"),
+        ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("body", "TEXT NOT NULL DEFAULT ''"),
+        ("deleted_at", "DATETIME"),
+    ):
+        _add_column_if_missing(conn, "agent_skills", column, decl)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_skills_active ON agent_skills(slug) WHERE deleted_at IS NULL"
     )
 
 

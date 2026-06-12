@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import ClassVar
 
 from mastisk.agents.base import Agent
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import claude_bridge, codex_bridge, gemini_bridge, ollama_bridge
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -106,7 +107,7 @@ class Roundtable(Agent):
         context = await self._build_context(rt["input_type"], rt["input_ref"])
         settings = get_settings().roundtable
 
-        per_prompt = PERSPECTIVE_PROMPT.format(
+        per_prompt = resolve_prompt("roundtable", "perspective", PERSPECTIVE_PROMPT).format(
             identity=identity,
             context=context or "(none)",
             user_prompt=rt["prompt"],
@@ -279,7 +280,7 @@ class Roundtable(Agent):
             elif p.get("error"):
                 lines.append(f"### {backend_label}\n*(failed: {p['error']})*")
         block = "\n\n".join(lines)
-        prompt = SYNTHESIS_PROMPT.format(
+        prompt = resolve_prompt("roundtable", "synthesis", SYNTHESIS_PROMPT).format(
             user_prompt=user_prompt, perspectives_block=block,
         )
 

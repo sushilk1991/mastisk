@@ -21,6 +21,7 @@ from mastisk.agents.blog_writer import (
     _collapse_ws,
     _DuckDuckGoResultParser,
 )
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges.intelligence import run_intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -740,7 +741,7 @@ class TweetWriter(Agent):
                 f"url: {browser_context.get('url') or ''}\n"
                 f"text: {_collapse_ws(str(browser_context.get('text') or ''))[:4000]}"
             )
-        prompt = PROMPT_TEMPLATE.format(
+        prompt = resolve_prompt("tweet_writer", "draft", PROMPT_TEMPLATE).format(
             identity=self.load_identity(),
             current_date=_current_date_context(),
             theme=theme.strip() or "(none)",
@@ -790,7 +791,7 @@ class TweetWriter(Agent):
         gracefully rather than fail the job for a polish-pass issue.
         """
         settings = get_settings().tweet
-        prompt = REVISION_PROMPT_TEMPLATE.format(
+        prompt = resolve_prompt("tweet_writer", "revision", REVISION_PROMPT_TEMPLATE).format(
             identity=self.load_identity(),
             current_date=_current_date_context(),
             theme_contract=intent.contract,
@@ -1401,7 +1402,7 @@ def _render_browser_research_plan_prompt(
             f"url: {browser_context.get('url') or ''}\n"
             f"text: {_collapse_ws(str(browser_context.get('text') or ''))[:500]}"
         )
-    return BROWSER_RESEARCH_PLAN_PROMPT.format(
+    return resolve_prompt("tweet_writer", "browser_research", BROWSER_RESEARCH_PLAN_PROMPT).format(
         current_date=_current_date_context(),
         theme=theme.strip() or "(none)",
         theme_contract=intent.contract,

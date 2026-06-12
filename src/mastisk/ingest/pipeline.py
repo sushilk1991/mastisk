@@ -18,6 +18,7 @@ import yaml
 from slugify import slugify
 
 from mastisk.agents.base import Agent
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import intelligence
 from mastisk.bridges.claude_bridge import extract_json_block
 from mastisk.db import queries as q
@@ -102,7 +103,7 @@ async def process_document_job(job_id: int, payload: dict[str, Any]) -> dict[str
 
 
 async def extract_source_metadata(markdown: str, *, filename: str) -> SourceMetadata:
-    prompt = _EXTRACT_PROMPT.format(
+    prompt = resolve_prompt("ingest", "metadata", _EXTRACT_PROMPT).format(
         identity=Agent.load_identity(),
         filename=filename,
         markdown=markdown[:MAX_EXTRACTION_CHARS],

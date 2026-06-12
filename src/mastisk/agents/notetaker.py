@@ -33,6 +33,7 @@ from typing import ClassVar
 import yaml
 
 from mastisk.agents.base import Agent
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -95,6 +96,8 @@ class Notetaker(Agent):
 
     async def run_once(self) -> None:
         """Scan inbox + enqueue, then batch-process up to ``notetaker_concurrency`` jobs."""
+        if self.disabled_tick():
+            return
         settings = get_settings().notes
         inbox = notes_inbox_dir()
         if inbox.exists():
@@ -351,7 +354,7 @@ class Notetaker(Agent):
             ).fetchall()
         article_ids = [r["id"] for r in article_rows]
         identity = self.load_identity()
-        prompt = CLASSIFY_PROMPT.format(
+        prompt = resolve_prompt("notetaker", "classify", CLASSIFY_PROMPT).format(
             identity=identity,
             article_ids="\n".join(f"- {aid}" for aid in article_ids) or "(none yet)",
             body=body_core,

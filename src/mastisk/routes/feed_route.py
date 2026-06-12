@@ -7,6 +7,8 @@ import json
 from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 
+from mastisk.agents.registry import agent_catalog
+from mastisk.agents.studio import profile_payload
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 
@@ -25,22 +27,7 @@ def feed(limit: int = 50):
 # aren't daily-budgeted (notetaker, github_*, blog_writer, roundtable,
 # escalator, artifact-agent), the fallback here is used directly so the bar
 # shows a sensible fill instead of spiking to 100% on a single job.
-_AGENT_CATALOG: list[dict] = [
-    {"id": "scout",          "name": "Scout",          "role": "Crawls feeds, blogs, RSS",                  "color": "amber",   "implemented": True, "load_cap": 500},
-    {"id": "listener",       "name": "Listener",       "role": "Transcribes podcasts + YouTube",            "color": "violet",  "implemented": True, "load_cap": 20},
-    {"id": "compiler",       "name": "Compiler",       "role": "Compiles raw → wiki, builds backlinks",     "color": "emerald", "implemented": True, "load_cap": 100},
-    {"id": "linter",         "name": "Linter",         "role": "Health checks, broken links, orphans",      "color": "blue",    "implemented": True, "load_cap": 50},
-    {"id": "synthesizer",    "name": "Synthesizer",    "role": "Cross-source synthesis, themes",            "color": "rose",    "implemented": True, "load_cap": 10},
-    {"id": "notetaker",      "name": "Notetaker",      "role": "Classifies inbox notes, writes summaries",  "color": "blue",    "implemented": True, "load_cap": 20},
-    {"id": "escalator",      "name": "Escalator",      "role": "Promotes strong notes into wiki articles",  "color": "amber",   "implemented": True, "load_cap": 10},
-    {"id": "ingest",         "name": "Ingest",         "role": "Converts documents, audio, journal photos", "color": "emerald", "implemented": True, "load_cap": 10},
-    {"id": "artifact-agent", "name": "Artifacts",      "role": "Renders charts, tables, inline visuals",    "color": "rose",    "implemented": True, "load_cap": 10},
-    {"id": "github_poller",  "name": "GitHub Poller",  "role": "Polls GitHub + local repos, builds context","color": "violet",  "implemented": True, "load_cap": 5},
-    {"id": "github_ideator", "name": "GitHub Ideator", "role": "Generates research ideas from repo context","color": "rose",    "implemented": True, "load_cap": 5},
-    {"id": "blog_writer",    "name": "Blog Writer",    "role": "Drafts blog posts from recent activity",    "color": "emerald", "implemented": True, "load_cap": 5},
-    {"id": "tweet_writer",   "name": "Tweet Writer",   "role": "Drafts tweet threads from recent signals",  "color": "blue",    "implemented": True, "load_cap": 5},
-    {"id": "roundtable",     "name": "Roundtable",     "role": "Runs multi-LLM perspectives on a prompt",   "color": "amber",   "implemented": True, "load_cap": 5},
-]
+_AGENT_CATALOG: list[dict] = agent_catalog()
 
 
 def _agents_snapshot(conn) -> list[dict]:
@@ -82,13 +69,14 @@ def _agents_snapshot(conn) -> list[dict]:
 
     out: list[dict] = []
     for a in _AGENT_CATALOG:
+        profile = profile_payload(a["id"])
         counts = job_counts.get(a["id"], {"queued": 0, "running": 0})
         queued = counts["queued"] or 0
         running = counts["running"] or 0
         cap = max(1, budget_overrides.get(a["id"], a.get("load_cap", 10)))
         load = min(1.0, (queued + running) / cap)
 
-        if not a["implemented"]:
+        if not profile.get("enabled", True) or not a["implemented"]:
             status = "disabled"
         elif running > 0 or a["id"] in recent_agents:
             status = "active"
@@ -100,6 +88,12 @@ def _agents_snapshot(conn) -> list[dict]:
             "status": status, "load": round(load, 3),
             "implemented": a["implemented"],
             "queued": queued, "running": running,
+            "profile": {
+                "enabled": profile.get("enabled", True),
+                "skills": profile.get("skills", []),
+                "invalid": profile.get("invalid", False),
+                "invalid_reason": profile.get("invalid_reason"),
+            },
         })
     return out
 

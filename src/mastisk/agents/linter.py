@@ -41,6 +41,8 @@ class Linter(Agent):
     max_llm_suggestions = 5
 
     async def run_once(self) -> None:
+        if self.disabled_tick():
+            return
         # Linter usually has no queued work — its tick IS its scan. We still
         # drain any externally-queued jobs (future: targeted re-lints of a
         # single article id).

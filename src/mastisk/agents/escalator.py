@@ -33,6 +33,7 @@ from typing import Any, ClassVar
 from slugify import slugify
 
 from mastisk.agents.base import Agent, enqueue
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import claude_bridge, codex_bridge, ollama_bridge
 from mastisk.bridges.claude_bridge import ClaudeError
 from mastisk.db import queries as q
@@ -90,6 +91,8 @@ class Escalator(Agent):
 
     async def run_once(self) -> None:
         """Reactivate due retries, then process one evaluate job."""
+        if self.disabled_tick():
+            return
         try:
             self._reenqueue_due_retries()
         except Exception:
@@ -192,7 +195,7 @@ class Escalator(Agent):
             ).fetchall()
         article_ids = [r["id"] for r in article_rows]
         identity = self.load_identity()
-        prompt = ESCALATE_PROMPT.format(
+        prompt = resolve_prompt("escalator", "evaluate", ESCALATE_PROMPT).format(
             identity=identity,
             article_ids="\n".join(f"- {aid}" for aid in article_ids) or "(none yet)",
             note_body=note["body"],

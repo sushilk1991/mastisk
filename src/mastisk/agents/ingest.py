@@ -23,6 +23,8 @@ class IngestAgent(Agent):
     tick_seconds = 15
 
     async def run_once(self) -> None:
+        if self.disabled_tick():
+            return
         sweep_stale_capture_audio_files()
         await super().run_once()
 

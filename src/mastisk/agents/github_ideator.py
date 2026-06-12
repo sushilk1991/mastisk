@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import ClassVar
 
 from mastisk.agents.base import Agent, enqueue
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import claude_bridge, codex_bridge, ollama_bridge
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -105,6 +106,8 @@ class GithubIdeator(Agent):
 
     async def run_once(self) -> None:
         """Enqueue repos due for ideation, then process one job."""
+        if self.disabled_tick():
+            return
         settings = get_settings().github
         now = datetime.now(timezone.utc)
         # Cutoff for 'last_ideated_at'
@@ -163,7 +166,7 @@ class GithubIdeator(Agent):
 
         # Build prompt
         identity = self.load_identity()
-        prompt = IDEATE_PROMPT.format(
+        prompt = resolve_prompt("github_ideator", "ideate", IDEATE_PROMPT).format(
             identity=identity,
             slug=slug,
             description=repo.get("description") or "(no description)",

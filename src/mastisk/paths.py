@@ -123,6 +123,14 @@ def inventory_dir() -> Path:
     return vault_dir() / "inventory"
 
 
+def agents_dir() -> Path:
+    return vault_dir() / "_agents"
+
+
+def agent_skills_dir() -> Path:
+    return agents_dir() / "skills"
+
+
 def content_dir() -> Path:
     return vault_dir() / "content"
 
@@ -158,6 +166,8 @@ def ensure_dirs() -> None:
         books_dir(),
         quotes_dir(),
         inventory_dir(),
+        agents_dir(),
+        agent_skills_dir(),
         content_dir(),
         attachments_dir(),
     ]:

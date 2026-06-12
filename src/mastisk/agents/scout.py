@@ -57,6 +57,8 @@ class Scout(Agent):
 
     async def run_once(self) -> None:
         """Scout is different from the default pick-one-job loop: it tick-polls the DB for feeds."""
+        if self.disabled_tick():
+            return
         # If there are queued scout jobs, process one; otherwise auto-poll a feed
         job = self._pick_job()
         if job:

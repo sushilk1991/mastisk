@@ -39,6 +39,7 @@ from pathlib import Path
 from slugify import slugify
 
 from mastisk.agents.base import Agent
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -136,6 +137,8 @@ class Synthesizer(Agent):
     tick_seconds = 1800  # 30 min
 
     async def run_once(self) -> None:
+        if self.disabled_tick():
+            return
         # Drain up to N queued synthesizer jobs first (job-driven path). A
         # route that wants to force a synthesis of a specific cluster can
         # enqueue a job with payload {"cluster_ids": [...]}.
@@ -473,7 +476,7 @@ class Synthesizer(Agent):
             f"─── cluster ({len(members)} articles) ───",
             cluster_block,
             "",
-            _SCHEMA_MD,
+            resolve_prompt("synthesizer", "schema", _SCHEMA_MD),
         ])
         return "\n".join(parts)
 
@@ -571,7 +574,7 @@ class Synthesizer(Agent):
             f"- [{m['kind']}] {m['title']}: {m.get('summary') or ''}"
             for m in members
         )
-        return _CRITIC_TEMPLATE.format(
+        return resolve_prompt("synthesizer", "critic", _CRITIC_TEMPLATE).format(
             n=len(members),
             draft_rendered=rendered,
             sources_rendered=sources_block,

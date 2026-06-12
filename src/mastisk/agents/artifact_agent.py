@@ -26,6 +26,7 @@ import logging
 import re
 
 from mastisk.agents.base import Agent
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -129,6 +130,8 @@ class ArtifactAgent(Agent):
     max_jobs_per_tick = 5
 
     async def run_once(self) -> None:
+        if self.disabled_tick():
+            return
         for _ in range(self.max_jobs_per_tick):
             job = self._pick_job()
             if not job:
@@ -252,8 +255,9 @@ class ArtifactAgent(Agent):
         summary = article.get("summary") or ""
         body = (article.get("body_md") or "")[:4000]
         kind = article.get("kind") or ""
+        schema = resolve_prompt("artifact-agent", "generate", _ARTIFACT_PROMPT_SCHEMA)
         return (
-            f"{_ARTIFACT_PROMPT_SCHEMA}\n\n"
+            f"{schema}\n\n"
             f"─── Article ────────────────────────────────────────────────\n"
             f"Title: {title}\n"
             f"Kind: {kind}\n"

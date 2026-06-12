@@ -1,5 +1,6 @@
 import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
+  AgentDetail, AgentProfileUpdate, AgentSkill,
   BlogPostSummary, BookDetail, BookHighlight, BookStatus, BookSummary, CaptureTriageItem, CaptureTriageTarget, ContentDetail, ContentKind, ContentList, ContentStatus, Digest, DigestAudit, Domain, Feed,
   FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, IntegrationHealth, InventoryDetail, InventoryList, InventoryStatus, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
   KindleImportResult, KindleReviewItem, PersonDetail, PersonSummary, PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, QuoteDetail, QuoteSourceType, QuoteSummary, ReminderRow,
@@ -35,8 +36,9 @@ export class FocusFullError extends Error {
 async function throwApiError(r: Response): Promise<never> {
   let detail = `${r.status} ${r.statusText}`.trim();
   try {
-    const body = await r.json() as { detail?: string };
+    const body = await r.json() as { detail?: unknown };
     if (body && typeof body.detail === 'string' && body.detail) detail = body.detail;
+    else if (body && body.detail) detail = JSON.stringify(body.detail);
   } catch { /* fall back to status */ }
   throw new ApiError(detail, r.status, detail);
 }
@@ -204,6 +206,39 @@ export const api = {
   openQuestions: () => j<OpenQuestionsResponse>(`${BASE}/open-questions`),
 
   feed: () => j<{ feed: FeedTick[]; agents: AgentInfo[] }>(`${BASE}/feed`),
+
+  agents: () => j<{ agents: AgentInfo[] }>(`${BASE}/agents`),
+
+  agentDetail: (id: string) =>
+    j<AgentDetail>(`${BASE}/agents/${encodeURIComponent(id)}`),
+
+  updateAgentProfile: (id: string, patch: AgentProfileUpdate) =>
+    j<{ profile: AgentDetail['profile'] }>(`${BASE}/agents/${encodeURIComponent(id)}/profile`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+
+  agentSkills: () => j<{ skills: AgentSkill[] }>(`${BASE}/agent-skills`),
+
+  createAgentSkill: (skill: { slug?: string; name: string; description?: string | null; tags?: string[]; body: string }) =>
+    j<AgentSkill>(`${BASE}/agent-skills`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(skill),
+    }),
+
+  updateAgentSkill: (slug: string, skill: { name: string; description?: string | null; tags?: string[]; body: string }) =>
+    j<AgentSkill>(`${BASE}/agent-skills/${encodeURIComponent(slug)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(skill),
+    }),
+
+  deleteAgentSkill: (slug: string) =>
+    j<{ ok: boolean }>(`${BASE}/agent-skills/${encodeURIComponent(slug)}`, {
+      method: 'DELETE',
+    }),
 
   ask: (question: string, opts?: { selection?: string; article_id?: string }) =>
     j<AskResponse>(`${BASE}/ask`, {

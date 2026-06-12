@@ -13,6 +13,7 @@ from pathlib import Path
 from slugify import slugify
 
 from mastisk.agents.base import Agent
+from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import claude_bridge, intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -70,6 +71,8 @@ class Compiler(Agent):
     max_jobs_per_tick = 20
 
     async def run_once(self) -> None:
+        if self.disabled_tick():
+            return
         for _ in range(self.max_jobs_per_tick):
             job = self._pick_job()
             if not job:
@@ -106,6 +109,7 @@ class Compiler(Agent):
         raw_text = Path(src["raw_path"]).read_text() if src["raw_path"] else (src["title"] or "")
         identity = self.load_identity()
         registry = self._known_articles_block()
+        schema = resolve_prompt("compiler", "schema", SCHEMA_MD)
 
         prompt = (
             f"You are Mastisk's Compiler. Transform the raw source below into a wiki article.\n\n"
@@ -113,7 +117,7 @@ class Compiler(Agent):
             f"{registry}\n\n"
             f"# Raw source\nTitle: {src['title']}\nURL: {src['url']}\nKind: {src['kind']}\n\n"
             f"{raw_text[:8000]}\n\n"
-            f"{SCHEMA_MD}"
+            f"{schema}"
         )
 
         resp, provider = await intelligence.run_intelligence(prompt)
@@ -187,6 +191,7 @@ class Compiler(Agent):
         identity = self.load_identity()
         registry = self._known_articles_block()
         note_body = (note["body"] or "")[:8000]
+        schema = resolve_prompt("compiler", "schema", SCHEMA_MD)
 
         prompt = (
             f"You are Mastisk's Compiler. Enrich the escalated note below into a full wiki article.\n\n"
@@ -197,7 +202,7 @@ class Compiler(Agent):
             f"{note_body}\n\n"
             f"Use the existing article id `{article_id}` exactly — do not coin a new slug, "
             f"this enrichment overwrites the stub in place.\n\n"
-            f"{SCHEMA_MD}"
+            f"{schema}"
         )
 
         resp, provider = await intelligence.run_intelligence(prompt)

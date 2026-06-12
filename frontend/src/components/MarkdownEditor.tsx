@@ -228,25 +228,41 @@ function previewAttachmentUrl(url: string | undefined): string | undefined {
   return `/api/attachments/${encodeURIComponent(name)}`;
 }
 
-function CodeMirrorMarkdown({
+export function CodeMirrorMarkdown({
   value,
   onChange,
   onError,
+  onModEnter,
 }: {
   value: string;
   onChange: (value: string) => void;
   onError: (message: string | null) => void;
+  onModEnter?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const initialValueRef = useRef(value);
   const onChangeRef = useRef(onChange);
   const onErrorRef = useRef(onError);
+  const onModEnterRef = useRef(onModEnter);
 
   useEffect(() => {
     onChangeRef.current = onChange;
     onErrorRef.current = onError;
-  }, [onChange, onError]);
+    onModEnterRef.current = onModEnter;
+  }, [onChange, onError, onModEnter]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      initialValueRef.current = value;
+      return;
+    }
+    const current = view.state.doc.toString();
+    if (current !== value) {
+      view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+    }
+  }, [value]);
 
   const insertAttachmentMarkdown = useCallback(async (
     file: File,
@@ -277,7 +293,18 @@ function CodeMirrorMarkdown({
           history(),
           markdown(),
           placeholder(''),
-          keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
+          keymap.of([
+            {
+              key: 'Mod-Enter',
+              run: () => {
+                onModEnterRef.current?.();
+                return true;
+              },
+            },
+            indentWithTab,
+            ...defaultKeymap,
+            ...historyKeymap,
+          ]),
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {

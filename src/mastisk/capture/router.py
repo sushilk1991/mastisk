@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field, field_validator
 
 from mastisk.agents.base import Agent
+from mastisk.agents.registry import agent_enabled, resolve_prompt
 from mastisk.bridges import intelligence
 from mastisk.bridges.claude_bridge import extract_json_block
 from mastisk.capture.dates import normalize_model_datetime, resolve_datetime
@@ -175,6 +176,9 @@ def detect_command_hint(text: str) -> CaptureType | None:
 
 async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     settings = get_settings()
+    if not agent_enabled("capture_router"):
+        log.info("capture_router: disabled, routing capture to inbox without LLM")
+        return Capture(type="inbox", confidence=0.0, body=text)
     fixed_intent = detect_command_intent(text)
     routine_match = _match_routine_done_command(text)
     if fixed_intent is None and routine_match is not None:
@@ -186,7 +190,7 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     routines = _routine_routing_context()
     people = _people_routing_context()
     books = _book_routing_context()
-    prompt = _PROMPT.format(
+    prompt = resolve_prompt("capture_router", "route", _PROMPT).format(
         identity=Agent.load_identity(),
         domains=domains,
         projects=projects,
