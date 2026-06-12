@@ -12,9 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from mastisk.paths import pwa_dir
 from mastisk.routes import (
     articles,
-    attachments,
     artifacts_route,
     ask,
+    attachments,
     blog_route,
     calendar_route,
     capture,

@@ -1,6 +1,7 @@
 """Vault attachment upload and read-only serving."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
@@ -102,8 +103,6 @@ def _atomic_write_bytes(target, content: bytes) -> None:
     except Exception:
         if fd >= 0:
             os.close(fd)
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_path)
-        except FileNotFoundError:
-            pass
         raise
