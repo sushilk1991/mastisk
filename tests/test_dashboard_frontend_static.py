@@ -132,3 +132,17 @@ def test_editor_api_client_exposes_vault_lock_and_attachment_routes():
     assert "editingTokenRef" in editor
     assert "api.editing.heartbeat(path, token)" in editor
     assert "api.editing.unlock(path, token)" in editor
+
+
+def test_phase16_ingest_frontend_surfaces_document_and_journal_photo_uploads():
+    api_source = Path("frontend/src/api.ts").read_text(encoding="utf-8")
+    ingest = Path("frontend/src/components/IngestView.tsx").read_text(encoding="utf-8")
+    dashboard = _dashboard_source()
+
+    assert "/ingest/document" in api_source
+    assert "/ingest/jobs/" in api_source
+    assert "/ingest/journal-photo" in api_source
+    assert "api.ingest.uploadDocument" in ingest
+    assert "api.ingest.job(docJobId)" in ingest
+    assert "api.ingest.uploadJournalPhoto(file, selected)" in dashboard
+    assert "ocr_status === 'done'" in dashboard

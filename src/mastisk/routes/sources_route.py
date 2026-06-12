@@ -177,6 +177,10 @@ def list_jobs(limit: int = 50):
                     source_kind = "podcast"
                     if audio_url:
                         source_id = _src_id_for(audio_url)
+            elif r["agent"] == "ingest":
+                title = payload.get("filename") or payload.get("source_rel_path") or r["kind"]
+                subtitle = payload.get("source_rel_path") or payload.get("audio_path")
+                source_kind = "document" if r["kind"] == "document" else "audio"
             elif r["agent"] == "artifact-agent" and payload.get("article_id"):
                 art = conn.execute(
                     "SELECT title FROM articles WHERE id=?", (payload["article_id"],),

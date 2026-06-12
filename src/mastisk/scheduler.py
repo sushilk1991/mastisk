@@ -296,6 +296,19 @@ async def start_scheduler():
         log.info("artifact-agent not scheduled: %s", e)
 
     try:
+        from mastisk.agents.ingest import IngestAgent
+        sched.add_job(
+            IngestAgent().run_once, "interval",
+            seconds=IngestAgent.tick_seconds, id="ingest",
+            max_instances=1,
+            next_run_time=datetime.now(UTC) + timedelta(seconds=20),
+            coalesce=True,
+        )
+        log.info("scheduler: ingest registered (%ss tick)", IngestAgent.tick_seconds)
+    except Exception as e:
+        log.warning("scheduler: ingest registration failed: %s", e)
+
+    try:
         from mastisk.agents.listener import Listener
         # Listener handles YouTube + podcast transcription jobs. Like Compiler,
         # it's job-driven (CLI / POST /api/listen enqueues work). First tick

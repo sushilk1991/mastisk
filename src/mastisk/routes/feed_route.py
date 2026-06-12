@@ -33,6 +33,7 @@ _AGENT_CATALOG: list[dict] = [
     {"id": "synthesizer",    "name": "Synthesizer",    "role": "Cross-source synthesis, themes",            "color": "rose",    "implemented": True, "load_cap": 10},
     {"id": "notetaker",      "name": "Notetaker",      "role": "Classifies inbox notes, writes summaries",  "color": "blue",    "implemented": True, "load_cap": 20},
     {"id": "escalator",      "name": "Escalator",      "role": "Promotes strong notes into wiki articles",  "color": "amber",   "implemented": True, "load_cap": 10},
+    {"id": "ingest",         "name": "Ingest",         "role": "Converts documents, audio, journal photos", "color": "emerald", "implemented": True, "load_cap": 10},
     {"id": "artifact-agent", "name": "Artifacts",      "role": "Renders charts, tables, inline visuals",    "color": "rose",    "implemented": True, "load_cap": 10},
     {"id": "github_poller",  "name": "GitHub Poller",  "role": "Polls GitHub + local repos, builds context","color": "violet",  "implemented": True, "load_cap": 5},
     {"id": "github_ideator", "name": "GitHub Ideator", "role": "Generates research ideas from repo context","color": "rose",    "implemented": True, "load_cap": 5},

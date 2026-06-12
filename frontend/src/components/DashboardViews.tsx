@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 import { api, FocusFullError } from '../api';
 import { MarkdownBlock, VaultMarkdownEditor, type VaultEditorTarget } from './MarkdownEditor';
 import type {
@@ -594,6 +594,9 @@ export function JournalView({ liveKey }: LiveProps) {
   const [entry, setEntry] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [journalEditor, setJournalEditor] = useState<VaultEditorTarget | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoMsg, setPhotoMsg] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   async function loadDays() {
     setErr(null);
@@ -632,6 +635,25 @@ export function JournalView({ liveKey }: LiveProps) {
     }
   }
 
+  async function uploadJournalPhoto(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+    setErr(null);
+    setPhotoMsg(null);
+    setPhotoBusy(true);
+    try {
+      const res = await api.ingest.uploadJournalPhoto(file, selected);
+      setPhotoMsg(res.ocr_status === 'done' ? 'photo added' : 'photo saved · OCR pending');
+      await loadDays();
+      await loadDetail(selected);
+    } catch (err) {
+      setErr(errorMessage(err));
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
   async function setScale(kind: 'mood' | 'energy', value: number | null) {
     const updated = await api.journalApi.patch(selected, { [kind]: value });
     setDetail(updated);
@@ -666,6 +688,21 @@ export function JournalView({ liveKey }: LiveProps) {
             <h2>{formatLongDate(selected)}</h2>
             <div className="dash-actions">
               <button className="chip" onClick={() => setSelected(today)}>today</button>
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/heic"
+                onChange={uploadJournalPhoto}
+                style={{display:'none'}}
+              />
+              <button
+                className="chip"
+                type="button"
+                disabled={photoBusy}
+                onClick={() => photoInputRef.current?.click()}
+              >
+                {photoBusy ? 'adding…' : 'photo'}
+              </button>
               <button
                 className="chip"
                 type="button"
@@ -676,6 +713,7 @@ export function JournalView({ liveKey }: LiveProps) {
               </button>
             </div>
           </div>
+          {photoMsg && <p className="dash-muted">{photoMsg}</p>}
           <ScaleSetter label="Mood" value={detail?.mood ?? null} onSet={(v) => runMutation(() => setScale('mood', v), setErr)}/>
           <ScaleSetter label="Energy" value={detail?.energy ?? null} onSet={(v) => runMutation(() => setScale('energy', v), setErr)}/>
           <form className="dash-inline-form" onSubmit={appendLog}>

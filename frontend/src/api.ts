@@ -291,6 +291,65 @@ export const api = {
     },
   },
 
+  ingest: {
+    uploadDocument: async (file: File): Promise<{ queued: boolean; job_id: number; status: string; source_path: string }> => {
+      const form = new FormData();
+      form.append('file', file);
+      const r = await fetch(`${BASE}/ingest/document`, { method: 'POST', body: form });
+      if (!r.ok) await throwApiError(r);
+      return r.json() as Promise<{ queued: boolean; job_id: number; status: string; source_path: string }>;
+    },
+    job: (id: number): Promise<{ job: {
+      id: number;
+      agent: string;
+      kind: string;
+      status: 'queued' | 'running' | 'done' | 'failed';
+      attempts: number;
+      error: string | null;
+      created_at: string;
+      started_at: string | null;
+      finished_at: string | null;
+      result: unknown;
+      detail: { title: string | null; source_path: string | null };
+    } }> => j<{ job: {
+      id: number;
+      agent: string;
+      kind: string;
+      status: 'queued' | 'running' | 'done' | 'failed';
+      attempts: number;
+      error: string | null;
+      created_at: string;
+      started_at: string | null;
+      finished_at: string | null;
+      result: unknown;
+      detail: { title: string | null; source_path: string | null };
+    } }>(`${BASE}/ingest/jobs/${id}`),
+    uploadJournalPhoto: async (file: File, day: string): Promise<{
+      status: string;
+      ocr_status: 'done' | 'unavailable';
+      status_code?: number;
+      reason?: string;
+      text?: string;
+      attachment: { path: string; markdown: string };
+      journal: { date: string; path: string; line: string };
+    }> => {
+      const form = new FormData();
+      form.append('photo', file);
+      form.append('date', day);
+      const r = await fetch(`${BASE}/ingest/journal-photo`, { method: 'POST', body: form });
+      if (!r.ok) await throwApiError(r);
+      return r.json() as Promise<{
+        status: string;
+        ocr_status: 'done' | 'unavailable';
+        status_code?: number;
+        reason?: string;
+        text?: string;
+        attachment: { path: string; markdown: string };
+        journal: { date: string; path: string; line: string };
+      }>;
+    },
+  },
+
   artifacts: (articleId: string) =>
     j<{ artifacts: Artifact[] }>(`${BASE}/articles/${articleId}/artifacts`),
 

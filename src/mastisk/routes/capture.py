@@ -71,51 +71,61 @@ async def capture(
     `follow_up_at` as the CRM-native follow-up field.
     """
     require_capture_token(authorization)
+    return await route_and_persist_capture(req.text, source=req.source, ts=req.ts)
+
+
+async def route_and_persist_capture(
+    text: str,
+    *,
+    source: Literal["watch", "phone", "pwa", "cli"],
+    ts: str | None = None,
+) -> dict:
+    """Route a text capture and persist it after caller-owned auth checks."""
 
     try:
-        routed = await route_capture(req.text, source=req.source, ts=req.ts)
+        routed = await route_capture(text, source=source, ts=ts)
     except Exception:
         log.exception("capture router failed; falling back to raw inbox note")
-        return _persist_inbox_fallback(req.text, req.source)
+        return _persist_inbox_fallback(text, source, ts=ts)
 
     if routed.type == "inbox" or (
         not routed.command_detected and routed.confidence < 0.5
     ):
-        return _persist_inbox_fallback(req.text, req.source)
+        return _persist_inbox_fallback(text, source, ts=ts)
 
     needs_triage = False if routed.command_detected else routed.confidence < 0.85
 
     if routed.type == "task":
         try:
-            return _persist_task_capture(routed, ts=req.ts, needs_triage=needs_triage)
+            return _persist_task_capture(routed, ts=ts, needs_triage=needs_triage)
         except Exception:
             log.exception("capture task write failed; falling back to raw inbox note")
-            return _persist_inbox_fallback(req.text, req.source)
+            return _persist_inbox_fallback(text, source, ts=ts)
 
     if routed.type == "journal":
         try:
             return _persist_journal_capture(
                 routed,
-                ts=req.ts,
-                source=req.source,
+                ts=ts,
+                source=source,
                 needs_triage=needs_triage,
             )
         except JournalFrontmatterError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception:
             log.exception("capture journal write failed; falling back to raw inbox note")
-            return _persist_inbox_fallback(req.text, req.source)
+            return _persist_inbox_fallback(text, source, ts=ts)
 
     if routed.type == "routine_done" and routed.routine:
         try:
-            filed = _persist_routine_done_capture(routed, ts=req.ts)
+            filed = _persist_routine_done_capture(routed, ts=ts)
             if filed is not None:
                 return {**filed, "needs_triage": needs_triage}
         except RoutineArchivedError:
-            return _persist_inbox_fallback(req.text, req.source)
+            return _persist_inbox_fallback(text, source, ts=ts)
         except Exception:
             log.exception("capture routine_done write failed; falling back to raw inbox note")
-            return _persist_inbox_fallback(req.text, req.source)
+            return _persist_inbox_fallback(text, source, ts=ts)
 
     if routed.type == "project_update" and routed.project:
         try:
@@ -124,63 +134,63 @@ async def capture(
                 return {**filed, "needs_triage": needs_triage}
         except Exception:
             log.exception("capture project update write failed; falling back to raw inbox note")
-            return _persist_inbox_fallback(req.text, req.source)
+            return _persist_inbox_fallback(text, source, ts=ts)
 
     if routed.type == "person":
         try:
-            filed = _persist_person_capture(routed, ts=req.ts, needs_triage=needs_triage)
+            filed = _persist_person_capture(routed, ts=ts, needs_triage=needs_triage)
             if filed is not None:
                 return filed
         except Exception:
             log.exception("capture person write failed; falling back to raw inbox note")
-            return _persist_inbox_fallback(req.text, req.source)
+            return _persist_inbox_fallback(text, source, ts=ts)
 
     if routed.type == "quote":
         try:
             filed = _persist_quote_capture(
                 routed,
-                raw_text=req.text,
+                raw_text=text,
                 needs_triage=needs_triage,
             )
             if filed is not None:
                 return filed
         except Exception:
             log.exception("capture quote write failed; falling back to raw inbox note")
-            return _persist_inbox_fallback(req.text, req.source)
+            return _persist_inbox_fallback(text, source, ts=ts)
 
     if routed.type == "inventory":
         try:
             filed = _persist_inventory_capture(
                 routed,
-                raw_text=req.text,
-                ts=req.ts,
+                raw_text=text,
+                ts=ts,
                 needs_triage=needs_triage,
             )
             if filed is not None:
                 return filed
         except Exception:
             log.exception("capture inventory write failed; falling back to raw inbox note")
-            return _persist_inbox_fallback(req.text, req.source)
+            return _persist_inbox_fallback(text, source, ts=ts)
 
     if routed.type == "content":
         try:
             filed = _persist_content_capture(
                 routed,
-                raw_text=req.text,
+                raw_text=text,
                 needs_triage=needs_triage,
             )
             if filed is not None:
                 return filed
         except Exception:
             log.exception("capture content write failed; falling back to raw inbox note")
-            return _persist_inbox_fallback(req.text, req.source)
+            return _persist_inbox_fallback(text, source, ts=ts)
 
     try:
         row = persist_note_capture(
             body=routed.body,
-            source=req.source,
-            slug_text=req.text,
-            ts=_capture_local_datetime(req.ts) if req.ts else None,
+            source=source,
+            slug_text=text,
+            ts=_capture_local_datetime(ts) if ts else None,
             file_content=(
                 _body_with_capture_frontmatter(routed, needs_triage=needs_triage)
                 if _has_typed_capture_metadata(routed)
@@ -189,7 +199,7 @@ async def capture(
         )
     except Exception:
         log.exception("capture typed note write failed; falling back to raw inbox note")
-        return _persist_inbox_fallback(req.text, req.source)
+        return _persist_inbox_fallback(text, source, ts=ts)
     return {
         "id": row["id"],
         "type": routed.type,
@@ -481,8 +491,12 @@ def _with_needs_triage_tag(tags: list[str], *, needs_triage: bool) -> list[str]:
     return [*tags, "needs-triage"]
 
 
-def _persist_inbox_fallback(text: str, source: str) -> dict:
-    row = persist_note_capture(body=text, source=source)
+def _persist_inbox_fallback(text: str, source: str, *, ts: str | None = None) -> dict:
+    row = persist_note_capture(
+        body=text,
+        source=source,
+        ts=_capture_local_datetime(ts) if ts else None,
+    )
     return {
         "id": row["id"],
         "type": "inbox",

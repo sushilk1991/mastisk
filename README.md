@@ -614,6 +614,44 @@ complication** for two-tap access: tap, confirm, speak.
 - `Get Contents of URL` POST from the Watch has been intermittently flaky across
   watchOS versions; test on your exact version.
 
+## Capturing iPhone audio
+
+Longer audio capture is an iPhone Shortcut/API-client path, not a Watch path.
+It posts an audio file to Mastisk, Mastisk transcribes locally with
+`mlx-whisper`, then routes the transcript exactly like `/api/capture` with
+`source="phone"`.
+
+Prerequisite:
+
+```bash
+uv tool install --force --reinstall --with mlx-whisper mastisk
+```
+
+If you expose this over Cloudflare Tunnel, scope the tunnel to this exact
+endpoint too. Do not expose the whole API:
+
+```yaml
+ingress:
+  - hostname: capture.example.com
+    path: ^/api/capture$
+    service: http://127.0.0.1:5555
+  - hostname: capture.example.com
+    path: ^/api/capture/audio$
+    service: http://127.0.0.1:5555
+  - service: http_status:404
+```
+
+Shortcut:
+
+1. **Record Audio** -> Audio Quality: your choice; Finish Recording: On Tap
+2. **Get Contents of URL**
+   - URL: `https://capture.<your-domain>/api/capture/audio`
+   - Method: `POST`
+   - Headers: `Authorization` = `Bearer <token>`
+   - Request Body: Form -> `file` = Recorded Audio, `ts` = Current Date formatted as ISO 8601
+3. Optional: **Show Notification** with the returned `job_id`, then check Jobs
+   & ingest for the final routed capture.
+
 ---
 
 ## Project file extras

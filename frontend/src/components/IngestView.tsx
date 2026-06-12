@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import type { Feed } from '../types';
 
 interface Toast { text: string; tone: 'ok' | 'err' | 'info' }
 
 interface ListenResult { jobId: number; kind: string; message: string }
+type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
 export function IngestView() {
   const [feeds, setFeeds] = useState<Feed[] | null>(null);
@@ -18,6 +19,13 @@ export function IngestView() {
   const [listenOk, setListenOk] = useState<ListenResult | null>(null);
   const [listenErr, setListenErr] = useState<string | null>(null);
 
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docBusy, setDocBusy] = useState(false);
+  const [docJobId, setDocJobId] = useState<number | null>(null);
+  const [docStatus, setDocStatus] = useState<JobStatus | null>(null);
+  const [docErr, setDocErr] = useState<string | null>(null);
+  const docInputRef = useRef<HTMLInputElement | null>(null);
+
   const reload = async () => {
     try {
       const d = await api.feeds();
@@ -28,6 +36,30 @@ export function IngestView() {
   };
 
   useEffect(() => { void reload(); }, []);
+
+  useEffect(() => {
+    if (!docJobId || docStatus === 'done' || docStatus === 'failed') return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await api.ingest.job(docJobId);
+        if (!cancelled) {
+          setDocStatus(res.job.status);
+          if (res.job.status === 'failed') {
+            setDocErr(res.job.error || 'document ingest failed');
+          }
+        }
+      } catch (err) {
+        if (!cancelled) setDocErr(err instanceof Error ? err.message : String(err));
+      }
+    };
+    const timer = window.setInterval(() => { void poll(); }, 1800);
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [docJobId, docStatus]);
 
   const flash = (t: Toast) => {
     setToast(t);
@@ -82,6 +114,27 @@ export function IngestView() {
     }
   };
 
+  const onDocumentUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!docFile) return;
+    setDocBusy(true);
+    setDocErr(null);
+    setDocStatus(null);
+    try {
+      const res = await api.ingest.uploadDocument(docFile);
+      setDocJobId(res.job_id);
+      setDocStatus('queued');
+      setDocFile(null);
+      if (docInputRef.current) {
+        docInputRef.current.value = '';
+      }
+    } catch (err) {
+      setDocErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDocBusy(false);
+    }
+  };
+
   return (
     <div className="view">
       <div className="view-h">System · Sources & ingest</div>
@@ -90,6 +143,34 @@ export function IngestView() {
         Scout polls each enabled feed every 10 minutes and sends matching items to Compiler.
         Add one here, or via <code style={{fontFamily:'var(--mono)',fontSize:12,background:'var(--bg-sunk)',padding:'1px 6px',borderRadius:4}}>mastisk add-feed &lt;url&gt;</code>.
       </p>
+
+      <div className="view-h" style={{marginTop:24}}>Document upload</div>
+      <form onSubmit={onDocumentUpload} className="listen-row" style={{margin:'12px 0 28px'}}>
+        <input
+          ref={docInputRef}
+          type="file"
+          accept=".pdf,.docx,.pptx,.xlsx,.html,.txt,.md,.epub"
+          onChange={(e) => {
+            setDocFile(e.target.files?.[0] ?? null);
+            setDocErr(null);
+          }}
+          className="listen-input"
+        />
+        <button
+          type="submit"
+          disabled={docBusy || !docFile}
+          style={btnPrimary(docBusy || !docFile)}
+        >
+          {docBusy ? 'queuing…' : 'Upload'}
+        </button>
+      </form>
+      {docJobId && (
+        <div className="listen-ok">
+          <span className="listen-ok-id">#{docJobId}</span>
+          <span className="listen-ok-copy">document ingest <em>{docStatus || 'queued'}</em></span>
+        </div>
+      )}
+      {docErr && <div className="listen-err">{docErr}</div>}
 
       <form onSubmit={onAdd} style={{display:'flex',gap:8,margin:'24px 0 32px',flexWrap:'wrap'}}>
         <input
