@@ -238,11 +238,13 @@ def _ensure_library_schema(conn: sqlite3.Connection) -> None:
              text         TEXT NOT NULL,
              content_hash TEXT NOT NULL,
              quote_id     TEXT,
+             deleted_at   DATETIME,
              created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
              updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
              UNIQUE(book_slug, content_hash)
            )"""
     )
+    _add_column_if_missing(conn, "book_highlights", "deleted_at", "DATETIME")
     conn.execute(
         """CREATE INDEX IF NOT EXISTS idx_book_highlights_book
            ON book_highlights(book_slug, position)"""

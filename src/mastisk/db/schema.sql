@@ -576,6 +576,7 @@ CREATE TABLE IF NOT EXISTS book_highlights (
   text         TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   quote_id     TEXT,
+  deleted_at   DATETIME,
   created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(book_slug, content_hash)

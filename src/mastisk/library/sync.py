@@ -81,7 +81,8 @@ def scan_books(paths: list[Path] | None = None, *, recover: bool = False) -> dic
             existing_quote_ids = {
                 row["content_hash"]: row["quote_id"]
                 for row in conn.execute(
-                    "SELECT content_hash, quote_id FROM book_highlights WHERE book_slug = ?",
+                    """SELECT content_hash, quote_id FROM book_highlights
+                       WHERE book_slug = ? AND deleted_at IS NULL""",
                     (slug,),
                 ).fetchall()
                 if row["quote_id"]
@@ -438,7 +439,7 @@ def add_book_highlight(book_slug: str, text: str) -> dict[str, Any] | None:
     with connect() as conn:
         row = conn.execute(
             """SELECT * FROM book_highlights
-               WHERE book_slug = ? AND content_hash = ?""",
+               WHERE book_slug = ? AND content_hash = ? AND deleted_at IS NULL""",
             (book_slug, digest),
         ).fetchone()
         if row is None:
@@ -446,10 +447,13 @@ def add_book_highlight(book_slug: str, text: str) -> dict[str, Any] | None:
         conn.execute(
             """UPDATE book_highlights
                   SET quote_id = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?""",
+                WHERE id = ? AND deleted_at IS NULL""",
             (quote["id"], row["id"]),
         )
-        refreshed = conn.execute("SELECT * FROM book_highlights WHERE id = ?", (row["id"],)).fetchone()
+        refreshed = conn.execute(
+            "SELECT * FROM book_highlights WHERE id = ? AND deleted_at IS NULL",
+            (row["id"],),
+        ).fetchone()
     payload = _highlight_row(dict(refreshed))
     payload["created"] = created
     return payload
@@ -518,7 +522,11 @@ def append_quote_thought(
 
 
 def recover_highlight_quotes(*, book_slugs: set[str] | None = None) -> int:
-    clauses = ["(bh.quote_id IS NULL OR q.id IS NULL OR q.deleted_at IS NOT NULL)"]
+    clauses = [
+        "(bh.quote_id IS NULL OR q.id IS NULL OR q.deleted_at IS NOT NULL)",
+        "bh.deleted_at IS NULL",
+        "b.deleted_at IS NULL",
+    ]
     params: list[Any] = []
     if book_slugs:
         placeholders = ",".join("?" for _ in book_slugs)
@@ -528,6 +536,7 @@ def recover_highlight_quotes(*, book_slugs: set[str] | None = None) -> int:
         rows = conn.execute(
             f"""SELECT bh.id, bh.book_slug, bh.text
                 FROM book_highlights bh
+                JOIN books b ON b.slug = bh.book_slug
                 LEFT JOIN quotes q ON q.id = bh.quote_id
                 WHERE {' AND '.join(clauses)}
                 ORDER BY bh.book_slug, bh.position""",
@@ -562,7 +571,8 @@ def list_books(*, status: str | None = None) -> list[dict[str, Any]]:
             f"""SELECT b.*,
                        COUNT(bh.id) AS highlight_count
                 FROM books b
-                LEFT JOIN book_highlights bh ON bh.book_slug = b.slug
+                LEFT JOIN book_highlights bh
+                  ON bh.book_slug = b.slug AND bh.deleted_at IS NULL
                 WHERE {' AND '.join(clauses)}
                 GROUP BY b.slug
                 ORDER BY lower(b.title), b.title""",
@@ -577,7 +587,8 @@ def book_payload(slug: str) -> dict[str, Any] | None:
             """SELECT b.*,
                       COUNT(bh.id) AS highlight_count
                FROM books b
-               LEFT JOIN book_highlights bh ON bh.book_slug = b.slug
+               LEFT JOIN book_highlights bh
+                 ON bh.book_slug = b.slug AND bh.deleted_at IS NULL
                WHERE b.slug = ? AND b.deleted_at IS NULL
                GROUP BY b.slug""",
             (slug,),
@@ -595,7 +606,7 @@ def book_payload(slug: str) -> dict[str, Any] | None:
             _highlight_row(dict(item))
             for item in conn.execute(
                 """SELECT * FROM book_highlights
-                   WHERE book_slug = ?
+                   WHERE book_slug = ? AND deleted_at IS NULL
                    ORDER BY position, id""",
                 (slug,),
             ).fetchall()
@@ -606,7 +617,9 @@ def book_payload(slug: str) -> dict[str, Any] | None:
                 """SELECT q.*
                    FROM quotes q
                    JOIN book_highlights bh ON bh.quote_id = q.id
-                   WHERE bh.book_slug = ? AND q.deleted_at IS NULL
+                   WHERE bh.book_slug = ?
+                     AND bh.deleted_at IS NULL
+                     AND q.deleted_at IS NULL
                    ORDER BY bh.position, bh.id""",
                 (slug,),
             ).fetchall()
@@ -911,10 +924,21 @@ def _soft_delete_missing_path(conn, path: Path, *, table: str) -> None:
         rel = str(path.relative_to(vault_dir()))
     except ValueError:
         return
+    book_slugs: list[str] = []
+    if table == "books":
+        book_slugs = [
+            row["slug"]
+            for row in conn.execute(
+                "SELECT slug FROM books WHERE path = ? AND deleted_at IS NULL",
+                (rel,),
+            ).fetchall()
+        ]
     conn.execute(
         f"UPDATE {table} SET deleted_at = CURRENT_TIMESTAMP WHERE path = ? AND deleted_at IS NULL",
         (rel,),
     )
+    if book_slugs:
+        _soft_delete_book_highlights(conn, book_slugs)
 
 
 def _soft_delete_disappeared(conn, table: str, seen: set[str]) -> None:
@@ -926,8 +950,17 @@ def _soft_delete_disappeared(conn, table: str, seen: set[str]) -> None:
                 WHERE deleted_at IS NULL AND {id_column} NOT IN ({placeholders})""",
             tuple(seen),
         )
+        if table == "books":
+            _soft_delete_disappeared_book_highlights(conn, seen)
     else:
         conn.execute(f"UPDATE {table} SET deleted_at = CURRENT_TIMESTAMP WHERE deleted_at IS NULL")
+        if table == "books":
+            conn.execute(
+                """UPDATE book_highlights
+                      SET deleted_at = CURRENT_TIMESTAMP,
+                          updated_at = CURRENT_TIMESTAMP
+                    WHERE deleted_at IS NULL"""
+            )
 
 
 def _soft_delete_slug(table: str, entity_id: str) -> None:
@@ -939,6 +972,32 @@ def _soft_delete_slug(table: str, entity_id: str) -> None:
                  WHERE {id_column} = ? AND deleted_at IS NULL""",
             (entity_id,),
         )
+        if table == "books":
+            _soft_delete_book_highlights(conn, [entity_id])
+
+
+def _soft_delete_book_highlights(conn, book_slugs: list[str]) -> None:
+    if not book_slugs:
+        return
+    placeholders = ",".join("?" for _ in book_slugs)
+    conn.execute(
+        f"""UPDATE book_highlights
+              SET deleted_at = CURRENT_TIMESTAMP,
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE deleted_at IS NULL AND book_slug IN ({placeholders})""",
+        tuple(book_slugs),
+    )
+
+
+def _soft_delete_disappeared_book_highlights(conn, seen: set[str]) -> None:
+    placeholders = ",".join("?" for _ in seen)
+    conn.execute(
+        f"""UPDATE book_highlights
+              SET deleted_at = CURRENT_TIMESTAMP,
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE deleted_at IS NULL AND book_slug NOT IN ({placeholders})""",
+        tuple(seen),
+    )
 
 
 def _clean_book_status(value: object) -> str:

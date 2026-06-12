@@ -176,6 +176,34 @@ def test_books_routes_enrich_offline_patch_and_highlight_quote_recovery(
         assert offline.json()["author"] == "Local Author"
 
 
+def test_scan_library_tombstones_deleted_book_highlights_without_resurrecting_quotes(
+    db, vault_tmp
+):
+    from mastisk.library.sync import add_book_highlight, create_book_file, scan_library
+
+    book = create_book_file(title="Thinking in Systems", author="Donella Meadows")
+    highlight = add_book_highlight(book["slug"], "A system is more than the sum of its parts.")
+    quote_id = highlight["quote_id"]
+    quote_path = vault_tmp / "library" / "quotes" / f"{quote_id}.md"
+    assert quote_path.exists()
+
+    (vault_tmp / book["path"]).unlink()
+    quote_path.unlink()
+
+    scan_library()
+
+    assert not quote_path.exists()
+    book_row = db.execute("SELECT deleted_at FROM books WHERE slug = ?", (book["slug"],)).fetchone()
+    assert book_row["deleted_at"] is not None
+    highlight_row = db.execute(
+        "SELECT deleted_at FROM book_highlights WHERE book_slug = ?",
+        (book["slug"],),
+    ).fetchone()
+    assert highlight_row["deleted_at"] is not None
+    quote_row = db.execute("SELECT deleted_at FROM quotes WHERE id = ?", (quote_id,)).fetchone()
+    assert quote_row["deleted_at"] is not None
+
+
 def test_quotes_routes_append_thoughts_file_first(db, vault_tmp, data_tmp):
     with _client(vault_tmp, data_tmp, db) as client:
         created = client.post(
