@@ -63,6 +63,29 @@ def test_scan_content_round_trips_file_and_content_tasks(db, vault_tmp):
     }
 
 
+def test_scan_content_skips_malformed_yaml_and_triage_stays_available(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.content.sync import create_content_file, scan_content
+
+    item = create_content_file(
+        title="Local-first personal OS",
+        kind="article",
+        outline="## Outline\n\n- Files are the API.",
+        needs_triage=True,
+    )
+    bad = vault_tmp / "content" / "broken.md"
+    bad.write_text("---\ntitle: [broken\n---\n\nbad\n", encoding="utf-8")
+
+    assert scan_content() == {"upserted": 1}
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        r = client.get("/api/triage")
+
+    assert r.status_code == 200, r.text
+    assert [row["id"] for row in r.json()] == [f"content:{item['slug']}"]
+
+
 def test_content_routes_create_filter_detail_patch_and_spawn_blog_draft(
     db,
     vault_tmp,

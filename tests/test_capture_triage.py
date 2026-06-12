@@ -115,6 +115,34 @@ def test_capture_triage_lists_persisted_triage_shapes(db, vault_tmp, data_tmp):
     assert note["confidence"] == 0.72
 
 
+def test_capture_triage_content_listing_does_not_rescan_or_touch_updated_at(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.content.sync import create_content_file
+
+    item = create_content_file(
+        title="Local-first personal OS",
+        kind="article",
+        outline="## Outline\n\n- Files are the API.",
+        needs_triage=True,
+    )
+    old_updated_at = "2000-01-01 00:00:00"
+    db.execute(
+        "UPDATE content_items SET updated_at = ? WHERE slug = ?",
+        (old_updated_at, item["slug"]),
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        r = client.get("/api/triage")
+
+    assert r.status_code == 200, r.text
+    assert [row["id"] for row in r.json()] == [f"content:{item['slug']}"]
+    row = db.execute(
+        "SELECT updated_at FROM content_items WHERE slug = ?", (item["slug"],)
+    ).fetchone()
+    assert row["updated_at"] == old_updated_at
+
+
 def test_capture_triage_accept_task_clears_task_marker(db, vault_tmp, data_tmp):
     from mastisk.tasks.sync import append_task_to_host
 

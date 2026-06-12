@@ -1,6 +1,7 @@
 """Content pipeline scanner and file-first mutations."""
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from datetime import date
@@ -20,6 +21,7 @@ _CREATE_CONTENT_LOCK = threading.Lock()
 _VALID_KINDS = {"video", "article", "podcast", "newsletter"}
 _VALID_STATUSES = {"idea", "outline", "editing", "waiting", "published", "done"}
 CONTENT_STATUSES = ("idea", "outline", "editing", "waiting", "published", "done")
+log = logging.getLogger("mastisk.content.sync")
 
 
 def scan_content(paths: list[Path] | None = None) -> dict[str, int]:
@@ -33,11 +35,26 @@ def scan_content(paths: list[Path] | None = None) -> dict[str, int]:
                 if paths is not None and path.suffix == ".md":
                     _soft_delete_missing_path(conn, path)
                 continue
-            with host_file_lock(path):
-                item = parse_content_file(path)
+            try:
+                with host_file_lock(path):
+                    item = parse_content_file(path)
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                log.warning("content scan skipped %s: %s", path, exc)
+                continue
             slug = item["slug"]
             seen.add(slug)
             deleted_at_sql = "CURRENT_TIMESTAMP" if item.get("archived") else "NULL"
+            changed = """content_items.path IS NOT excluded.path
+                     OR content_items.title IS NOT excluded.title
+                     OR content_items.kind IS NOT excluded.kind
+                     OR content_items.status IS NOT excluded.status
+                     OR content_items.domain IS NOT excluded.domain
+                     OR content_items.channel IS NOT excluded.channel
+                     OR content_items.url IS NOT excluded.url
+                     OR content_items.publish_date IS NOT excluded.publish_date
+                     OR content_items.needs_triage IS NOT excluded.needs_triage
+                     OR (excluded.deleted_at IS NULL AND content_items.deleted_at IS NOT NULL)
+                     OR (excluded.deleted_at IS NOT NULL AND content_items.deleted_at IS NULL)"""
             conn.execute(
                 f"""INSERT INTO content_items
                    (slug, path, title, kind, status, domain, channel, url,
@@ -53,8 +70,15 @@ def scan_content(paths: list[Path] | None = None) -> dict[str, int]:
                      url=excluded.url,
                      publish_date=excluded.publish_date,
                      needs_triage=excluded.needs_triage,
-                     deleted_at={deleted_at_sql},
-                     updated_at=CURRENT_TIMESTAMP""",
+                     deleted_at=CASE
+                       WHEN excluded.deleted_at IS NOT NULL
+                         THEN COALESCE(content_items.deleted_at, excluded.deleted_at)
+                       ELSE NULL
+                     END,
+                     updated_at=CASE
+                       WHEN {changed} THEN CURRENT_TIMESTAMP
+                       ELSE content_items.updated_at
+                     END""",
                 (
                     slug,
                     item["path"],

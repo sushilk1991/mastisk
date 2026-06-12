@@ -313,7 +313,6 @@ def _content_items() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if not content_dir().exists():
         return items
-    scan_content()
     with connect() as conn:
         rows = conn.execute(
             """SELECT * FROM content_items
@@ -327,7 +326,7 @@ def _content_items() -> list[dict[str, Any]]:
             title = parsed["title"]
             body = parsed["body"].strip()
             original = f"{title}\n\n{body}".strip() if body else title
-        except (OSError, ValueError):
+        except (OSError, ValueError, yaml.YAMLError):
             title = item["title"]
             original = title
         items.append(
