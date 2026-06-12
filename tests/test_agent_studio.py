@@ -562,6 +562,8 @@ def test_frontend_agent_studio_static_contract() -> None:
     assert "attribute/index placeholders" in source
     assert "dirtyProfilePatch" in source
     assert "prompt_override" in source
+    assert "this agent has no editable prompts" in source
+    assert "detail.slots.length === 0" in source
     assert "agent_detail" in router
     assert "/agents/" in router
     assert ".agent-studio-layout" in css

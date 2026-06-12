@@ -166,7 +166,7 @@ function AgentDetailView({
   const skillNameInvalid = Boolean(newSkillName.trim() && !isSafeSkillName(newSkillName.trim()));
 
   const save = useCallback(async () => {
-    if (!detail || !primarySlot) return;
+    if (!detail) return;
     const previous = detail;
     const slotOverrides: Record<string, string> = {};
     for (const slot of detail.slots) {
@@ -176,7 +176,7 @@ function AgentDetailView({
         slotOverrides[slot.slot_id] = draft;
       }
     }
-    const promptOverride = primaryDraft.trim() && primaryDraft !== primarySlot.default
+    const promptOverride = primarySlot && primaryDraft.trim() && primaryDraft !== primarySlot.default
       ? primaryDraft
       : null;
     const patch = dirtyProfilePatch(detail, {
@@ -249,7 +249,7 @@ function AgentDetailView({
       </div>
     );
   }
-  if (!detail || !primarySlot) {
+  if (!detail) {
     return (
       <div className="view">
         <p className="dash-empty">loading agent...</p>
@@ -289,31 +289,45 @@ function AgentDetailView({
 
       <div className="agent-studio-layout">
         <main className="agent-studio-main">
-          <section className="agent-panel">
-            <div className="agent-section-head">
-              <div>
-                <div className="view-h">Prompt</div>
-                <h2>{primarySlot.label}</h2>
+          {primarySlot ? (
+            <section className="agent-panel">
+              <div className="agent-section-head">
+                <div>
+                  <div className="view-h">Prompt</div>
+                  <h2>{primarySlot.label}</h2>
+                </div>
+                <PromptState slot={primarySlot} draft={primaryDraft}/>
               </div>
-              <PromptState slot={primarySlot} draft={primaryDraft}/>
-            </div>
-            <PromptEditor
-              slot={primarySlot}
-              value={primaryDraft}
-              editing={Boolean(editing[primarySlot.slot_id])}
-              onEdit={() => {
-                setPrimaryDraft(primarySlot.override || primarySlot.default);
-                setEditing((current) => ({ ...current, [primarySlot.slot_id]: true }));
-              }}
-              onReset={() => {
-                setPrimaryDraft(primarySlot.default);
-                setEditing((current) => ({ ...current, [primarySlot.slot_id]: false }));
-              }}
-              onChange={setPrimaryDraft}
-              onSave={save}
-              onEditorError={setEditorError}
-            />
-          </section>
+              <PromptEditor
+                slot={primarySlot}
+                value={primaryDraft}
+                editing={Boolean(editing[primarySlot.slot_id])}
+                onEdit={() => {
+                  setPrimaryDraft(primarySlot.override || primarySlot.default);
+                  setEditing((current) => ({ ...current, [primarySlot.slot_id]: true }));
+                }}
+                onReset={() => {
+                  setPrimaryDraft(primarySlot.default);
+                  setEditing((current) => ({ ...current, [primarySlot.slot_id]: false }));
+                }}
+                onChange={setPrimaryDraft}
+                onSave={save}
+                onEditorError={setEditorError}
+              />
+            </section>
+          ) : (
+            <section className="agent-panel">
+              <div className="agent-section-head">
+                <div>
+                  <div className="view-h">Prompt</div>
+                  <h2>No editable prompts</h2>
+                </div>
+              </div>
+              {detail.slots.length === 0 && (
+                <p className="agent-note">this agent has no editable prompts.</p>
+              )}
+            </section>
+          )}
 
           {secondarySlots.length > 0 && (
             <section className="agent-panel">
