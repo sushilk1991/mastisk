@@ -15,6 +15,7 @@ from mastisk.agents.reminder_engine import create_task_due_reminder
 from mastisk.db.queries import connect
 from mastisk.file_locks import host_file_lock
 from mastisk.journal import append_log, scan_journal_days
+from mastisk.library.sync import create_quote_file
 from mastisk.paths import journal_dir, projects_dir, vault_dir
 from mastisk.projects.sync import append_project_log, find_project, get_project
 from mastisk.routes.notes import atomic_write, persist_note_capture
@@ -35,7 +36,7 @@ _TRIAGE_TAG_RE = re.compile(r"(?<!\S)#needs-triage\b")
 _H2_RE = re.compile(r"^##\s+(.+?)\s*$")
 _JOURNAL_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{2}:\d{2}\s+")
 _PROJECT_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+")
-_NOTE_SHAPED_TARGETS = {"note", "inbox", "quote", "inventory", "content"}
+_NOTE_SHAPED_TARGETS = {"note", "inbox", "inventory", "content"}
 
 
 class TriageReclassifyError(ValueError):
@@ -387,6 +388,19 @@ def _file_as_target(item: dict[str, Any], target_type: str) -> None:
         if not name:
             raise TriageReclassifyError("person target requires a person name")
         create_person_file(name=name, interaction_text=text)
+        return
+    if target_type == "quote":
+        tags = (
+            [str(tag) for tag in capture.get("tags", [])]
+            if isinstance(capture.get("tags"), list)
+            else None
+        )
+        create_quote_file(
+            text=text,
+            source_type="conversation",
+            source_ref=_str_or_none(capture.get("title")),
+            tags=tags,
+        )
         return
     if target_type in {"note", "inbox"}:
         persist_note_capture(body=text, source="pwa")

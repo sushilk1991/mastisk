@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -13,6 +14,33 @@ def _client(vault_tmp, data_tmp, db, **kwargs):
     from mastisk.app import create_app
 
     return TestClient(create_app(), **kwargs)
+
+
+def _capture(**overrides):
+    from mastisk.capture.router import Capture
+
+    data = {
+        "type": "quote",
+        "confidence": 0.72,
+        "title": "Conversation with Ada",
+        "body": "The map is not the territory.",
+        "domain": None,
+        "project": None,
+        "person": None,
+        "routine": None,
+        "due": None,
+        "scheduled": None,
+        "priority": None,
+        "recurrence": None,
+        "reminder_lead_minutes": None,
+        "no_reminder": False,
+        "review_at": None,
+        "tags": ["epistemics"],
+        "related": [],
+        "command_detected": False,
+    }
+    data.update(overrides)
+    return Capture(**data)
 
 
 def test_capture_triage_frontend_client_stays_outside_capture_tunnel_scope():
@@ -301,6 +329,42 @@ def test_capture_triage_reclassifies_typed_note_to_note_in_place(
     note_text = (vault_tmp / note["path"]).read_text(encoding="utf-8")
     assert "needs_triage: false" in note_text
     assert "type: note" in note_text
+
+
+def test_capture_triage_accepts_medium_confidence_quote_to_library(
+    db, vault_tmp, data_tmp
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\nbearer_token = "test-token"\n', encoding="utf-8")
+
+    with _client(vault_tmp, data_tmp, db) as client, patch(
+        "mastisk.routes.capture.route_capture", new_callable=AsyncMock
+    ) as router:
+        router.return_value = _capture()
+        captured = client.post(
+            "/api/capture",
+            json={"text": "save quote maybe: The map is not the territory.", "source": "watch"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert captured.status_code == 201, captured.text
+        assert captured.json()["type"] == "quote"
+        assert captured.json()["needs_triage"] is True
+        assert db.execute("SELECT COUNT(*) AS n FROM quotes").fetchone()["n"] == 0
+
+        item = next(row for row in client.get("/api/triage").json() if row["detected_type"] == "quote")
+        accepted = client.post(
+            f"/api/triage/{item['id']}/reclassify",
+            json={"type": "quote"},
+        )
+
+    assert accepted.status_code == 200, accepted.text
+    quote = db.execute("SELECT id, path, source_type, source_ref FROM quotes").fetchone()
+    assert quote["source_type"] == "conversation"
+    assert quote["source_ref"] == "Conversation with Ada"
+    assert (vault_tmp / quote["path"]).exists()
+    note_text = (vault_tmp / captured.json()["destination"]).read_text(encoding="utf-8")
+    assert "needs_triage: false" in note_text
+    assert client.get("/api/triage").json() == []
 
 
 def test_capture_triage_routine_done_without_candidate_returns_422_and_keeps_marker(
