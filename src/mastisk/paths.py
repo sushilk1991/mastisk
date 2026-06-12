@@ -119,6 +119,10 @@ def quotes_dir() -> Path:
     return library_dir() / "quotes"
 
 
+def inventory_dir() -> Path:
+    return vault_dir() / "inventory"
+
+
 def ensure_dirs() -> None:
     """Create all directories that should exist (idempotent)."""
     for d in [
@@ -145,5 +149,6 @@ def ensure_dirs() -> None:
         library_dir(),
         books_dir(),
         quotes_dir(),
+        inventory_dir(),
     ]:
         d.mkdir(parents=True, exist_ok=True)

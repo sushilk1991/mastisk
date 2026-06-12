@@ -23,6 +23,7 @@ from mastisk.routes import (
     domains,
     feed_route,
     graph_route,
+    inventory,
     journal,
     library,
     listen_route,
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(journal.router)
     app.include_router(people.router)
     app.include_router(library.router)
+    app.include_router(inventory.router)
     app.include_router(reminders.router)
     app.include_router(notes.articles_notes_router)
     app.include_router(repos_route.router)

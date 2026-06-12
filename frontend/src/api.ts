@@ -1,7 +1,7 @@
 import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
   BlogPostSummary, BookDetail, BookHighlight, BookStatus, BookSummary, CaptureTriageItem, CaptureTriageTarget, Digest, DigestAudit, Domain, Feed,
-  FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
+  FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, InventoryDetail, InventoryList, InventoryStatus, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
   KindleImportResult, KindleReviewItem, PersonDetail, PersonSummary, PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, QuoteDetail, QuoteSourceType, QuoteSummary, ReminderRow,
   RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
@@ -511,6 +511,33 @@ export const api = {
       }),
     delete: (slug: string): Promise<PersonDetail> =>
       j<PersonDetail>(`${BASE}/people/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
+  },
+
+  inventoryApi: {
+    list: (filters: { status?: string; location?: string } = {}): Promise<InventoryList> => {
+      const params = new URLSearchParams();
+      if (filters.status) params.set('status', filters.status);
+      if (filters.location) params.set('location', filters.location);
+      const qs = params.toString();
+      return j<InventoryList>(qs ? `${BASE}/inventory?${qs}` : `${BASE}/inventory`);
+    },
+    get: (id: string): Promise<InventoryDetail> =>
+      j<InventoryDetail>(`${BASE}/inventory/${encodeURIComponent(id)}`),
+    create: (body: { name: string; acquired?: string | null; value?: number | null; status?: InventoryStatus | string; location?: string | null; photo?: string | null; notes?: string | null }):
+      Promise<InventoryDetail> =>
+      j<InventoryDetail>(`${BASE}/inventory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    patch: (id: string, body: { name?: string | null; value?: number | null; status?: InventoryStatus | string | null; location?: string | null }):
+      Promise<InventoryDetail> =>
+      j<InventoryDetail>(`${BASE}/inventory/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    exportUrl: `${BASE}/inventory/export`,
   },
 
   libraryApi: {

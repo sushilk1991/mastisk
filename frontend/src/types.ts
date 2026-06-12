@@ -322,7 +322,7 @@ export type View =
   | 'graph' | 'mobile' | 'queue' | 'ingest' | 'lint' | 'settings'
   | 'open_questions'
   | 'notes' | 'note' | 'library'
-  | 'tasks' | 'projects' | 'routines' | 'journal' | 'people' | 'inbox_triage'
+  | 'tasks' | 'projects' | 'routines' | 'journal' | 'people' | 'inventory' | 'inbox_triage'
   | 'roundtables' | 'roundtable'
   | 'repos' | 'repo'
   | 'blog' | 'blog_post'
@@ -523,6 +523,32 @@ export interface PersonDetail extends PersonSummary {
   frontmatter: Record<string, unknown>;
   body: string;
   interactions: PersonInteraction[];
+}
+
+export type InventoryStatus = 'owned' | 'sold' | 'discarded';
+
+export interface InventorySummary {
+  id: string;
+  path: string;
+  name: string;
+  acquired: string | null;
+  value: number | null;
+  status: InventoryStatus | string;
+  location: string | null;
+  photo: string | null;
+  deleted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface InventoryDetail extends InventorySummary {
+  frontmatter: Record<string, unknown>;
+  body: string;
+}
+
+export interface InventoryList {
+  items: InventorySummary[];
+  total_value: number;
 }
 
 export type BookStatus = 'want' | 'reading' | 'finished' | 'abandoned';

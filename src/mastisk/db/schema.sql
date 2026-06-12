@@ -632,6 +632,28 @@ CREATE TABLE IF NOT EXISTS kindle_import_review (
 CREATE INDEX IF NOT EXISTS idx_kindle_import_review_status
   ON kindle_import_review(status, created_at);
 
+-- ─────────────────────────────── Personal OS Phase 13 ───────────────────────────────
+-- Inventory item files are markdown-canonical. Photos are stored as optional
+-- vault-relative paths; attachment upload lands in a later phase.
+
+CREATE TABLE IF NOT EXISTS inventory (
+  id         TEXT PRIMARY KEY,
+  path       TEXT UNIQUE NOT NULL,
+  name       TEXT NOT NULL,
+  acquired   TEXT,
+  value      REAL,
+  status     TEXT NOT NULL DEFAULT 'owned',
+  location   TEXT,
+  photo      TEXT,
+  deleted_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_status ON inventory(status);
+CREATE INDEX IF NOT EXISTS idx_inventory_location ON inventory(location);
+CREATE INDEX IF NOT EXISTS idx_inventory_active ON inventory(id) WHERE deleted_at IS NULL;
+
 -- ─────────────────────────────── Personal OS Phase 6 ───────────────────────────────
 -- Journal day files are markdown-canonical. This table mirrors journal/*.md for
 -- timeline and dashboard queries.

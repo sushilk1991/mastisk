@@ -36,7 +36,7 @@ _TRIAGE_TAG_RE = re.compile(r"(?<!\S)#needs-triage\b")
 _H2_RE = re.compile(r"^##\s+(.+?)\s*$")
 _JOURNAL_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{2}:\d{2}\s+")
 _PROJECT_LOG_PREFIX_RE = re.compile(r"^\s*-\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+")
-_NOTE_SHAPED_TARGETS = {"note", "inbox", "inventory", "content"}
+_NOTE_SHAPED_TARGETS = {"note", "inbox", "content"}
 
 
 class TriageReclassifyError(ValueError):
@@ -401,6 +401,13 @@ def _file_as_target(item: dict[str, Any], target_type: str) -> None:
             source_ref=_str_or_none(capture.get("title")),
             tags=tags,
         )
+        return
+    if target_type == "inventory":
+        from mastisk.inventory.sync import create_inventory_file
+
+        name = _str_or_none(capture.get("title")) or text
+        notes = text if text.casefold() != name.casefold() else None
+        create_inventory_file(name=name, notes=notes)
         return
     if target_type in {"note", "inbox"}:
         persist_note_capture(body=text, source="pwa")

@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { api, FocusFullError } from '../api';
 import type {
   CalendarToday, CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
-  ChecklistTemplate, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
+  ChecklistTemplate, InventoryDetail, InventoryStatus, InventorySummary, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
   RoutineGroups, RoutineProgress, RoutineRow, SlippingItem, TaskRow, TimeOfDay, View,
 } from '../types';
 
@@ -23,6 +23,7 @@ const PRIORITIES: { value: '' | 'high' | 'medium' | 'low'; label: string }[] = [
   { value: 'medium', label: 'medium' },
   { value: 'low', label: 'low' },
 ];
+const INVENTORY_STATUSES: InventoryStatus[] = ['owned', 'sold', 'discarded'];
 type ErrorSetter = (message: string | null) => void;
 type ChangeHandler = () => void | Promise<void>;
 
@@ -861,6 +862,197 @@ export function PeopleView({ liveKey }: LiveProps) {
   );
 }
 
+export function InventoryView({ liveKey }: LiveProps) {
+  const [items, setItems] = useState<InventorySummary[]>([]);
+  const [totalValue, setTotalValue] = useState(0);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [detail, setDetail] = useState<InventoryDetail | null>(null);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [locationFilter, setLocationFilter] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newAcquired, setNewAcquired] = useState('');
+  const [newValue, setNewValue] = useState('');
+  const [newLocation, setNewLocation] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editValue, setEditValue] = useState('');
+  const [editStatus, setEditStatus] = useState<InventoryStatus>('owned');
+  const [editLocation, setEditLocation] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+
+  async function loadList() {
+    setErr(null);
+    try {
+      const result = await api.inventoryApi.list({
+        status: statusFilter || undefined,
+        location: locationFilter.trim() || undefined,
+      });
+      setItems(result.items);
+      setTotalValue(result.total_value);
+      setSelected((current) => (
+        current && result.items.some((item) => item.id === current)
+          ? current
+          : result.items[0]?.id ?? null
+      ));
+    } catch (e) {
+      setErr(errorMessage(e));
+    }
+  }
+
+  async function loadDetail(id: string | null) {
+    if (!id) {
+      setDetail(null);
+      return;
+    }
+    setErr(null);
+    try {
+      setDetail(await api.inventoryApi.get(id));
+    } catch (e) {
+      setDetail(null);
+      setErr(errorMessage(e));
+    }
+  }
+
+  useEffect(() => { void loadList(); }, [liveKey, statusFilter, locationFilter]);
+  useEffect(() => { void loadDetail(selected); }, [selected, liveKey]);
+  useEffect(() => {
+    if (!detail) return;
+    setEditName(detail.name);
+    setEditValue(detail.value == null ? '' : String(detail.value));
+    setEditStatus(INVENTORY_STATUSES.includes(detail.status as InventoryStatus) ? detail.status as InventoryStatus : 'owned');
+    setEditLocation(detail.location ?? '');
+  }, [detail]);
+
+  async function createItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+    const value = optionalNumber(newValue);
+    if (value === undefined) {
+      setErr('value must be a number');
+      return;
+    }
+    const created = await api.inventoryApi.create({
+      name,
+      acquired: newAcquired || null,
+      value,
+      status: 'owned',
+      location: newLocation.trim() || null,
+    });
+    setNewName('');
+    setNewAcquired('');
+    setNewValue('');
+    setNewLocation('');
+    await loadList();
+    setSelected(created.id);
+  }
+
+  async function saveDetail() {
+    if (!detail) return;
+    const name = editName.trim();
+    if (!name) {
+      setErr('name must be non-blank');
+      return;
+    }
+    const value = optionalNumber(editValue);
+    if (value === undefined) {
+      setErr('value must be a number');
+      return;
+    }
+    const updated = await api.inventoryApi.patch(detail.id, {
+      name,
+      value,
+      status: editStatus,
+      location: editLocation.trim() || null,
+    });
+    setDetail(updated);
+    await loadList();
+  }
+
+  return (
+    <div className="view dash-view">
+      <div className="view-h">Personal OS</div>
+      <div className="dash-section-head">
+        <h1 className="view-title">Inventory</h1>
+        <a className="chip" href={api.inventoryApi.exportUrl}>export CSV</a>
+      </div>
+      <div className="dash-tags">
+        <span>total value {formatInventoryValue(totalValue)}</span>
+        <span>{items.length} items</span>
+      </div>
+      {err && <p className="dash-error">{err}</p>}
+
+      <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createItem(event), setErr)}>
+        <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Item name"/>
+        <input type="date" value={newAcquired} onChange={(event) => setNewAcquired(event.target.value)} />
+        <input type="number" min="0" step="0.01" value={newValue} onChange={(event) => setNewValue(event.target.value)} placeholder="Value"/>
+        <input value={newLocation} onChange={(event) => setNewLocation(event.target.value)} placeholder="Location"/>
+        <button type="submit">create</button>
+      </form>
+
+      <div className="dash-filters">
+        <Select label="Status" value={statusFilter} onChange={setStatusFilter} options={[
+          ['', 'all'], ...INVENTORY_STATUSES.map((status) => [status, status] as [string, string]),
+        ]}/>
+        <label>
+          <span>Location</span>
+          <input value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)} placeholder="exact match" />
+        </label>
+      </div>
+
+      {items.length === 0 ? (
+        <EmptyLine>No inventory items match these filters.</EmptyLine>
+      ) : (
+        <div className="dash-split">
+          <div className="dash-list">
+            {items.map((item) => (
+              <button
+                key={item.id}
+                className={`dash-card project-card ${selected === item.id ? 'active' : ''}`}
+                onClick={() => setSelected(item.id)}
+              >
+                <div className="dash-card-title">{item.name}</div>
+                <div className="dash-tags">
+                  <span className={item.status === 'owned' ? undefined : 'warn'}>{item.status}</span>
+                  {item.location && <span>{item.location}</span>}
+                  {item.value != null && <span>{formatInventoryValue(item.value)}</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="dash-panel">
+            {!detail ? <EmptyLine>Select an item.</EmptyLine> : (
+              <>
+                <div className="dash-section-head">
+                  <h2>{detail.name}</h2>
+                  <span className="dash-muted">{detail.acquired ?? 'no acquired date'}</span>
+                </div>
+                <div className="dash-inline-form">
+                  <input value={editName} onChange={(event) => setEditName(event.target.value)} placeholder="Name"/>
+                  <select value={editStatus} onChange={(event) => setEditStatus(event.target.value as InventoryStatus)}>
+                    {INVENTORY_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+                  </select>
+                  <input type="number" min="0" step="0.01" value={editValue} onChange={(event) => setEditValue(event.target.value)} placeholder="Value"/>
+                  <input value={editLocation} onChange={(event) => setEditLocation(event.target.value)} placeholder="Location"/>
+                  <button type="button" onClick={() => runMutation(saveDetail, setErr)}>save</button>
+                </div>
+                <KeyValueBlock values={{
+                  acquired: detail.acquired,
+                  value: detail.value,
+                  status: detail.status,
+                  location: detail.location,
+                  photo: detail.photo,
+                  path: detail.path,
+                }}/>
+                <SectionBlock title="Notes" body={detail.body}/>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function InboxTriageView({ liveKey }: LiveProps) {
   const [items, setItems] = useState<CaptureTriageItem[]>([]);
   const [needsReview, setNeedsReview] = useState<NeedsReviewItem[]>([]);
@@ -1558,6 +1750,18 @@ function ScaleSetter({ label, value, onSet }: { label: string; value: number | n
   );
 }
 
+function optionalNumber(value: string): number | null | undefined {
+  const text = value.trim();
+  if (!text) return null;
+  const number = Number(text);
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+function formatInventoryValue(value: number | null | undefined): string {
+  if (value == null) return '-';
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+}
+
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: [string, string][] }) {
   return (
     <label>
@@ -1604,7 +1808,7 @@ function compareTasksByDue(a: TaskRow, b: TaskRow): number {
 
 function triageTargets(item: CaptureTriageItem): CaptureTriageTarget[] {
   const detected = item.detected_type as CaptureTriageTarget;
-  const common: CaptureTriageTarget[] = ['task', 'journal', 'note', 'project_update', 'routine_done', 'person', 'quote', 'content'];
+  const common: CaptureTriageTarget[] = ['task', 'journal', 'note', 'project_update', 'routine_done', 'person', 'quote', 'inventory', 'content'];
   const allowed = common.filter((target) => target !== 'routine_done' || hasRoutineCandidate(item));
   const primary = detected === 'routine_done' && !hasRoutineCandidate(item) ? [] : [detected];
   return [...primary, ...allowed.filter((target) => target !== detected)];

@@ -145,6 +145,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
            WHERE kind = 'followup' AND deleted_at IS NULL"""
     )
     _ensure_library_schema(conn)
+    _ensure_inventory_schema(conn)
     conn.execute(
         """CREATE TABLE IF NOT EXISTS calendar_events (
              id          TEXT NOT NULL,
@@ -303,6 +304,38 @@ def _ensure_library_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """CREATE INDEX IF NOT EXISTS idx_kindle_import_review_status
            ON kindle_import_review(status, created_at)"""
+    )
+
+
+def _ensure_inventory_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS inventory (
+             id         TEXT PRIMARY KEY,
+             path       TEXT UNIQUE NOT NULL,
+             name       TEXT NOT NULL,
+             acquired   TEXT,
+             value      REAL,
+             status     TEXT NOT NULL DEFAULT 'owned',
+             location   TEXT,
+             photo      TEXT,
+             deleted_at DATETIME,
+             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+    for column, decl in (
+        ("acquired", "TEXT"),
+        ("value", "REAL"),
+        ("status", "TEXT NOT NULL DEFAULT 'owned'"),
+        ("location", "TEXT"),
+        ("photo", "TEXT"),
+        ("deleted_at", "DATETIME"),
+    ):
+        _add_column_if_missing(conn, "inventory", column, decl)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_inventory_status ON inventory(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_inventory_location ON inventory(location)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inventory_active ON inventory(id) WHERE deleted_at IS NULL"
     )
 
 

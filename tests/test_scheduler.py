@@ -118,3 +118,54 @@ async def test_scheduler_runs_daily_cron_catchups_on_boot(data_tmp, db, monkeypa
     await scheduler.start_scheduler()
 
     assert calls == ["catchup"]
+
+
+@pytest.mark.asyncio
+async def test_personal_os_scan_includes_inventory(db, monkeypatch):
+    from mastisk import scheduler
+
+    calls: list[str] = []
+    monkeypatch.setattr(scheduler, "_reclaim_orphaned_running", lambda: None)
+    monkeypatch.setattr(scheduler, "_reclaim_running_blog_posts", lambda: None)
+    monkeypatch.setattr(scheduler, "_reclaim_running_tweet_threads", lambda: None)
+    monkeypatch.setattr(scheduler, "_reclaim_firing_reminders", lambda: None)
+    monkeypatch.setattr(scheduler, "_catch_up_daily_cron_engines", lambda: None, raising=False)
+    monkeypatch.setattr(scheduler, "_graph_repair_once", lambda: None)
+    monkeypatch.setattr("mastisk.routes.domains.sync_config_domains", lambda: calls.append("domains"))
+    monkeypatch.setattr("mastisk.projects.sync.scan_projects", lambda: calls.append("projects"))
+    monkeypatch.setattr("mastisk.tasks.sync.scan_tasks", lambda: calls.append("tasks"))
+    monkeypatch.setattr("mastisk.routines.sync.scan_routines", lambda: calls.append("routines"))
+    monkeypatch.setattr("mastisk.people.sync.scan_people", lambda: calls.append("people"))
+    monkeypatch.setattr("mastisk.library.sync.scan_library", lambda: calls.append("library"))
+    monkeypatch.setattr("mastisk.inventory.sync.scan_inventory", lambda: calls.append("inventory"))
+    monkeypatch.setattr("mastisk.journal.scan_journal_days", lambda: calls.append("journal"))
+
+    class FakeScheduler:
+        def __init__(self, timezone):
+            self.timezone = timezone
+            self.jobs: dict[str | None, object] = {}
+
+        def add_job(self, func, trigger, **kwargs):
+            self.jobs[kwargs.get("id")] = func
+
+        def start(self):
+            return None
+
+        def shutdown(self, wait=False):
+            return None
+
+    monkeypatch.setattr(scheduler, "AsyncIOScheduler", FakeScheduler)
+
+    sched = await scheduler.start_scheduler()
+    sched.jobs["personal_os_scan"]()
+
+    assert calls == [
+        "domains",
+        "projects",
+        "tasks",
+        "routines",
+        "people",
+        "library",
+        "inventory",
+        "journal",
+    ]

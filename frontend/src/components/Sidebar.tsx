@@ -16,7 +16,7 @@ interface Props {
 const SYS_VIEWS = new Set<View>([
   'today', 'digest', 'queue', 'feed', 'agents', 'graph', 'ingest', 'lint', 'settings',
   'open_questions', 'notes', 'library', 'tasks', 'projects', 'routines', 'journal', 'inbox_triage',
-  'people',
+  'people', 'inventory',
   'roundtables', 'repos', 'blog', 'tweets',
 ]);
 
@@ -69,6 +69,7 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
       <SideNavRow currentView={currentView} view="routines" glyph="↻" label="Routines" onNavigate={onNavigate}/>
       <SideNavRow currentView={currentView} view="journal" glyph="◷" label="Journal" onNavigate={onNavigate}/>
       <SideNavRow currentView={currentView} view="people" glyph="@" label="People" onNavigate={onNavigate}/>
+      <SideNavRow currentView={currentView} view="inventory" glyph="▤" label="Inventory" onNavigate={onNavigate}/>
       <SideNavRow currentView={currentView} view="library" glyph="§" label="Library" onNavigate={onNavigate}/>
       <SideNavRow currentView={currentView} view="inbox_triage" glyph="?" label="Inbox triage" onNavigate={onNavigate}/>
       <div className="side-section">Wiki</div>
