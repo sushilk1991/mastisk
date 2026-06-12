@@ -12,8 +12,6 @@ from mastisk.agents.studio import (
     delete_agent_skill,
     list_skills,
     profile_payload,
-    scan_agent_profiles,
-    scan_agent_skills,
     skill_payload,
     write_agent_profile,
     write_agent_skill,
@@ -64,7 +62,6 @@ class AgentSkillUpdate(BaseModel):
 
 @router.get("/agents")
 async def list_agents_endpoint() -> dict[str, Any]:
-    _refresh_agent_mirrors()
     with connect() as conn:
         agents = _agents_snapshot(conn)
     return {"agents": agents}
@@ -72,7 +69,6 @@ async def list_agents_endpoint() -> dict[str, Any]:
 
 @router.get("/agents/{agent_id}")
 async def agent_detail_endpoint(agent_id: str) -> dict[str, Any]:
-    _refresh_agent_mirrors()
     try:
         definition = agent_definition(agent_id)
     except KeyError as exc:
@@ -160,7 +156,6 @@ async def update_agent_profile_endpoint(agent_id: str, req: AgentProfileUpdate) 
 
 @router.get("/agent-skills")
 async def list_agent_skills_endpoint() -> dict[str, Any]:
-    scan_agent_skills()
     return {"skills": list_skills()}
 
 
@@ -184,7 +179,6 @@ async def update_agent_skill_endpoint(slug: str, req: AgentSkillUpdate) -> dict[
 
 @router.get("/agent-skills/{slug}")
 async def get_agent_skill_endpoint(slug: str) -> dict[str, Any]:
-    scan_agent_skills()
     skill = skill_payload(slug)
     if skill is None:
         raise HTTPException(status_code=404, detail="skill not found")
@@ -196,11 +190,6 @@ async def delete_agent_skill_endpoint(slug: str) -> dict[str, Any]:
     if not delete_agent_skill(slug):
         raise HTTPException(status_code=404, detail="skill not found")
     return {"ok": True}
-
-
-def _refresh_agent_mirrors() -> None:
-    scan_agent_skills()
-    scan_agent_profiles()
 
 
 def _queue_stats(conn, agent_id: str) -> dict[str, int]:

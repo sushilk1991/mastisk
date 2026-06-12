@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import string
 import threading
@@ -21,6 +22,7 @@ from mastisk.routes.notes import atomic_write
 _WRITE_PROFILE_LOCK = threading.Lock()
 _WRITE_SKILL_LOCK = threading.Lock()
 _SAFE_SKILL_NAME_RE = re.compile(r"^[\w\s.,()&/-]+$")
+log = logging.getLogger("mastisk.agent_studio")
 
 
 class PlaceholderValidationError(ValueError):
@@ -46,17 +48,27 @@ def scan_agent_profiles(paths: list[Path] | None = None) -> dict[str, int]:
                 if paths is not None and path.suffix == ".md":
                     _soft_delete_profile_path(conn, path)
                 continue
-            with host_file_lock(path):
-                profile = parse_agent_profile_file(path)
+            parse_error = None
+            try:
+                with host_file_lock(path):
+                    profile = parse_agent_profile_file(path)
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                parse_error = _parse_error_reason("profile", exc)
+                log.info("agent studio: skipping malformed profile %s: %s", path, exc)
+                profile = _invalid_profile(path, parse_error)
             agent_id = profile["agent_id"]
             seen.add(agent_id)
-            invalid_slots = validate_profile_slots(
-                agent_id,
-                prompt_override=profile.get("prompt_override") or "",
-                slot_overrides=profile.get("slot_overrides") or {},
-                raise_on_error=False,
-            )
-            invalid_reason = _invalid_reason(invalid_slots)
+            if parse_error is None:
+                invalid_slots = validate_profile_slots(
+                    agent_id,
+                    prompt_override=profile.get("prompt_override") or "",
+                    slot_overrides=profile.get("slot_overrides") or {},
+                    raise_on_error=False,
+                )
+                invalid_reason = _invalid_reason(invalid_slots)
+            else:
+                invalid_slots = {"profile": [parse_error]}
+                invalid_reason = parse_error
             conn.execute(
                 """INSERT INTO agent_profiles
                    (agent_id, path, enabled, model, skills_json, prompt_override,
@@ -105,20 +117,29 @@ def scan_agent_skills(paths: list[Path] | None = None) -> dict[str, int]:
                 if paths is not None and path.suffix == ".md":
                     _soft_delete_skill_path(conn, path)
                 continue
-            with host_file_lock(path):
-                skill = parse_agent_skill_file(path)
+            parse_error = None
+            try:
+                with host_file_lock(path):
+                    skill = parse_agent_skill_file(path)
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                parse_error = _parse_error_reason("skill", exc)
+                log.info("agent studio: skipping malformed skill %s: %s", path, exc)
+                skill = _invalid_skill(path, parse_error)
             slug = skill["slug"]
             seen.add(slug)
             conn.execute(
                 """INSERT INTO agent_skills
-                   (slug, path, name, description, tags_json, body, deleted_at)
-                   VALUES (?, ?, ?, ?, ?, ?, NULL)
+                   (slug, path, name, description, tags_json, body,
+                    invalid, invalid_reason, deleted_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
                    ON CONFLICT(slug) DO UPDATE SET
                      path=excluded.path,
                      name=excluded.name,
                      description=excluded.description,
                      tags_json=excluded.tags_json,
                      body=excluded.body,
+                     invalid=excluded.invalid,
+                     invalid_reason=excluded.invalid_reason,
                      deleted_at=NULL,
                      updated_at=CURRENT_TIMESTAMP""",
                 (
@@ -128,6 +149,8 @@ def scan_agent_skills(paths: list[Path] | None = None) -> dict[str, int]:
                     skill.get("description"),
                     json.dumps(skill.get("tags") or []),
                     skill.get("body") or "",
+                    1 if parse_error is not None else 0,
+                    parse_error,
                 ),
             )
             upserted += 1
@@ -168,6 +191,34 @@ def parse_agent_skill_file(path: Path) -> dict[str, Any]:
         "tags": _string_list(meta.get("tags")),
         "body": body.strip(),
         "frontmatter": meta,
+    }
+
+
+def _invalid_profile(path: Path, reason: str) -> dict[str, Any]:
+    return {
+        "agent_id": path.stem,
+        "path": _relative_path(path),
+        "enabled": True,
+        "model": None,
+        "skills": [],
+        "prompt_override": "",
+        "slot_overrides": {},
+        "frontmatter": {},
+        "body": "",
+        "invalid_reason": reason,
+    }
+
+
+def _invalid_skill(path: Path, reason: str) -> dict[str, Any]:
+    return {
+        "slug": path.stem,
+        "path": _relative_path(path),
+        "name": path.stem.replace("-", " ").title(),
+        "description": reason,
+        "tags": [],
+        "body": "",
+        "frontmatter": {},
+        "invalid_reason": reason,
     }
 
 
@@ -525,7 +576,14 @@ def _skill_row(row: dict[str, Any]) -> dict[str, Any]:
         "description": row.get("description"),
         "tags": _loads_list(row.get("tags_json")),
         "body": row.get("body") or "",
+        "invalid": bool(row.get("invalid")),
+        "invalid_reason": row.get("invalid_reason"),
     }
+
+
+def _parse_error_reason(kind: str, exc: Exception) -> str:
+    message = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+    return f"{kind} parse error: {message}"
 
 
 def _string_list(value: object) -> list[str]:

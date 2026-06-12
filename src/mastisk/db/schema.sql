@@ -696,6 +696,8 @@ CREATE TABLE IF NOT EXISTS agent_skills (
   description TEXT,
   tags_json   TEXT NOT NULL DEFAULT '[]',
   body        TEXT NOT NULL DEFAULT '',
+  invalid     INTEGER NOT NULL DEFAULT 0,
+  invalid_reason TEXT,
   deleted_at  DATETIME,
   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP

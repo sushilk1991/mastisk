@@ -307,6 +307,103 @@ def test_agent_profile_disable_succeeds_with_existing_invalid_override(db, vault
     assert "BROKEN {identity} {article_ids}" in profile.read_text(encoding="utf-8")
 
 
+def test_agent_scanners_flag_malformed_files_and_continue(db, vault_tmp, data_tmp) -> None:
+    from mastisk.agents.studio import scan_agent_profiles, scan_agent_skills
+
+    agent_dir = vault_tmp / "_agents"
+    skill_dir = agent_dir / "skills"
+    skill_dir.mkdir(parents=True)
+    (agent_dir / "notetaker.md").write_text(
+        "---\n"
+        "enabled: [\n"
+        "---\n\n"
+        "BROKEN\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "bad-skill.md").write_text(
+        "---\n"
+        "name: [\n"
+        "---\n\n"
+        "Bad body\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "good-skill.md").write_text(
+        "---\n"
+        "name: Good skill\n"
+        "---\n\n"
+        "Good body\n",
+        encoding="utf-8",
+    )
+
+    scan_agent_profiles()
+    scan_agent_skills()
+
+    profile = db.execute(
+        "SELECT invalid, invalid_reason FROM agent_profiles WHERE agent_id='notetaker'"
+    ).fetchone()
+    bad_skill = db.execute(
+        "SELECT invalid, invalid_reason FROM agent_skills WHERE slug='bad-skill'"
+    ).fetchone()
+    good_skill = db.execute(
+        "SELECT invalid, body FROM agent_skills WHERE slug='good-skill'"
+    ).fetchone()
+    assert profile["invalid"] == 1
+    assert "parse" in profile["invalid_reason"].lower()
+    assert bad_skill["invalid"] == 1
+    assert "parse" in bad_skill["invalid_reason"].lower()
+    assert good_skill["invalid"] == 0
+    assert good_skill["body"] == "Good body"
+
+
+def test_agent_get_routes_read_mirror_without_scanning(db, vault_tmp, data_tmp) -> None:
+    from mastisk.agents.studio import scan_agent_profiles, scan_agent_skills
+
+    agent_dir = vault_tmp / "_agents"
+    skill_dir = agent_dir / "skills"
+    skill_dir.mkdir(parents=True)
+    (agent_dir / "notetaker.md").write_text(
+        "---\n"
+        "enabled: true\n"
+        "skills: []\n"
+        "---\n\n"
+        "OK {identity} {article_ids} {body}\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "mirror-skill.md").write_text(
+        "---\n"
+        "name: Mirror skill\n"
+        "---\n\n"
+        "Mirror body\n",
+        encoding="utf-8",
+    )
+    scan_agent_profiles()
+    scan_agent_skills()
+
+    with (
+        patch(
+            "mastisk.routes.agents_route.scan_agent_profiles",
+            side_effect=AssertionError("GET routes must not scan profiles"),
+            create=True,
+        ),
+        patch(
+            "mastisk.routes.agents_route.scan_agent_skills",
+            side_effect=AssertionError("GET routes must not scan skills"),
+            create=True,
+        ),
+        _client(vault_tmp, data_tmp, db) as client,
+    ):
+        agents = client.get("/api/agents")
+        detail = client.get("/api/agents/notetaker")
+        skills = client.get("/api/agent-skills")
+        skill = client.get("/api/agent-skills/mirror-skill")
+
+    assert agents.status_code == 200, agents.text
+    assert detail.status_code == 200, detail.text
+    assert skills.status_code == 200, skills.text
+    assert skill.status_code == 200, skill.text
+    assert skill.json()["name"] == "Mirror skill"
+
+
 def test_agent_skill_crud_routes_are_file_first(db, vault_tmp, data_tmp) -> None:
     with _client(vault_tmp, data_tmp, db) as client:
         created = client.post(

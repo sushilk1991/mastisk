@@ -413,6 +413,8 @@ def _ensure_agent_studio_schema(conn: sqlite3.Connection) -> None:
              description TEXT,
              tags_json   TEXT NOT NULL DEFAULT '[]',
              body        TEXT NOT NULL DEFAULT '',
+             invalid     INTEGER NOT NULL DEFAULT 0,
+             invalid_reason TEXT,
              deleted_at  DATETIME,
              created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
              updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -422,6 +424,8 @@ def _ensure_agent_studio_schema(conn: sqlite3.Connection) -> None:
         ("description", "TEXT"),
         ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
         ("body", "TEXT NOT NULL DEFAULT ''"),
+        ("invalid", "INTEGER NOT NULL DEFAULT 0"),
+        ("invalid_reason", "TEXT"),
         ("deleted_at", "DATETIME"),
     ):
         _add_column_if_missing(conn, "agent_skills", column, decl)

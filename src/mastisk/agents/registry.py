@@ -389,7 +389,7 @@ def _append_skill_bodies(prompt: str, skill_slugs: list[str], *, escape_braces: 
                 row = conn.execute(
                     """SELECT slug, name, body
                        FROM agent_skills
-                       WHERE slug = ? AND deleted_at IS NULL""",
+                       WHERE slug = ? AND deleted_at IS NULL AND invalid = 0""",
                     (slug,),
                 ).fetchone()
                 if row and str(row["body"] or "").strip():
