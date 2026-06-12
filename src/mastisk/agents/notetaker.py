@@ -106,6 +106,11 @@ class Notetaker(Agent):
                 # A scan blow-up mustn't block job draining on this tick.
                 log.exception("notetaker: inbox scan failed")
 
+        try:
+            self._enqueue_reclassify_ready()
+        except Exception:
+            log.exception("notetaker: reclassify scan failed")
+
         jobs = self._pick_jobs(limit=settings.notetaker_concurrency)
         if not jobs:
             return
@@ -139,6 +144,58 @@ class Notetaker(Agent):
                 (self.name, limit),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def _enqueue_reclassify_ready(self, limit: int = 100) -> int:
+        """Queue edited note rows whose derived classifier fields were invalidated."""
+        candidates: list[dict] = []
+        with connect() as conn:
+            rows = conn.execute(
+                """SELECT id, path
+                   FROM notes
+                   WHERE deleted_at IS NULL
+                     AND classification IS NULL
+                     AND path LIKE '_notes/%'
+                   ORDER BY id ASC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            candidates = [dict(row) for row in rows]
+
+        enqueued = 0
+        for note in candidates:
+            rel_path = note["path"]
+            if is_user_editing(rel_path):
+                continue
+            file_path = vault_dir() / rel_path
+            try:
+                text = file_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                continue
+            except Exception as e:
+                log.warning("notetaker: can't read %s for reclassify: %s", file_path, e)
+                continue
+            if has_typed_capture_frontmatter(text):
+                continue
+            payload_json = json.dumps({"note_id": note["id"]})
+            with connect() as conn:
+                pending = conn.execute(
+                    """SELECT 1
+                       FROM jobs
+                       WHERE agent = 'notetaker'
+                         AND kind = 'classify'
+                         AND status IN ('queued', 'running')
+                         AND payload_json = ?
+                       LIMIT 1""",
+                    (payload_json,),
+                ).fetchone()
+                if pending is not None:
+                    continue
+                conn.execute(
+                    "INSERT INTO jobs (agent, kind, payload_json) VALUES (?, ?, ?)",
+                    ("notetaker", "classify", payload_json),
+                )
+            enqueued += 1
+        return enqueued
 
     # ───── scan + enqueue ─────
 

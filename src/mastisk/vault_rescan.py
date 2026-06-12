@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 
 from mastisk.db.queries import connect
+
+log = logging.getLogger("mastisk.vault_rescan")
 
 
 def rescan_vault_markdown_path(rel_path: str, target: Path) -> None:
@@ -34,13 +37,48 @@ def rescan_vault_markdown_path(rel_path: str, target: Path) -> None:
 
 
 def _sync_note_body(rel_path: str, target: Path) -> None:
-    from mastisk.agents.notetaker import strip_frontmatter
+    from mastisk.agents.notetaker import has_typed_capture_frontmatter, strip_frontmatter
 
     text = target.read_text(encoding="utf-8")
     body = strip_frontmatter(text)
     body_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    typed_capture = has_typed_capture_frontmatter(text)
     with connect() as conn:
-        conn.execute(
-            "UPDATE notes SET body = ?, body_sha256 = ? WHERE path = ? AND deleted_at IS NULL",
-            (body, body_sha, rel_path),
-        )
+        row = conn.execute(
+            "SELECT id FROM notes WHERE path = ? AND deleted_at IS NULL",
+            (rel_path,),
+        ).fetchone()
+        if row is None:
+            log.warning("vault_rescan: body sync matched no note row for %s", rel_path)
+            return
+        if typed_capture:
+            cur = conn.execute(
+                """UPDATE notes
+                   SET body = ?, body_sha256 = ?
+                   WHERE id = ?""",
+                (body, body_sha, row["id"]),
+            )
+        else:
+            cur = conn.execute(
+                """UPDATE notes
+                   SET body = ?,
+                       body_sha256 = ?,
+                       classified_at = NULL,
+                       classification = NULL,
+                       summary = NULL,
+                       confidence = NULL,
+                       tags_json = '[]',
+                       escalation_state = 'none',
+                       escalation_trigger = NULL,
+                       escalation_article_id = NULL,
+                       escalation_retry_count = 0,
+                       escalation_next_attempt_at = NULL
+                   WHERE id = ?""",
+                (body, body_sha, row["id"]),
+            )
+            conn.execute(
+                "DELETE FROM note_links WHERE note_id = ? AND rank > 0",
+                (row["id"],),
+            )
+        if cur.rowcount == 0:
+            log.warning("vault_rescan: body sync matched no note row for %s", rel_path)

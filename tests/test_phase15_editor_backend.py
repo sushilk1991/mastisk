@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -374,3 +376,146 @@ def test_vault_file_write_accepts_frontmatter_close_without_trailing_newline(
 
     assert response.status_code == 200, response.text
     assert path.read_text(encoding="utf-8").endswith("\n\nBody")
+
+
+def test_note_editor_save_reclassifies_after_unlock(db, vault_tmp, data_tmp):
+    from mastisk.agents.notetaker import Notetaker
+    from mastisk.editing import lock_path, unlock_path
+    from mastisk.vault_rescan import rescan_vault_markdown_path
+
+    rel_path = "_notes/2026-06-11/idea.md"
+    path = vault_tmp / rel_path
+    path.parent.mkdir(parents=True)
+    original_body = "Old headline"
+    updated = "---\nsummary: Old stale summary\n---\n\nNew headline"
+    path.write_text(updated, encoding="utf-8")
+    body_sha = hashlib.sha256(original_body.encode("utf-8")).hexdigest()
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, body_md)
+           VALUES ('old-article', 'Concept', 'Old Article', 'old-article', '')"""
+    )
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, body_md)
+           VALUES ('direct-article', 'Concept', 'Direct Article', 'direct-article', '')"""
+    )
+    cur = db.execute(
+        """INSERT INTO notes
+           (slug, path, body, body_sha256, source, created_at, classified_at,
+            classification, summary, confidence, tags_json, escalation_state,
+            escalation_trigger, escalation_article_id)
+           VALUES (?, ?, ?, ?, 'pwa', ?, ?, 'idea', 'Old stale summary', 0.9, ?,
+                   'auto_done', 'auto', 'old-article')""",
+        (
+            "idea",
+            rel_path,
+            original_body,
+            body_sha,
+            "2026-06-11T09:00:00+00:00",
+            "2026-06-11T09:01:00+00:00",
+            json.dumps(["old-tag"]),
+        ),
+    )
+    note_id = cur.lastrowid
+    db.execute(
+        "INSERT INTO note_links (note_id, article_id, rank) VALUES (?, 'direct-article', 0)",
+        (note_id,),
+    )
+    db.execute(
+        "INSERT INTO note_links (note_id, article_id, rank) VALUES (?, 'old-article', 1)",
+        (note_id,),
+    )
+    token = lock_path(rel_path)["token"]
+
+    rescan_vault_markdown_path(rel_path, path)
+
+    row = db.execute(
+        """SELECT body, classification, classified_at, summary, confidence, tags_json,
+                  escalation_state, escalation_trigger, escalation_article_id
+           FROM notes WHERE id = ?""",
+        (note_id,),
+    ).fetchone()
+    assert row["body"] == "New headline"
+    assert row["classification"] is None
+    assert row["classified_at"] is None
+    assert row["summary"] is None
+    assert row["confidence"] is None
+    assert json.loads(row["tags_json"]) == []
+    assert row["escalation_state"] == "none"
+    assert row["escalation_trigger"] is None
+    assert row["escalation_article_id"] is None
+    remaining_links = db.execute(
+        "SELECT article_id, rank FROM note_links WHERE note_id = ? ORDER BY rank",
+        (note_id,),
+    ).fetchall()
+    assert [tuple(link) for link in remaining_links] == [("direct-article", 0)]
+    assert Notetaker()._enqueue_reclassify_ready() == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM jobs").fetchone()["n"] == 0
+
+    unlock_path(rel_path, token)
+
+    assert Notetaker()._enqueue_reclassify_ready() == 1
+    job = db.execute("SELECT agent, kind, payload_json FROM jobs").fetchone()
+    assert job["agent"] == "notetaker"
+    assert job["kind"] == "classify"
+    assert json.loads(job["payload_json"]) == {"note_id": note_id}
+
+
+def test_note_editor_save_keeps_typed_capture_frontmatter_notes_skipped(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.agents.notetaker import Notetaker
+    from mastisk.vault_rescan import rescan_vault_markdown_path
+
+    rel_path = "_notes/2026-06-11/task.md"
+    path = vault_tmp / rel_path
+    path.parent.mkdir(parents=True)
+    updated = "---\ncapture:\n  type: task\n---\n\nUpdated task body"
+    path.write_text(updated, encoding="utf-8")
+    body_sha = hashlib.sha256("Original task body".encode("utf-8")).hexdigest()
+    cur = db.execute(
+        """INSERT INTO notes
+           (slug, path, body, body_sha256, source, created_at, classified_at,
+            classification, summary, confidence, tags_json)
+           VALUES (?, ?, ?, ?, 'pwa', ?, ?, 'todo', 'Original task', 0.8, ?)""",
+        (
+            "task",
+            rel_path,
+            "Original task body",
+            body_sha,
+            "2026-06-11T09:00:00+00:00",
+            "2026-06-11T09:01:00+00:00",
+            json.dumps(["task"]),
+        ),
+    )
+    note_id = cur.lastrowid
+
+    rescan_vault_markdown_path(rel_path, path)
+
+    row = db.execute(
+        """SELECT body, classification, classified_at, summary, tags_json
+           FROM notes WHERE id = ?""",
+        (note_id,),
+    ).fetchone()
+    assert row["body"] == "Updated task body"
+    assert row["classification"] == "todo"
+    assert row["classified_at"] == "2026-06-11T09:01:00+00:00"
+    assert row["summary"] == "Original task"
+    assert json.loads(row["tags_json"]) == ["task"]
+    assert Notetaker()._enqueue_reclassify_ready() == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM jobs").fetchone()["n"] == 0
+
+
+def test_note_body_sync_logs_when_update_matches_no_rows(
+    db, vault_tmp, data_tmp, caplog
+):
+    from mastisk.vault_rescan import rescan_vault_markdown_path
+
+    rel_path = "_notes/2026-06-11/missing.md"
+    path = vault_tmp / rel_path
+    path.parent.mkdir(parents=True)
+    path.write_text("Body without row", encoding="utf-8")
+
+    with caplog.at_level("WARNING", logger="mastisk.vault_rescan"):
+        rescan_vault_markdown_path(rel_path, path)
+
+    assert "body sync matched no note row" in caplog.text
