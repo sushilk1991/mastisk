@@ -545,6 +545,35 @@ def test_enabled_false_noops_capture_router(db, vault_tmp, data_tmp) -> None:
     assert capture.body == "remember this raw thought"
 
 
+def test_disabled_capture_router_still_records_routine_command(db, vault_tmp, data_tmp) -> None:
+    from mastisk.routines.sync import create_routine_file
+    from mastisk.routes.capture import route_and_persist_capture
+
+    create_routine_file(name="Morning Vitamins", time_of_day="morning")
+    with _client(vault_tmp, data_tmp, db) as client:
+        saved = client.put("/api/agents/capture_router/profile", json={"enabled": False})
+        assert saved.status_code == 200, saved.text
+
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+    ) as run_mock:
+        result = asyncio.run(
+            route_and_persist_capture(
+                "did my vitamins",
+                source="pwa",
+                ts="2026-06-11T09:00:00-07:00",
+            )
+        )
+
+    assert run_mock.call_count == 0
+    assert result["type"] == "routine_done"
+    assert result["routine_slug"] == "morning-vitamins"
+    assert "- 2026-06-11" in (vault_tmp / "routines" / "morning-vitamins.md").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_frontend_agent_studio_static_contract() -> None:
     source = (ROOT / "frontend/src/components/AgentsView.tsx").read_text(encoding="utf-8")
     router = (ROOT / "frontend/src/router.ts").read_text(encoding="utf-8")

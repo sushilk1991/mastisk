@@ -176,9 +176,6 @@ def detect_command_hint(text: str) -> CaptureType | None:
 
 async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     settings = get_settings()
-    if not agent_enabled("capture_router"):
-        log.info("capture_router: disabled, routing capture to inbox without LLM")
-        return Capture(type="inbox", confidence=0.0, body=text)
     fixed_intent = detect_command_intent(text)
     routine_match = _match_routine_done_command(text)
     if fixed_intent is None and routine_match is not None:
@@ -186,43 +183,50 @@ async def route_capture(text: str, source: str, ts: str | None) -> Capture:
     hint_intent = detect_command_hint(text)
     timezone = settings.capture.default_timezone
     request_ts = _parse_request_ts(ts, timezone)
-    domains, projects = _routing_context()
-    routines = _routine_routing_context()
-    people = _people_routing_context()
-    books = _book_routing_context()
-    prompt = resolve_prompt("capture_router", "route", _PROMPT).format(
-        identity=Agent.load_identity(),
-        domains=domains,
-        projects=projects,
-        routines=routines,
-        people=people,
-        books=books,
-        source=source,
-        ts=request_ts.isoformat() if request_ts is not None else "",
-        fixed_intent=fixed_intent or "null",
-        hint_intent=hint_intent or "null",
-        text=text,
-    )
-    # This outer bound intentionally caps the full multi-tier fallback chain
-    # (including claude-or-bust hangs): wrist latency beats fallback coverage.
-    # Revisit if captures start landing in inbox because this timeout is too tight.
-    result, _backend = await asyncio.wait_for(
-        intelligence.run_intelligence(
-            prompt,
-            timeout_s=settings.capture.router_timeout_s,
-            classification=True,
-        ),
-        timeout=settings.capture.router_timeout_s,
-    )
-    raw_text = result.get("text", "") if isinstance(result, dict) else str(result)
-    parsed = extract_json_block(raw_text)
-    if not isinstance(parsed, dict):
-        raise ValueError("capture router returned no parseable JSON")
 
-    payload = _coerce_payload(parsed, text)
-    if fixed_intent is not None:
-        payload["type"] = fixed_intent
-    capture = Capture(**payload)
+    if not agent_enabled("capture_router"):
+        if fixed_intent is None:
+            log.info("capture_router: disabled, routing capture to inbox without LLM")
+            return Capture(type="inbox", confidence=0.0, body=text)
+        capture = Capture(type=fixed_intent, confidence=1.0, body=text)
+    else:
+        domains, projects = _routing_context()
+        routines = _routine_routing_context()
+        people = _people_routing_context()
+        books = _book_routing_context()
+        prompt = resolve_prompt("capture_router", "route", _PROMPT).format(
+            identity=Agent.load_identity(),
+            domains=domains,
+            projects=projects,
+            routines=routines,
+            people=people,
+            books=books,
+            source=source,
+            ts=request_ts.isoformat() if request_ts is not None else "",
+            fixed_intent=fixed_intent or "null",
+            hint_intent=hint_intent or "null",
+            text=text,
+        )
+        # This outer bound intentionally caps the full multi-tier fallback chain
+        # (including claude-or-bust hangs): wrist latency beats fallback coverage.
+        # Revisit if captures start landing in inbox because this timeout is too tight.
+        result, _backend = await asyncio.wait_for(
+            intelligence.run_intelligence(
+                prompt,
+                timeout_s=settings.capture.router_timeout_s,
+                classification=True,
+            ),
+            timeout=settings.capture.router_timeout_s,
+        )
+        raw_text = result.get("text", "") if isinstance(result, dict) else str(result)
+        parsed = extract_json_block(raw_text)
+        if not isinstance(parsed, dict):
+            raise ValueError("capture router returned no parseable JSON")
+
+        payload = _coerce_payload(parsed, text)
+        if fixed_intent is not None:
+            payload["type"] = fixed_intent
+        capture = Capture(**payload)
     capture.command_detected = fixed_intent is not None
     if routine_match is not None:
         capture.routine = routine_match["slug"]
