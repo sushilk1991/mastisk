@@ -115,8 +115,8 @@ async def start_scheduler():
         log.warning("scheduler: vault_integrity registration failed: %s", e)
 
     try:
-        from mastisk.journal import scan_journal_days
         from mastisk.inventory.sync import scan_inventory
+        from mastisk.journal import scan_journal_days
         from mastisk.library.sync import scan_library
         from mastisk.people.sync import scan_people
         from mastisk.projects.sync import scan_projects

@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from mastisk.agents.reminder_engine import create_task_due_reminder
 from mastisk.capture.router import Capture, route_capture
-from mastisk.journal import JournalFrontmatterError, append_log
 from mastisk.inventory.sync import create_inventory_file
+from mastisk.journal import JournalFrontmatterError, append_log
 from mastisk.library.sync import create_quote_file, find_book, match_book_in_text
 from mastisk.paths import vault_dir
 from mastisk.people.sync import append_interaction, create_person_file, find_person
