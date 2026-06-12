@@ -446,6 +446,7 @@ function PromptEditor({
   onEditorError: (message: string | null) => void;
 }) {
   const missing = missingPlaceholders(slot, value);
+  const invalidFields = invalidPlaceholderFields(value);
   return (
     <div className="agent-prompt-box">
       {slot.required_placeholders.length > 0 && (
@@ -458,6 +459,9 @@ function PromptEditor({
       {slot.invalid && <div className="agent-warning">override ignored: {slot.invalid_reason ?? 'invalid override'}</div>}
       {missing.length > 0 && (
         <div className="agent-warning">missing {missing.map((name) => `{${name}}`).join(', ')}</div>
+      )}
+      {invalidFields.length > 0 && (
+        <div className="agent-warning">attribute/index placeholders are not supported: {invalidFields.map((name) => `{${name}}`).join(', ')}</div>
       )}
       {editing ? (
         <div className="agent-code-editor">
@@ -524,12 +528,26 @@ function containsPlaceholder(text: string, name: string): boolean {
   return (
     text.includes(`{${name}}`) ||
     text.includes(`{${name}:`) ||
-    text.includes(`{${name}!`) ||
-    text.includes(`{${name}.`) ||
-    text.includes(`{${name}[`)
+    text.includes(`{${name}!`)
   );
 }
 
 function isSafeSkillName(name: string): boolean {
   return /^[\w\s.,()&\/-]+$/u.test(name);
+}
+
+function invalidPlaceholderFields(text: string): string[] {
+  const invalid = new Set<string>();
+  const pattern = /\{([^{}]+)\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (text[start - 1] === '{' || text[end] === '}') continue;
+    const fieldName = match[1].split(/[!:]/, 1)[0];
+    if (fieldName.includes('.') || fieldName.includes('[')) {
+      invalid.add(fieldName);
+    }
+  }
+  return Array.from(invalid).sort();
 }

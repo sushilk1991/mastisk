@@ -265,6 +265,23 @@ def test_agent_skill_create_rejects_unsafe_name_characters(db, vault_tmp, data_t
     assert "name" in response.text
 
 
+def test_agent_profile_rejects_attribute_and_index_placeholders(db, vault_tmp, data_tmp) -> None:
+    with _client(vault_tmp, data_tmp, db) as client:
+        attr = client.put(
+            "/api/agents/notetaker/profile",
+            json={"prompt_override": "BROKEN {identity} {article_ids} {body.text}"},
+        )
+        index = client.put(
+            "/api/agents/notetaker/profile",
+            json={"prompt_override": "BROKEN {identity} {article_ids} {body[0]}"},
+        )
+
+    assert attr.status_code == 422, attr.text
+    assert "body.text" in attr.text
+    assert index.status_code == 422, index.text
+    assert "body[0]" in index.text
+
+
 def test_agent_skill_crud_routes_are_file_first(db, vault_tmp, data_tmp) -> None:
     with _client(vault_tmp, data_tmp, db) as client:
         created = client.post(
@@ -419,6 +436,8 @@ def test_frontend_agent_studio_static_contract() -> None:
     assert "Additional instructions" in source
     assert "isSafeSkillName" in source
     assert "letters, numbers, spaces" in source
+    assert "invalidPlaceholderFields" in source
+    assert "attribute/index placeholders" in source
     assert "agent_detail" in router
     assert "/agents/" in router
     assert ".agent-studio-layout" in css

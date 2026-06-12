@@ -486,7 +486,10 @@ def _template_fields(template: str) -> tuple[set[str], list[str]]:
                 if field_name == "":
                     errors.append("positional placeholder {} is not allowed")
                 elif field_name:
-                    fields.add(field_name.split(".", 1)[0].split("[", 1)[0])
+                    if "." in field_name or "[" in field_name:
+                        errors.append(f"attribute/index placeholders are not allowed: {{{field_name}}}")
+                    else:
+                        fields.add(field_name)
                 if format_spec:
                     walk(format_spec)
         except (ValueError, IndexError):
@@ -497,7 +500,7 @@ def _template_fields(template: str) -> tuple[set[str], list[str]]:
 
 
 def _contains_placeholder(template: str, name: str) -> bool:
-    return re.search(r"(?<!\{)\{" + re.escape(name) + r"(?:[!:\.\[]|\})(?!\})", template) is not None
+    return re.search(r"(?<!\{)\{" + re.escape(name) + r"(?:[!:]|\})(?!\})", template) is not None
 
 
 def _invalid_reason(invalid_slots: dict[str, list[str]]) -> str | None:
