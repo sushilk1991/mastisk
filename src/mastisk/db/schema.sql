@@ -285,6 +285,16 @@ CREATE INDEX IF NOT EXISTS idx_notes_escalation_pending ON notes(escalation_stat
   WHERE escalation_state IN ('pending', 'retrying');
 CREATE INDEX IF NOT EXISTS idx_notes_deleted_at         ON notes(deleted_at);
 
+-- Full-file editor sessions. Advisory only: blocks agent rewrites while a
+-- user has the rich editor open; user-initiated appends still use file locks.
+CREATE TABLE IF NOT EXISTS editing_locks (
+  path         TEXT PRIMARY KEY,
+  locked_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  heartbeat_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_editing_locks_heartbeat ON editing_locks(heartbeat_at);
+
 -- External-content FTS5 over user notes. Same shape as articles_fts: rowid in
 -- FTS = id in notes (notes uses INTEGER PK so id == rowid). Search columns are
 -- summary (Claude-derived classifier output) and body (raw user text).

@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from mastisk.paths import pwa_dir
 from mastisk.routes import (
     articles,
+    attachments,
     artifacts_route,
     ask,
     blog_route,
@@ -22,6 +23,7 @@ from mastisk.routes import (
     dashboard_intelligence,
     digest_route,
     domains,
+    editing_route,
     feed_route,
     graph_route,
     inventory,
@@ -87,6 +89,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(articles.router, prefix="/api")
+    app.include_router(attachments.router)
     app.include_router(artifacts_route.router, prefix="/api")
     app.include_router(digest_route.router, prefix="/api")
     app.include_router(feed_route.router, prefix="/api")
@@ -108,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(calendar_route.router, prefix="/api")
     app.include_router(dashboard_intelligence.router)
     app.include_router(domains.router)
+    app.include_router(editing_route.router)
     app.include_router(projects.router)
     app.include_router(templates.router)
     app.include_router(tasks.router)

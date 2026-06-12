@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { api, FocusFullError } from '../api';
+import { VaultMarkdownEditor, type VaultEditorTarget } from './MarkdownEditor';
 import type {
   CalendarToday, CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
   ChecklistTemplate, ContentDetail, ContentKind, ContentList, ContentStatus, ContentSummary, InventoryDetail, InventoryStatus, InventorySummary, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
@@ -321,6 +322,7 @@ export function ProjectsView({ liveKey }: LiveProps) {
   const [newTemplate, setNewTemplate] = useState('');
   const [newRecurringItems, setNewRecurringItems] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [projectEditor, setProjectEditor] = useState<VaultEditorTarget | null>(null);
   const selectedRef = useRef<string | null>(null);
   const detailRequestRef = useRef(0);
 
@@ -480,9 +482,14 @@ export function ProjectsView({ liveKey }: LiveProps) {
               <>
                 <div className="dash-section-head">
                   <h2>{detail.name}</h2>
-                  <select value={detail.status} onChange={(e) => runMutation(() => patchStatus(e.target.value), setErr)}>
-                    {['active', 'paused', 'someday', 'done'].map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                  <div className="dash-actions">
+                    <button className="chip" type="button" onClick={() => setProjectEditor({ path: detail.path, title: detail.name })}>
+                      edit
+                    </button>
+                    <select value={detail.status} onChange={(e) => runMutation(() => patchStatus(e.target.value), setErr)}>
+                      {['active', 'paused', 'someday', 'done'].map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
                 </div>
                 {detail.type === 'retainer' && <span className="dash-pill">retainer</span>}
                 <KeyValueBlock values={detail.frontmatter}/>
@@ -505,6 +512,16 @@ export function ProjectsView({ liveKey }: LiveProps) {
             )}
           </div>
         </div>
+      )}
+      {projectEditor && (
+        <VaultMarkdownEditor
+          target={projectEditor}
+          onClose={() => setProjectEditor(null)}
+          onSaved={async () => {
+            await loadList();
+            await loadDetail(selectedRef.current);
+          }}
+        />
       )}
     </div>
   );
@@ -576,6 +593,7 @@ export function JournalView({ liveKey }: LiveProps) {
   const [detail, setDetail] = useState<JournalDay | null>(null);
   const [entry, setEntry] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [journalEditor, setJournalEditor] = useState<VaultEditorTarget | null>(null);
 
   async function loadDays() {
     setErr(null);
@@ -646,7 +664,17 @@ export function JournalView({ liveKey }: LiveProps) {
         <div className="dash-panel">
           <div className="dash-section-head">
             <h2>{formatLongDate(selected)}</h2>
-            <button className="chip" onClick={() => setSelected(today)}>today</button>
+            <div className="dash-actions">
+              <button className="chip" onClick={() => setSelected(today)}>today</button>
+              <button
+                className="chip"
+                type="button"
+                disabled={!detail}
+                onClick={() => detail && setJournalEditor({ path: detail.path, title: formatLongDate(selected) })}
+              >
+                edit
+              </button>
+            </div>
           </div>
           <ScaleSetter label="Mood" value={detail?.mood ?? null} onSet={(v) => runMutation(() => setScale('mood', v), setErr)}/>
           <ScaleSetter label="Energy" value={detail?.energy ?? null} onSet={(v) => runMutation(() => setScale('energy', v), setErr)}/>
@@ -678,6 +706,16 @@ export function JournalView({ liveKey }: LiveProps) {
           )}
         </div>
       </div>
+      {journalEditor && (
+        <VaultMarkdownEditor
+          target={journalEditor}
+          onClose={() => setJournalEditor(null)}
+          onSaved={async () => {
+            await loadDays();
+            await loadDetail(selected);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1094,6 +1132,7 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const [draftingSlug, setDraftingSlug] = useState<string | null>(null);
   const [archivingSlug, setArchivingSlug] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [contentEditor, setContentEditor] = useState<VaultEditorTarget | null>(null);
 
   async function loadList() {
     setErr(null);
@@ -1295,6 +1334,9 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
                 <div className="dash-section-head">
                   <h2>{detail.title}</h2>
                   <div className="dash-actions">
+                    <button className="chip" type="button" onClick={() => setContentEditor({ path: detail.path, title: detail.title })}>
+                      edit
+                    </button>
                     <button
                       className="chip"
                       type="button"
@@ -1358,6 +1400,16 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
             )}
           </div>
         </div>
+      )}
+      {contentEditor && (
+        <VaultMarkdownEditor
+          target={contentEditor}
+          onClose={() => setContentEditor(null)}
+          onSaved={async () => {
+            await loadList();
+            await loadDetail(selected);
+          }}
+        />
       )}
     </div>
   );

@@ -3742,3 +3742,131 @@ a { color: inherit; }
     height: 64px;
   }
 }
+
+.markdown-editor-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+}
+.markdown-editor {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.markdown-editor-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+.markdown-editor-bar h2 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.frontmatter-readonly {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  padding: 8px 10px;
+}
+.frontmatter-readonly summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+.frontmatter-readonly pre {
+  margin: 8px 0 0;
+  max-height: 150px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.markdown-editor-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+.markdown-editor-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.codemirror-host {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-sunk);
+}
+.codemirror-host .cm-editor {
+  height: 100%;
+  min-height: 360px;
+  background: var(--bg-sunk);
+  color: var(--fg);
+}
+.codemirror-host .cm-scroller {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.codemirror-host .cm-gutters {
+  background: var(--bg-soft);
+  color: var(--fg-faint);
+  border-right: 1px solid var(--line);
+}
+.markdown-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--bg);
+  line-height: 1.6;
+}
+.markdown-preview :first-child {
+  margin-top: 0;
+}
+.markdown-preview :last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 900px) {
+  .markdown-editor {
+    padding: 12px;
+  }
+  .markdown-editor-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .markdown-editor-grid {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .codemirror-host .cm-editor {
+    min-height: 300px;
+  }
+  .markdown-preview {
+    min-height: 260px;
+  }
+}

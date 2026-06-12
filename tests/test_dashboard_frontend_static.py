@@ -69,3 +69,43 @@ def test_people_followup_datetime_local_uses_timezone_helpers():
     assert "getTimezoneOffset()" in source
     assert "row.follow_up_at ?? '').slice(0, 16)" not in source
     assert "updated.follow_up_at ?? '').slice(0, 16)" not in source
+
+
+def test_markdown_editor_uses_codemirror_and_protects_frontmatter():
+    source = Path("frontend/src/components/MarkdownEditor.tsx").read_text(encoding="utf-8")
+
+    assert "EditorView" in source
+    assert "markdown()" in source
+    assert "baseSha256" in source
+    assert "content_sha256" in source
+    assert "function splitFrontmatter" in source
+    assert "frontmatter-readonly" in source
+    assert "api.attachments.upload" in source
+    assert "components={markdownPreviewComponents}" in source
+    assert "previewAttachmentUrl" in source
+    assert "/api/attachments/" in source
+    assert "domEventHandlers" in source
+
+
+def test_editor_affordances_cover_journal_notes_projects_and_content():
+    dashboard = _dashboard_source()
+    note = Path("frontend/src/components/NoteView.tsx").read_text(encoding="utf-8")
+
+    assert "setJournalEditor({ path: detail.path" in dashboard
+    assert "setProjectEditor({ path: detail.path" in dashboard
+    assert "setContentEditor({ path: detail.path" in dashboard
+    assert "setEditorTarget({ path: note.path" in note
+    assert "VaultMarkdownEditor" in dashboard
+    assert "VaultMarkdownEditor" in note
+
+
+def test_editor_api_client_exposes_vault_lock_and_attachment_routes():
+    source = Path("frontend/src/api.ts").read_text(encoding="utf-8")
+
+    assert "vaultFile:" in source
+    assert "editing:" in source
+    assert "attachments:" in source
+    assert "/vault/file" in source
+    assert "base_sha256" in source
+    assert "/editing/heartbeat" in source
+    assert "/attachments" in source

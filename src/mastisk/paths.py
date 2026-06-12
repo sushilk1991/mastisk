@@ -127,6 +127,10 @@ def content_dir() -> Path:
     return vault_dir() / "content"
 
 
+def attachments_dir() -> Path:
+    return vault_dir() / "attachments"
+
+
 def ensure_dirs() -> None:
     """Create all directories that should exist (idempotent)."""
     for d in [
@@ -155,5 +159,6 @@ def ensure_dirs() -> None:
         quotes_dir(),
         inventory_dir(),
         content_dir(),
+        attachments_dir(),
     ]:
         d.mkdir(parents=True, exist_ok=True)

@@ -102,6 +102,16 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     """Idempotent column additions for pre-existing DBs. CREATE TABLE IF NOT
     EXISTS handles fresh installs; this handles upgrade-in-place."""
     _add_column_if_missing(conn, "articles", "hero_image_url", "TEXT")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS editing_locks (
+             path         TEXT PRIMARY KEY,
+             locked_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+             heartbeat_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_editing_locks_heartbeat ON editing_locks(heartbeat_at)"
+    )
     _add_column_if_missing(conn, "sources", "hero_image_url", "TEXT")
     _add_column_if_missing(conn, "sources", "media_json", "TEXT")
     _add_column_if_missing(conn, "sources", "duration_sec", "INTEGER")

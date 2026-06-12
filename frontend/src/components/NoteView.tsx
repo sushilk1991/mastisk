@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import type { Note, View } from '../types';
+import { VaultMarkdownEditor, type VaultEditorTarget } from './MarkdownEditor';
 
 interface Props {
   noteId: number;
@@ -12,14 +13,19 @@ export function NoteView({ noteId, onNavigate }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [escalating, setEscalating] = useState(false);
+  const [editorTarget, setEditorTarget] = useState<VaultEditorTarget | null>(null);
 
-  useEffect(() => {
+  const loadNote = useCallback(async () => {
     setNote(null);
     setErr(null);
-    api.notes.get(noteId)
-      .then(setNote)
-      .catch((e) => setErr(e instanceof Error ? e.message : 'failed'));
+    try {
+      setNote(await api.notes.get(noteId));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed');
+    }
   }, [noteId]);
+
+  useEffect(() => { void loadNote(); }, [loadNote]);
 
   const onDelete = useCallback(async () => {
     if (!note) return;
@@ -107,6 +113,9 @@ export function NoteView({ noteId, onNavigate }: Props) {
       >{note.body}</pre>
       <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
         <button onClick={() => onNavigate('notes')}>← all notes</button>
+        <button onClick={() => setEditorTarget({ path: note.path, title: note.summary ?? note.slug })}>
+          edit
+        </button>
         <button
           onClick={async () => {
             try {
@@ -142,6 +151,13 @@ export function NoteView({ noteId, onNavigate }: Props) {
           {deleting ? 'deleting…' : 'delete'}
         </button>
       </div>
+      {editorTarget && (
+        <VaultMarkdownEditor
+          target={editorTarget}
+          onClose={() => setEditorTarget(null)}
+          onSaved={loadNote}
+        />
+      )}
     </div>
   );
 }

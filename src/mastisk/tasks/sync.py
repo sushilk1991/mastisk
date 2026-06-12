@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from mastisk.db.queries import connect
+from mastisk.editing import is_user_editing
 from mastisk.file_locks import host_file_lock
 from mastisk.journal import ensure_day, scan_journal_days
 from mastisk.journal import skeleton as journal_skeleton
@@ -37,6 +38,7 @@ def scan_task_hosts(
     hosts: list[Path] | None = None,
     *,
     uid_factory: Callable[[], str] | None = None,
+    respect_editing_lock: bool = True,
 ) -> dict[str, int]:
     host_paths = hosts if hosts is not None else _full_scan_hosts()
     factory = uid_factory or generate_uid
@@ -49,21 +51,26 @@ def scan_task_hosts(
             path = _absolute_host_path(host)
             rel_path = str(path.relative_to(vault_dir()))
             scanned_hosts.append(rel_path)
+            editor_locked = respect_editing_lock and is_user_editing(rel_path)
             with host_file_lock(path):
                 if not path.exists() or path.name.startswith("."):
                     continue
                 markdown = path.read_text(encoding="utf-8")
                 ignored_sections = {"Milestones"} if rel_path.startswith("projects/") else set()
-                markdown_with_uids, new_uids = ensure_task_uids(
-                    markdown,
-                    uid_factory=factory,
-                    existing_uids=seen,
-                    ignored_sections=ignored_sections,
-                )
-                if markdown_with_uids != markdown:
-                    atomic_write(path, markdown_with_uids)
-                    markdown = markdown_with_uids
-                    assigned += len(new_uids)
+                # User-editing locks block agent-initiated rewrites only. While
+                # locked, scan existing UIDed tasks read-only, but do not stamp
+                # missing UIDs into the file.
+                if not editor_locked:
+                    markdown_with_uids, new_uids = ensure_task_uids(
+                        markdown,
+                        uid_factory=factory,
+                        existing_uids=seen,
+                        ignored_sections=ignored_sections,
+                    )
+                    if markdown_with_uids != markdown:
+                        atomic_write(path, markdown_with_uids)
+                        markdown = markdown_with_uids
+                        assigned += len(new_uids)
                 project, domain = _task_context_for_host(path, rel_path)
                 for task in parse_markdown_tasks(
                     markdown,

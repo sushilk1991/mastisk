@@ -243,6 +243,54 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
 
+  vaultFile: {
+    read: (path: string): Promise<{ path: string; content: string; content_sha256: string }> =>
+      j<{ path: string; content: string; content_sha256: string }>(
+        `${BASE}/vault/file?path=${encodeURIComponent(path)}`,
+      ),
+    write: (
+      path: string,
+      content: string,
+      base_sha256: string,
+    ): Promise<{ ok: boolean; path: string }> =>
+      j<{ ok: boolean; path: string }>(`${BASE}/vault/file`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path, content, base_sha256 }),
+      }),
+  },
+
+  editing: {
+    lock: (path: string): Promise<{ path: string; status: string }> =>
+      j<{ path: string; status: string }>(`${BASE}/editing/lock`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path }),
+      }),
+    unlock: (path: string): Promise<{ path: string; status: string }> =>
+      j<{ path: string; status: string }>(`${BASE}/editing/unlock`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path }),
+      }),
+    heartbeat: (path: string): Promise<{ path: string; status: string }> =>
+      j<{ path: string; status: string }>(`${BASE}/editing/heartbeat`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path }),
+      }),
+  },
+
+  attachments: {
+    upload: async (file: File): Promise<{ path: string; markdown: string }> => {
+      const form = new FormData();
+      form.append('file', file);
+      const r = await fetch(`${BASE}/attachments`, { method: 'POST', body: form });
+      if (!r.ok) await throwApiError(r);
+      return r.json() as Promise<{ path: string; markdown: string }>;
+    },
+  },
+
   artifacts: (articleId: string) =>
     j<{ artifacts: Artifact[] }>(`${BASE}/articles/${articleId}/artifacts`),
 

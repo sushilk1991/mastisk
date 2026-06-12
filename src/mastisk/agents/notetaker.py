@@ -36,6 +36,7 @@ from mastisk.agents.base import Agent
 from mastisk.bridges import intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
+from mastisk.editing import is_user_editing
 from mastisk.paths import notes_daily_dir, notes_dir, notes_inbox_dir, vault_dir
 from mastisk.settings import get_settings
 
@@ -192,6 +193,9 @@ class Notetaker(Agent):
           3. DB row exists, already classified: no-op.
         """
         rel_path = str(path.relative_to(vault_dir()))
+        if is_user_editing(rel_path):
+            log.info("notetaker: %s is user-editing locked, skipping enqueue", rel_path)
+            return
         with connect() as conn:
             row = conn.execute(
                 "SELECT id, classification FROM notes WHERE path = ? AND deleted_at IS NULL",
@@ -267,6 +271,9 @@ class Notetaker(Agent):
             return
 
         file_path = vault_dir() / note["path"]
+        if is_user_editing(note["path"]):
+            log.info("notetaker: note %s is user-editing locked, skipping classifier", note_id)
+            return
         if not file_path.exists():
             log.warning("notetaker: file missing for note %s: %s", note_id, file_path)
             return

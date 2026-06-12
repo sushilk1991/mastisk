@@ -79,6 +79,11 @@ class NotifySettings(BaseSettings):
     ntfy_server: str = "https://ntfy.sh"
 
 
+class AttachmentsSettings(BaseSettings):
+    """Config for vault attachment uploads."""
+    max_mb: int = 25
+
+
 class DomainsSettings(BaseSettings):
     """User-defined top-level life domains seeded from config.toml."""
     names: list[str] = Field(default_factory=list)
@@ -258,6 +263,8 @@ class Settings(BaseSettings):
     reminders: RemindersSettings = Field(default_factory=RemindersSettings)
 
     notify: NotifySettings = Field(default_factory=NotifySettings)
+
+    attachments: AttachmentsSettings = Field(default_factory=AttachmentsSettings)
 
     domains: DomainsSettings = Field(default_factory=DomainsSettings)
 

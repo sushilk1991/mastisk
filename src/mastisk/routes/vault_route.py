@@ -1,10 +1,18 @@
 """Expose identity files + vault metadata so the UI can show/edit self.md etc."""
 from __future__ import annotations
 
+import hashlib
+import re
+
+import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from mastisk.file_locks import host_file_lock
 from mastisk.paths import self_dir, vault_dir, vault_is_icloud
+from mastisk.routes.notes import atomic_write
+from mastisk.vault_paths import VaultPathError, vault_markdown_file
+from mastisk.vault_rescan import rescan_vault_markdown_path
 
 router = APIRouter(tags=["vault"])
 
@@ -32,6 +40,12 @@ class SelfIn(BaseModel):
     content: str
 
 
+class VaultFileIn(BaseModel):
+    path: str
+    content: str
+    base_sha256: str
+
+
 @router.put("/vault/self/{name}")
 def write_self(name: str, body: SelfIn):
     if name not in _SELF_FILES:
@@ -39,3 +53,61 @@ def write_self(name: str, body: SelfIn):
     self_dir().mkdir(parents=True, exist_ok=True)
     (self_dir() / f"{name}.md").write_text(body.content)
     return {"ok": True}
+
+
+@router.get("/vault/file")
+def read_vault_file(path: str) -> dict[str, str]:
+    try:
+        rel_path, target = vault_markdown_file(path)
+    except VaultPathError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="vault file not found")
+    content = target.read_text(encoding="utf-8")
+    return {
+        "path": rel_path,
+        "content": content,
+        "content_sha256": _sha256_text(content),
+    }
+
+
+@router.put("/vault/file")
+def write_vault_file(req: VaultFileIn) -> dict[str, str | bool]:
+    try:
+        rel_path, target = vault_markdown_file(req.path)
+        _validate_frontmatter(req.content)
+    except VaultPathError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    with host_file_lock(target):
+        current = target.read_text(encoding="utf-8") if target.exists() else ""
+        if _sha256_text(current) != req.base_sha256:
+            raise HTTPException(
+                status_code=409,
+                detail="vault file changed since editor opened",
+            )
+        atomic_write(target, req.content)
+    try:
+        rescan_vault_markdown_path(rel_path, target)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "path": rel_path}
+
+
+def _sha256_text(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _validate_frontmatter(content: str) -> None:
+    if not content.startswith("---\n"):
+        return
+    close = re.search(r"(?m)^---\s*$", content[4:])
+    if close is None:
+        raise ValueError("frontmatter is malformed")
+    try:
+        parsed = yaml.safe_load(content[4 : 4 + close.start()]) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError("frontmatter is invalid YAML") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("frontmatter must be a mapping")
