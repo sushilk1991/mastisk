@@ -89,6 +89,50 @@ def test_profile_scan_roundtrip_invalid_override_falls_back_and_keeps_skills(db,
     assert "Prefer named mechanisms" in resolved
 
 
+def test_agent_profile_slot_override_horizontal_rule_roundtrips(vault_tmp) -> None:
+    from mastisk.agents.studio import dump_agent_profile_file, parse_agent_profile_file
+
+    path = vault_tmp / "_agents" / "synthesizer.md"
+    path.parent.mkdir(parents=True)
+    written = dump_agent_profile_file(
+        {
+            "enabled": True,
+            "skills": [],
+            "slot_overrides": {
+                "critic": "First instruction\n---\nSecond instruction",
+            },
+        },
+        "PRIMARY {identity} {articles}",
+    )
+    path.write_text(written, encoding="utf-8")
+
+    parsed = parse_agent_profile_file(path)
+    rewritten = dump_agent_profile_file(parsed["frontmatter"], parsed["prompt_override"])
+
+    assert rewritten == written
+
+
+def test_agent_skill_description_horizontal_rule_roundtrips(vault_tmp) -> None:
+    from mastisk.agents.studio import dump_agent_skill_file, parse_agent_skill_file
+
+    path = vault_tmp / "_agents" / "skills" / "rule-test.md"
+    path.parent.mkdir(parents=True)
+    written = dump_agent_skill_file(
+        {
+            "name": "Rule test",
+            "description": "Before\n---\nAfter",
+            "tags": [],
+        },
+        "Keep the instruction intact.",
+    )
+    path.write_text(written, encoding="utf-8")
+
+    parsed = parse_agent_skill_file(path)
+    rewritten = dump_agent_skill_file(parsed["frontmatter"], parsed["body"])
+
+    assert rewritten == written
+
+
 def test_prompt_validation_rejects_unknown_fields_and_skill_braces_are_safe(db, vault_tmp) -> None:
     from mastisk.agents.registry import resolve_prompt
     from mastisk.agents.studio import scan_agent_profiles, scan_agent_skills

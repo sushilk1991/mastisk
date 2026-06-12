@@ -373,15 +373,18 @@ def list_checklist_templates() -> list[dict[str, Any]]:
 
 
 def split_frontmatter(markdown: str) -> tuple[dict[str, Any], str]:
-    if not markdown.startswith("---\n"):
+    opener = re.match(r"\A---[ \t]*\r?\n", markdown)
+    if opener is None:
         return {}, markdown
-    parts = markdown.split("---", 2)
-    if len(parts) < 3:
+    closer = re.search(r"^---[ \t]*\r?$", markdown[opener.end():], re.MULTILINE)
+    if closer is None:
         return {}, markdown
-    meta = yaml.safe_load(parts[1]) or {}
+    close_start = opener.end() + closer.start()
+    close_end = opener.end() + closer.end()
+    meta = yaml.safe_load(markdown[opener.end():close_start]) or {}
     if not isinstance(meta, dict):
         meta = {}
-    body = parts[2].lstrip("\n")
+    body = markdown[close_end:].lstrip("\r\n")
     return meta, body
 
 
