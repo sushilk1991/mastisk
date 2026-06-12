@@ -251,6 +251,92 @@ def test_content_seed_source_drafts_without_recent_sources(agent, db, vault_tmp)
     }
 
 
+def test_content_seed_stays_first_when_reranker_omits_it(agent, db, vault_tmp):
+    """Content-spawned drafts must keep their outline as source 1.
+
+    The seed is the user's explicit draft request. It should not be demoted or
+    dropped just because adjacent recent sources score better in reranking.
+    """
+    from mastisk.agents.base import enqueue
+
+    competing_id = _seed_note(
+        db,
+        body="A very recent unrelated note about agent orchestration.",
+        summary="agent orchestration",
+        slug="competing-source",
+    )
+    bp_id = _seed_blog_post(db, theme="Local-first personal OS")
+    enqueue(
+        "blog_writer",
+        "draft",
+        {
+            "blog_post_id": bp_id,
+            "content_slug": "local-first-personal-os",
+            "content_source": {
+                "slug": "local-first-personal-os",
+                "title": "Local-first personal OS",
+                "kind": "article",
+                "body": "## Outline\n\n- Files are the API.",
+                "updated_at": datetime.now().astimezone().isoformat(),
+            },
+        },
+    )
+
+    async def fake_rerank(candidates, *, theme):
+        return [
+            (candidate, 0.95)
+            for candidate in candidates
+            if candidate["kind"] == "note" and candidate["ref"] == competing_id
+        ]
+
+    async def fake_claude(prompt, **kwargs):
+        assert '### Source 1 — content item "Local-first personal OS"' in prompt
+        assert "Files are the API" in prompt
+        return {
+            "text": json.dumps(
+                {"title": "Content Draft", "tags": [], "body_md": "draft [source 1]"}
+            )
+        }
+
+    with patch.object(
+        type(agent),
+        "_llm_rerank",
+        new_callable=AsyncMock,
+        side_effect=fake_rerank,
+    ), patch(
+        "mastisk.agents.blog_writer.claude_bridge.run_claude",
+        new_callable=AsyncMock,
+        side_effect=fake_claude,
+    ), _patch_codex_dead(), patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("ollama unavailable in test"),
+    ):
+        asyncio.run(agent.run_once())
+
+    sources = db.execute(
+        """SELECT kind, ref, origin, rank
+           FROM blog_post_sources
+           WHERE blog_post_id=?
+           ORDER BY rank""",
+        (bp_id,),
+    ).fetchall()
+    assert [dict(row) for row in sources] == [
+        {
+            "kind": "content",
+            "ref": "local-first-personal-os",
+            "origin": "content_pipeline",
+            "rank": 1,
+        },
+        {
+            "kind": "note",
+            "ref": str(competing_id),
+            "origin": None,
+            "rank": 2,
+        },
+    ]
+
+
 # ─────────────────────────────── Claude → Ollama fallback ───────────────────────────────
 
 

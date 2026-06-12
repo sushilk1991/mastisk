@@ -282,14 +282,19 @@ class BlogWriter(Agent):
         try:
             content_source = _content_source_from_payload(payload)
             candidates = self._gather_sources(bp["window_days"])
-            if content_source is not None:
-                candidates.insert(0, content_source)
-            if not candidates:
+            if content_source is None and not candidates:
                 raise RuntimeError("no sources in window")
 
             ranked = await self._rank(candidates, theme=bp["theme"])
             settings = get_settings().blog
-            ranked = ranked[: settings.max_sources]
+            if content_source is not None:
+                # The content outline is the user's explicit seed for this
+                # spawned draft, so it must remain source #1. Keep it outside
+                # the generic ranker and reserve one source slot for it.
+                remaining_slots = max(settings.max_sources - 1, 0)
+                ranked = [content_source, *ranked[:remaining_slots]]
+            else:
+                ranked = ranked[: settings.max_sources]
             web_context = await self._gather_public_web_context(
                 theme=bp["theme"], ranked=ranked,
             )
