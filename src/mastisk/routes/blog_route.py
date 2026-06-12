@@ -130,6 +130,7 @@ async def regenerate_blog_post_endpoint(bp_id: int) -> dict:
             raise HTTPException(
                 status_code=409, detail="an earlier blog job is still in flight",
             )
+        payload = _regenerate_payload(bp)
         # Cascade the sources table ourselves (CASCADE on the FK would also
         # work, but doing it in-row-reset keeps the SQL explicit + visible).
         # Wrapped in a txn so a crash between the two statements can't leave
@@ -138,7 +139,6 @@ async def regenerate_blog_post_endpoint(bp_id: int) -> dict:
             q.delete_blog_post_sources(conn, bp_id)
             q.reset_blog_post_for_regenerate(conn, bp_id)
 
-    payload = _regenerate_payload(bp)
     enqueue("blog_writer", "draft", payload)
     return {"id": bp_id, "status": "pending"}
 

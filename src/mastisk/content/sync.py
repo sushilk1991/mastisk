@@ -152,10 +152,9 @@ def create_content_file(
     with _CREATE_CONTENT_LOCK:
         path = _create_content_file_exclusive(clean_title, content)
     scan_content([path])
-    if task_lines:
-        from mastisk.tasks.sync import scan_task_hosts
+    from mastisk.tasks.sync import scan_task_hosts
 
-        scan_task_hosts([path])
+    scan_task_hosts([path])
     item = content_payload(path.stem)
     if item is None:
         raise RuntimeError(f"content mirror missing after write: {path.stem}")

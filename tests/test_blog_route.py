@@ -347,6 +347,69 @@ def test_regenerate_content_spawned_post_reenqueues_seed(client, db, vault_tmp):
     assert "Files are the API" in payload["content_source"]["body"]
 
 
+def test_regenerate_missing_content_seed_leaves_completed_post_unchanged(
+    client, db, vault_tmp
+):
+    from mastisk.content.sync import archive_content, create_content_file
+    from mastisk.db.queries import insert_blog_post_source, update_blog_post_done
+
+    item = create_content_file(
+        title="Local-first personal OS",
+        kind="article",
+        outline="## Outline\n\n- Files are the API.",
+    )
+    drafted = client.post(f"/api/content/{item['slug']}/draft")
+    assert drafted.status_code == 202, drafted.text
+    bp_id = drafted.json()["blog_post_id"]
+    db.execute(
+        """UPDATE jobs
+           SET status='done', finished_at=CURRENT_TIMESTAMP
+           WHERE agent='blog_writer'
+             AND kind='draft'
+             AND json_extract(payload_json, '$.blog_post_id') = ?""",
+        (bp_id,),
+    )
+    update_blog_post_done(
+        db, bp_id=bp_id, slug="s", path="p", title="Finished", tags_json="[]",
+        model="claude", word_count=10, body_preview="pre",
+    )
+    insert_blog_post_source(
+        db, blog_post_id=bp_id, kind="content", ref=item["slug"], rank=1, used=True,
+    )
+    before_row = dict(db.execute("SELECT * FROM blog_posts WHERE id=?", (bp_id,)).fetchone())
+    before_sources = [
+        dict(row)
+        for row in db.execute(
+            "SELECT kind, ref, rank, used FROM blog_post_sources WHERE blog_post_id=?",
+            (bp_id,),
+        ).fetchall()
+    ]
+    assert archive_content(item["slug"]) is not None
+
+    regenerated = client.post(f"/api/blog-posts/{bp_id}/regenerate")
+
+    assert regenerated.status_code == 409, regenerated.text
+    after_row = dict(db.execute("SELECT * FROM blog_posts WHERE id=?", (bp_id,)).fetchone())
+    after_sources = [
+        dict(row)
+        for row in db.execute(
+            "SELECT kind, ref, rank, used FROM blog_post_sources WHERE blog_post_id=?",
+            (bp_id,),
+        ).fetchall()
+    ]
+    assert after_row == before_row
+    assert after_sources == before_sources
+    queued = db.execute(
+        """SELECT COUNT(*) AS n FROM jobs
+           WHERE agent='blog_writer'
+             AND kind='draft'
+             AND status IN ('queued', 'running')
+             AND json_extract(payload_json, '$.blog_post_id') = ?""",
+        (bp_id,),
+    ).fetchone()
+    assert queued["n"] == 0
+
+
 # ─────────────────────────────── save-as-note ───────────────────────────────
 
 

@@ -276,6 +276,20 @@ def test_get_content_detail_does_not_assign_task_uids(
     assert path.stat().st_mtime_ns == before_mtime
 
 
+def test_create_content_indexes_inline_outline_tasks(db, vault_tmp):
+    from mastisk.content.sync import create_content_file
+
+    item = create_content_file(
+        title="Inline Checklist",
+        kind="article",
+        outline="## Checklist\n\n- [ ] Draft the intro #content",
+    )
+
+    assert [task["text"] for task in item["tasks"]] == ["Draft the intro"]
+    file_text = (vault_tmp / item["path"]).read_text(encoding="utf-8")
+    assert "🆔" in file_text
+
+
 def test_content_triage_accept_clears_file_marker(db, vault_tmp, data_tmp):
     from mastisk.content.sync import create_content_file
 
