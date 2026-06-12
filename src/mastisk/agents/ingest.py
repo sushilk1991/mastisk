@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from mastisk.agents.base import Agent
 from mastisk.ingest.pipeline import (
     cleanup_temp_audio_file,
@@ -13,7 +15,7 @@ from mastisk.ingest.pipeline import (
     sweep_stale_capture_audio_files,
 )
 from mastisk.integrations import whisper
-from mastisk.routes.capture import route_and_persist_capture
+from mastisk.routes.capture import _persist_inbox_fallback, route_and_persist_capture
 
 
 class IngestAgent(Agent):
@@ -57,12 +59,19 @@ class IngestAgent(Agent):
         transcript = result.text.strip()
         if not transcript:
             raise RuntimeError("whisper returned an empty transcript")
-        filed = await route_and_persist_capture(
-            transcript,
-            source="phone",
-            ts=payload.get("ts"),
-        )
+        fallback: dict | None = None
+        try:
+            filed = await route_and_persist_capture(
+                transcript,
+                source="phone",
+                ts=payload.get("ts"),
+            )
+        except HTTPException as exc:
+            filed = _persist_inbox_fallback(transcript, "phone", ts=payload.get("ts"))
+            fallback = {"status_code": exc.status_code, "detail": exc.detail}
         job_result = {"transcript": transcript, "capture": filed}
+        if fallback is not None:
+            job_result["fallback"] = fallback
         merge_job_payload(job_id, {"result": job_result})
         try:
             emit_ingest_feed(

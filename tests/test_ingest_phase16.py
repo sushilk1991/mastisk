@@ -694,6 +694,64 @@ def test_capture_audio_inbox_fallback_preserves_client_timestamp(
     assert note["slug"].startswith("235800-raw-late-night-note")
 
 
+def test_capture_audio_job_falls_back_to_inbox_on_routing_http_error(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    from mastisk.agents.ingest import IngestAgent
+    from mastisk.capture.router import Capture
+    from mastisk.integrations.whisper import TranscriptResult
+    from mastisk.settings import reload_settings
+
+    (data_tmp / "config.toml").write_text(
+        "[capture]\nbearer_token = \"tok\"\ndefault_timezone = \"Asia/Kolkata\"\n",
+        encoding="utf-8",
+    )
+    journal_dir = vault_tmp / "journal"
+    journal_dir.mkdir(parents=True)
+    (journal_dir / "2026-06-11.md").write_text("---\nnot: [valid\n---\n## Log\n", encoding="utf-8")
+    reload_settings()
+    try:
+        monkeypatch.setattr("mastisk.routes.ingest.whisper.is_available", lambda: True)
+        monkeypatch.setattr(
+            "mastisk.agents.ingest.whisper.transcribe",
+            AsyncMock(return_value=TranscriptResult(text="journal-routed audio", segments=[])),
+        )
+        monkeypatch.setattr(
+            "mastisk.routes.capture.route_capture",
+            AsyncMock(
+                return_value=Capture(
+                    type="journal",
+                    confidence=0.95,
+                    body="journal-routed audio",
+                )
+            ),
+        )
+
+        with _client(vault_tmp, data_tmp, db) as client:
+            queued = client.post(
+                "/api/capture/audio",
+                headers={"Authorization": "Bearer tok"},
+                data={"ts": "2026-06-11T23:58:00+05:30"},
+                files={"file": ("note.m4a", b"audio", "audio/mp4")},
+            )
+            assert queued.status_code == 202, queued.text
+            job_id = queued.json()["job_id"]
+            asyncio.run(IngestAgent().run_once())
+            job = client.get(f"/api/ingest/jobs/{job_id}").json()["job"]
+
+        note = db.execute("SELECT * FROM notes WHERE source = 'phone'").fetchone()
+    finally:
+        (data_tmp / "config.toml").unlink(missing_ok=True)
+        reload_settings()
+
+    assert job["status"] == "done"
+    assert job["result"]["capture"]["type"] == "inbox"
+    assert job["result"]["fallback"]["status_code"] == 409
+    assert note is not None
+    assert note["body"] == "journal-routed audio"
+    assert note["created_at"].startswith("2026-06-11T23:58:00")
+
+
 def test_journal_photo_success_stores_attachment_and_appends_handwritten_log(
     vault_tmp, data_tmp, db, monkeypatch
 ):
