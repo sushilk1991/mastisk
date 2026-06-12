@@ -182,10 +182,18 @@ def test_document_ingest_queues_job_and_job_writes_inbox_note(
     assert note is not None
     assert note["path"].startswith("_notes/inbox/")
     note_text = (vault_tmp / note["path"]).read_text(encoding="utf-8")
+    from mastisk.agents.notetaker import strip_frontmatter
+
+    assert strip_frontmatter(note_text) == note["body"]
     assert "source_type: report" in note_text
     assert "summary: A useful report." in note_text
     assert f"original: {source_path}" in note_text
     assert "# Converted" in note_text
+    assert f"[vault/{source_path}]" in note["body"]
+    assert note["classified_at"] is not None
+    assert note["classification"] == "observation"
+    assert note["summary"] == "A useful report."
+    assert json.loads(note["tags_json"]) == ["reports"]
     assert note["escalation_state"] == "none"
 
 
@@ -253,6 +261,55 @@ def test_document_requeue_after_result_does_not_duplicate_companion_note(
     assert dict(job) == {"status": "done", "error": None}
     assert db.execute("SELECT COUNT(*) AS n FROM notes WHERE source='document'").fetchone()["n"] == 1
     assert convert_calls == 1
+
+
+def test_document_companion_note_is_bounded_and_skips_notetaker(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    from mastisk.agents.ingest import IngestAgent
+    from mastisk.agents.notetaker import Notetaker, strip_frontmatter
+    from mastisk.ingest.converters import ConversionResult
+    from mastisk.ingest.pipeline import SourceMetadata
+
+    long_markdown = "# Big PDF\n\n" + ("important detail " * 1000)
+    monkeypatch.setattr("mastisk.routes.ingest.document_converter_available", lambda: True)
+    monkeypatch.setattr(
+        "mastisk.ingest.pipeline.convert_document",
+        lambda path: ConversionResult(markdown=long_markdown, provider="markitdown"),
+    )
+    monkeypatch.setattr(
+        "mastisk.ingest.pipeline.extract_source_metadata",
+        AsyncMock(
+            return_value=SourceMetadata(
+                summary="A long source worth keeping.",
+                tags=["long-source"],
+                entities=["Mastisk"],
+                source_type="paper",
+            )
+        ),
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        queued = client.post(
+            "/api/ingest/document",
+            files={"file": ("long.pdf", b"fake-pdf", "application/pdf")},
+        )
+        assert queued.status_code == 202, queued.text
+        asyncio.run(IngestAgent().run_once())
+
+    note = db.execute("SELECT * FROM notes WHERE source = 'document'").fetchone()
+    assert note is not None
+    note_text = (vault_tmp / note["path"]).read_text(encoding="utf-8")
+    body_from_file = strip_frontmatter(note_text)
+    assert body_from_file == note["body"]
+    assert len(note["body"]) <= 5600
+    assert "important detail" in note["body"]
+    assert note["body"].count("important detail") < long_markdown.count("important detail")
+    assert f"[vault/{queued.json()['source_path']}]" in note["body"]
+    assert note["classification"] == "observation"
+    assert note["classified_at"] is not None
+    assert Notetaker()._enqueue_reclassify_ready() == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM jobs WHERE agent='notetaker'").fetchone()["n"] == 0
 
 
 def test_document_ingest_enforces_type_size_and_converter_503(

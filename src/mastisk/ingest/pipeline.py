@@ -10,6 +10,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,9 @@ from mastisk.routes.notes import persist_note_capture
 ALLOWED_DOCUMENT_EXTS = {"pdf", "docx", "pptx", "xlsx", "html", "txt", "md", "epub"}
 AUDIO_EXTS = {"m4a", "mp3", "wav", "aac"}
 MAX_EXTRACTION_CHARS = 24000
+COMPANION_NOTE_EXCERPT_CHARS = 5000
+COMPANION_NOTE_CLASSIFICATION = "observation"
+COMPANION_NOTE_CONFIDENCE = 0.75
 CAPTURE_AUDIO_TMP_SUBDIR = "capture-audio"
 CAPTURE_AUDIO_STALE_SECONDS = 24 * 60 * 60
 CAPTURE_AUDIO_SWEEP_LIMIT = 200
@@ -122,11 +126,24 @@ def persist_converted_source_note(
     original_rel_path: str,
     filename: str,
 ) -> dict[str, Any]:
+    now = datetime.now().astimezone()
+    classified_at = now.isoformat()
+    body = companion_note_body(
+        converted_markdown=converted_markdown,
+        metadata=metadata,
+        original_rel_path=original_rel_path,
+    )
     frontmatter = {
-        "source_type": metadata.source_type,
-        "tags": metadata.tags,
-        "entities": metadata.entities,
+        "created_at": now.isoformat(),
+        "classified_at": classified_at,
+        "classification": COMPANION_NOTE_CLASSIFICATION,
         "summary": metadata.summary,
+        "confidence": COMPANION_NOTE_CONFIDENCE,
+        "tags": metadata.tags,
+        "related_articles": [],
+        "escalation_state": "none",
+        "source_type": metadata.source_type,
+        "entities": metadata.entities,
         "original": original_rel_path,
     }
     fm = yaml.safe_dump(
@@ -135,14 +152,58 @@ def persist_converted_source_note(
         default_flow_style=False,
         allow_unicode=True,
     ).strip()
-    body = converted_markdown.strip()
-    file_content = f"---\n{fm}\n---\n\n{body}\n"
-    note_body = f"{metadata.summary}\n\n{body}".strip()
-    return persist_note_capture(
-        body=note_body,
+    row = persist_note_capture(
+        body=body,
         source="document",
         slug_text=filename,
-        file_content=file_content,
+        ts=now,
+        file_content=f"---\n{fm}\n---\n\n{body}",
+    )
+    with connect() as conn:
+        conn.execute(
+            """UPDATE notes
+               SET classified_at = ?, classification = ?, summary = ?, confidence = ?,
+                   tags_json = ?
+               WHERE id = ?""",
+            (
+                classified_at,
+                COMPANION_NOTE_CLASSIFICATION,
+                metadata.summary,
+                COMPANION_NOTE_CONFIDENCE,
+                json.dumps(metadata.tags),
+                row["id"],
+            ),
+        )
+        updated = q.get_note(conn, int(row["id"]))
+    return dict(updated or row)
+
+
+def companion_note_body(
+    *,
+    converted_markdown: str,
+    metadata: SourceMetadata,
+    original_rel_path: str,
+) -> str:
+    excerpt = bounded_companion_excerpt(converted_markdown)
+    source_link = f"[vault/{original_rel_path}](../../{original_rel_path})"
+    return (
+        f"{metadata.summary}\n\n"
+        "## Excerpt\n\n"
+        f"{excerpt}\n\n"
+        "## Raw source\n\n"
+        f"Raw source: {source_link}"
+    ).strip()
+
+
+def bounded_companion_excerpt(markdown: str) -> str:
+    body = markdown.strip()
+    if not body:
+        return "(no extractable text)"
+    if len(body) <= COMPANION_NOTE_EXCERPT_CHARS:
+        return body
+    return (
+        body[:COMPANION_NOTE_EXCERPT_CHARS].rstrip()
+        + "\n\n[Excerpt truncated. Open the raw source for the full import.]"
     )
 
 
