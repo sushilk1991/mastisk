@@ -26,6 +26,7 @@ from mastisk.library.sync import (
 )
 
 router = APIRouter(tags=["library"])
+_MAX_KINDLE_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 class BookCreate(BaseModel):
@@ -191,7 +192,9 @@ async def append_quote_thought_endpoint(quote_id: str, req: ThoughtCreate) -> di
 
 @router.post("/api/import/kindle")
 async def import_kindle_endpoint(file: Annotated[UploadFile, File(...)]) -> dict[str, int]:
-    raw = await file.read()
+    raw = await file.read(_MAX_KINDLE_UPLOAD_BYTES + 1)
+    if len(raw) > _MAX_KINDLE_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Kindle upload exceeds 10 MB")
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:

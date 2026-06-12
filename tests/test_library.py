@@ -176,6 +176,67 @@ def test_books_routes_enrich_offline_patch_and_highlight_quote_recovery(
         assert offline.json()["author"] == "Local Author"
 
 
+def test_patch_book_rejects_invalid_dates_without_rewriting(db, vault_tmp, data_tmp):
+    from mastisk.library.sync import create_book_file
+
+    create_book_file(title="Thinking in Systems", author="Donella Meadows")
+    path = vault_tmp / "library" / "books" / "thinking-in-systems.md"
+    before = path.read_text(encoding="utf-8")
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        patched = client.patch(
+            "/api/books/thinking-in-systems",
+            json={"started": "2026-99-99"},
+        )
+
+    assert patched.status_code == 422, patched.text
+    assert path.read_text(encoding="utf-8") == before
+    row = db.execute("SELECT started FROM books WHERE slug = 'thinking-in-systems'").fetchone()
+    assert row["started"] is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_book_metadata_preserves_manual_cover_when_lookup_has_none(
+    db, vault_tmp, monkeypatch
+):
+    from mastisk.library.sync import create_book_file, refresh_book_metadata
+
+    create_book_file(
+        title="Thinking in Systems",
+        author="Donella Meadows",
+        cover_url="https://covers.example/manual.jpg",
+    )
+
+    async def fake_search(title, author=None, client=None):
+        return {
+            "title": title,
+            "authors": [author],
+            "cover_url": None,
+            "subjects": ["Systems"],
+        }
+
+    monkeypatch.setattr("mastisk.library.sync.openlibrary.search_book", fake_search)
+
+    refreshed = await refresh_book_metadata("thinking-in-systems")
+
+    assert refreshed["cover_url"] == "https://covers.example/manual.jpg"
+
+
+def test_kindle_upload_rejects_files_over_size_cap(db, vault_tmp, data_tmp, monkeypatch):
+    def fail_import(text):
+        raise AssertionError("oversized upload should not be imported")
+
+    monkeypatch.setattr("mastisk.routes.library.import_clippings_text", fail_import)
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        response = client.post(
+            "/api/import/kindle",
+            files={"file": ("My Clippings.txt", b"x" * (10 * 1024 * 1024 + 1), "text/plain")},
+        )
+
+    assert response.status_code == 413, response.text
+
+
 def test_scan_library_tombstones_deleted_book_highlights_without_resurrecting_quotes(
     db, vault_tmp
 ):
@@ -269,6 +330,37 @@ def test_quotes_routes_append_thoughts_file_first(db, vault_tmp, data_tmp):
         )
         assert "- 2026-06-11 10:00 This is about product surfaces too." in file_text
         assert "- 2026-06-11 10:05 Append-only means no quiet rewrite." in file_text
+
+
+def test_append_quote_thought_does_not_duplicate_same_timestamp_line(db, vault_tmp):
+    from mastisk.library.sync import append_quote_thought, create_quote_file
+
+    quote = create_quote_file(
+        text="Attention is the rarest and purest form of generosity.",
+        source_type="article",
+        source_ref="simone-weil",
+    )
+
+    append_quote_thought(
+        quote["id"],
+        "This is about product surfaces too.",
+        ts="2026-06-11 10:00",
+    )
+    append_quote_thought(
+        quote["id"],
+        "This is about product surfaces too.",
+        ts="2026-06-11 10:00",
+    )
+
+    file_text = (vault_tmp / quote["path"]).read_text(encoding="utf-8")
+    assert file_text.count("- 2026-06-11 10:00 This is about product surfaces too.") == 1
+    rows = db.execute(
+        "SELECT ts, text FROM quote_thoughts WHERE quote_id = ?",
+        (quote["id"],),
+    ).fetchall()
+    assert [dict(row) for row in rows] == [
+        {"ts": "2026-06-11 10:00", "text": "This is about product surfaces too."}
+    ]
 
 
 def test_scan_quotes_skips_duplicate_source_hash_file(db, vault_tmp, caplog):

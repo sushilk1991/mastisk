@@ -371,8 +371,9 @@ async def refresh_book_metadata(slug: str) -> dict[str, Any] | None:
     if not found:
         return book
     updates: dict[str, Any] = {
-        "cover_url": found.get("cover_url"),
     }
+    if found.get("cover_url"):
+        updates["cover_url"] = found["cover_url"]
     authors = found.get("authors") or []
     if authors and not book.get("author"):
         updates["author"] = authors[0]
@@ -395,13 +396,14 @@ def patch_book(slug: str, updates: dict[str, Any]) -> dict[str, Any] | None:
             "author",
             "cover_url",
             "format",
-            "started",
-            "finished",
             "isbn",
             "summary",
         ):
             if key in updates:
                 meta[key] = _clean_text(updates[key])
+        for key in ("started", "finished"):
+            if key in updates:
+                meta[key] = _clean_patch_date(updates[key], field=key)
         if "status" in updates:
             meta["status"] = _clean_book_status(updates["status"])
         if "rating" in updates:
@@ -514,9 +516,13 @@ def append_quote_thought(
         raise ValueError("thought text must be non-blank")
     path = vault_dir() / quote["path"]
     timestamp = _clean_thought_ts(ts)
+    line = f"- {timestamp} {clean}"
     with host_file_lock(path):
         markdown = path.read_text(encoding="utf-8")
-        atomic_write(path, append_to_section(markdown, "Thoughts", f"- {timestamp} {clean}"))
+        _, body = split_frontmatter(markdown)
+        _, _, thought_lines = _split_quote_thoughts(body)
+        if line not in thought_lines:
+            atomic_write(path, append_to_section(markdown, "Thoughts", line))
     scan_quotes([path])
     return quote_payload(quote_id)
 
@@ -1023,7 +1029,24 @@ def _clean_date(value: object) -> str | None:
     text = _clean_text(value)
     if not text:
         return None
-    return text[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", text) else None
+    candidate = text[:10]
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", candidate):
+        return None
+    try:
+        datetime.strptime(candidate, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return candidate
+
+
+def _clean_patch_date(value: object, *, field: str) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    cleaned = _clean_date(text)
+    if cleaned is None:
+        raise ValueError(f"{field} must be YYYY-MM-DD")
+    return cleaned
 
 
 def _clean_rating(value: object) -> int | None:
