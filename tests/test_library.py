@@ -292,6 +292,65 @@ def test_kindle_parser_handles_good_bad_bom_and_crlf():
     assert "Bad block" in parsed.review_blocks[0].raw_block
 
 
+@pytest.mark.parametrize(
+    ("metadata", "content", "expected_highlights", "expected_review_reason"),
+    [
+        (
+            "- Your Highlight on page 2 | Location 31-32 | Added on Thursday, June 11, 2026 9:10:00 AM",
+            "A system is more than the sum of its parts.",
+            1,
+            None,
+        ),
+        (
+            "- Your Note on page 2 | Location 31 | Added on Thursday, June 11, 2026 9:11:00 AM",
+            "This reminds me of feedback loops.",
+            0,
+            "unsupported_note",
+        ),
+        (
+            "- Your Bookmark on page 2 | Location 31 | Added on Thursday, June 11, 2026 9:12:00 AM",
+            "",
+            0,
+            "unsupported_bookmark",
+        ),
+        (
+            "- Your Annotation on page 2 | Location 31 | Added on Thursday, June 11, 2026 9:13:00 AM",
+            "Unexpected Kindle export type.",
+            0,
+            "unsupported_unknown",
+        ),
+    ],
+)
+def test_kindle_parser_imports_only_highlights_and_reviews_other_types(
+    metadata,
+    content,
+    expected_highlights,
+    expected_review_reason,
+):
+    from mastisk.library.kindle import parse_clippings
+
+    raw = (
+        "Thinking in Systems (Donella Meadows)\n"
+        f"{metadata}\n"
+        "\n"
+        f"{content}\n"
+        "==========\n"
+    )
+
+    parsed = parse_clippings(raw)
+
+    assert len(parsed.highlights) == expected_highlights
+    if expected_review_reason is None:
+        assert parsed.review_blocks == []
+        assert parsed.highlights[0].content == content
+    else:
+        assert parsed.highlights == []
+        assert len(parsed.review_blocks) == 1
+        assert parsed.review_blocks[0].reason == expected_review_reason
+        assert parsed.review_blocks[0].parsed_title == "Thinking in Systems"
+        assert parsed.review_blocks[0].parsed_author == "Donella Meadows"
+
+
 def test_kindle_import_is_idempotent_and_review_lifecycle(db, vault_tmp, data_tmp):
     text = (
         "Thinking in Systems (Donella Meadows)\n"

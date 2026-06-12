@@ -15,6 +15,7 @@ class ParsedClipping:
     title: str
     author: str | None
     metadata: str
+    clipping_type: str
     content: str
     raw_block: str
 
@@ -162,7 +163,7 @@ def retry_review_as_quote(
 def _parse_block(block: str) -> ParsedClipping | ReviewBlock:
     lines = [line.rstrip() for line in block.split("\n")]
     lines = _trim_blank_edges(lines)
-    if len(lines) < 3:
+    if len(lines) < 2:
         return ReviewBlock(raw_block=block, reason="too_few_lines")
     title_line = lines[0].strip().lstrip("\ufeff")
     metadata = lines[1].strip()
@@ -176,8 +177,17 @@ def _parse_block(block: str) -> ParsedClipping | ReviewBlock:
             parsed_title=title,
             parsed_author=author,
         )
+    clipping_type = _clipping_type(metadata)
     content_lines = _content_lines(lines[2:])
     content = "\n".join(content_lines).strip()
+    if clipping_type != "highlight":
+        return ReviewBlock(
+            raw_block=block,
+            reason=f"unsupported_{clipping_type}",
+            parsed_title=title,
+            parsed_author=author,
+            parsed_content=content or None,
+        )
     if not content:
         return ReviewBlock(
             raw_block=block,
@@ -189,6 +199,7 @@ def _parse_block(block: str) -> ParsedClipping | ReviewBlock:
         title=title,
         author=author,
         metadata=metadata,
+        clipping_type=clipping_type,
         content=content,
         raw_block=block,
     )
@@ -211,6 +222,13 @@ def _content_lines(lines: list[str]) -> list[str]:
     while remaining and not remaining[-1].strip():
         remaining.pop()
     return remaining
+
+
+def _clipping_type(metadata: str) -> str:
+    match = re.search(r"\bYour\s+(?P<kind>Highlight|Note|Bookmark)\b", metadata, re.I)
+    if not match:
+        return "unknown"
+    return match.group("kind").casefold()
 
 
 def _trim_blank_edges(lines: list[str]) -> list[str]:
