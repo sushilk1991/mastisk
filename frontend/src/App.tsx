@@ -27,7 +27,7 @@ import { WikiLinkHoverProvider } from './components/WikiLinkHover';
 import { NotesView } from './components/NotesView';
 import { NoteView } from './components/NoteView';
 import { LibraryView } from './components/LibraryView';
-import { NoteCaptureModal } from './components/NoteCaptureModal';
+import { QuickCaptureSheet } from './components/QuickCaptureSheet';
 import { RoundtablesListView } from './components/RoundtablesListView';
 import { RoundtableView } from './components/RoundtableView';
 import { ReposView } from './components/ReposView';
@@ -59,7 +59,8 @@ export function App() {
   const [railOpen, setRailOpen] = useState(window.innerWidth > 900);
   const [askOpen, setAskOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [captureOpen, setCaptureOpen] = useState(false);
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  const [quickCaptureHint, setQuickCaptureHint] = useState<'note' | undefined>(undefined);
   const [addRepoOpen, setAddRepoOpen] = useState(false);
   const [captureBlogOpen, setCaptureBlogOpen] = useState(false);
   // Optional theme to pre-fill BlogCreationModal with when it opens — set by
@@ -69,6 +70,15 @@ export function App() {
   const openBlogModalWithTheme = useCallback((title: string) => {
     setPendingTheme(title);
     setCaptureBlogOpen(true);
+  }, []);
+  const openQuickCapture = useCallback((hint?: 'note') => {
+    setPaletteOpen(false);
+    setQuickCaptureHint(hint);
+    setQuickCaptureOpen(true);
+  }, []);
+  const closeQuickCapture = useCallback(() => {
+    setQuickCaptureOpen(false);
+    setQuickCaptureHint(undefined);
   }, []);
   const closeBlogModal = useCallback(() => {
     setCaptureBlogOpen(false);
@@ -175,21 +185,26 @@ export function App() {
     setAskOpen(true);
   }, [currentArticle]);
 
-  // Global ⌘K / Ctrl+K — open the command palette from anywhere. Intercepted
-  // even inside form fields because ⌘K is universally a palette shortcut and
-  // doesn't conflict with normal typing. Pressing ⌘K when the palette is
-  // already open is a no-op (state stays true; the open-effect only runs on
-  // false→true transitions). Esc is the canonical close.
+  // Global shortcuts:
+  //   ⌘K / Ctrl+K opens the command palette.
+  //   ⌘⇧A / Ctrl+Shift+A opens quick capture from anywhere.
+  // Both are intercepted inside form fields because they are app-level command
+  // chords, not ordinary text input.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();
         setPaletteOpen(true);
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        openQuickCapture();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [openQuickCapture]);
 
   return (
     <div className="app" data-rail={railOpen ? 'open' : 'closed'} data-side={sideOpen ? 'open' : 'closed'}>
@@ -207,7 +222,7 @@ export function App() {
         onToggleRail={() => setRailOpen((s) => !s)}
         onAsk={() => openAsk("What's most important in my wiki right now?", null)}
         onSearchClick={() => setPaletteOpen(true)}
-        onCapture={() => setCaptureOpen(true)}
+        onCapture={() => openQuickCapture()}
       />
 
       {sideOpen && sidebar && (
@@ -219,7 +234,7 @@ export function App() {
           currentArticle={currentArticle ?? ''}
           onNavigate={navigate}
           onAddRepo={() => setAddRepoOpen(true)}
-          onCaptureNote={() => setCaptureOpen(true)}
+          onCaptureNote={() => openQuickCapture('note')}
           onCreateBlog={() => setCaptureBlogOpen(true)}
         />
       )}
@@ -251,7 +266,7 @@ export function App() {
         {view === 'notes' && (
           <NotesView
             onNavigate={navigate}
-            onCaptureNote={() => setCaptureOpen(true)}
+            onCaptureNote={() => openQuickCapture('note')}
           />
         )}
         {view === 'note' && currentNote !== null && <NoteView noteId={currentNote} onNavigate={navigate}/>}
@@ -351,10 +366,11 @@ export function App() {
           navigate(view, id);
         }}
       />
-      <NoteCaptureModal
-        open={captureOpen}
-        onClose={() => setCaptureOpen(false)}
-        onCaptured={(id) => navigate('note', String(id))}
+      <QuickCaptureSheet
+        open={quickCaptureOpen}
+        onClose={closeQuickCapture}
+        onNavigate={navigate}
+        initialHint={quickCaptureHint}
       />
       <AddRepoModal
         open={addRepoOpen}

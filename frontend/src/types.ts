@@ -82,6 +82,24 @@ export interface Note {
   related_articles?: { article_id: string; title: string; rank: number }[];
 }
 
+export interface QuickCaptureResponse {
+  id: string | number;
+  type:
+    | 'task'
+    | 'note'
+    | 'journal'
+    | 'project_update'
+    | 'routine_done'
+    | 'person'
+    | 'quote'
+    | 'inventory'
+    | 'content'
+    | 'inbox'
+    | string;
+  destination: string;
+  needs_triage: boolean;
+}
+
 export interface VaultPage {
   kind: 'page';
   id: string;

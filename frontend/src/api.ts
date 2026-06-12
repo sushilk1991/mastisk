@@ -4,9 +4,9 @@ import type {
   BlogPostSummary, BookDetail, BookHighlight, BookStatus, BookSummary, CaptureTriageItem, CaptureTriageTarget, ContentDetail, ContentKind, ContentList, ContentStatus, Digest, DigestAudit, Domain, Feed,
   FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, IntegrationHealth, InventoryDetail, InventoryList, InventoryStatus, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
   KindleImportResult, KindleReviewItem, PersonDetail, PersonSummary, PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, QuoteDetail, QuoteSourceType, QuoteSummary, ReminderRow,
-  RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
+  QuickCaptureResponse, RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
-  SettingsBundle, SettingsPatch, SlippingItem, TaskRow, TranscriptAnchor, JournalDay, JournalDaySummary,
+  SettingsBundle, SettingsPatch, SlippingItem, TaskRow, TimeOfDay, TranscriptAnchor, JournalDay, JournalDaySummary,
   SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem,
   NeedsReviewItem,
 } from './types';
@@ -103,6 +103,13 @@ function normalizeGraph(raw: GraphData | CompactGraphData): GraphData {
 
 export const api = {
   sidebar: () => j<{ vault: VaultItem[]; pinned: PinnedItem[]; user: UserInfo }>(`${BASE}/sidebar`),
+
+  quickCapture: (text: string, ts?: string): Promise<QuickCaptureResponse> =>
+    j<QuickCaptureResponse>(`${BASE}/quick-capture`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text, ...(ts ? { ts } : {}) }),
+    }),
 
   graph: async () => normalizeGraph(await j<GraphData | CompactGraphData>(`${BASE}/graph/compact`)),
 
@@ -491,6 +498,13 @@ export const api = {
       const qs = params.toString();
       return j<TaskRow[]>(qs ? `${BASE}/tasks?${qs}` : `${BASE}/tasks`);
     },
+    create: (body: { text: string; due?: string | null; priority?: 'high' | 'medium' | 'low' | null; project?: string | null; host_path?: string | null }):
+      Promise<TaskRow> =>
+      j<TaskRow>(`${BASE}/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
     toggle: (uid: string): Promise<TaskRow> =>
       j<TaskRow>(`${BASE}/tasks/${encodeURIComponent(uid)}/toggle`, { method: 'PATCH' }),
     patch: (uid: string, body: { due?: string | null; scheduled?: string | null; recurrence?: string | null; priority?: 'high' | 'medium' | 'low' | null; staleness_days?: number | null }):
@@ -601,6 +615,13 @@ export const api = {
   routinesApi: {
     list: (archived = false): Promise<RoutineGroups> =>
       j<RoutineGroups>(archived ? `${BASE}/routines?archived=true` : `${BASE}/routines`),
+    create: (body: { name: string; time_of_day?: TimeOfDay; streak_type?: 'ongoing' | 'fixed'; target_days?: number | null; start_date?: string | null }):
+      Promise<RoutineRow> =>
+      j<RoutineRow>(`${BASE}/routines`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
     toggle: (slug: string): Promise<RoutineRow> =>
       j<RoutineRow>(`${BASE}/routines/${encodeURIComponent(slug)}/toggle`, { method: 'POST' }),
     archive: (slug: string): Promise<RoutineRow> =>

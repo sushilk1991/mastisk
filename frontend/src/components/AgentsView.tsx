@@ -251,8 +251,13 @@ function AgentDetailView({
   }
   if (!detail) {
     return (
-      <div className="view">
-        <p className="dash-empty">loading agent...</p>
+      <div className="view agent-detail-view">
+        <div className="dash-skeleton agent-detail-skeleton" aria-label="Loading agent">
+          <span/>
+          <span/>
+          <span/>
+          <span/>
+        </div>
       </div>
     );
   }

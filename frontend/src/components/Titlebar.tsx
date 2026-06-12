@@ -125,7 +125,14 @@ export function Titlebar({
           title="Search (⌘K)"
           aria-label="Search"
         >{Icon.search}</button>
-        <button className="tb-btn" onClick={onCapture} title="New note (⌘+)">+</button>
+        <button
+          className="tb-btn tb-capture-btn"
+          onClick={onCapture}
+          title="Quick capture (⌘⇧A)"
+          aria-label="Quick capture"
+        >
+          +
+        </button>
         <button className="tb-btn" onClick={onAsk} title="Ask Mastisk">{Icon.ask}</button>
         <button className="tb-btn" onClick={onToggleSide} title="Toggle sidebar">{Icon.panel}</button>
         <button className="tb-btn" onClick={onToggleRail} title="Toggle right rail" style={{transform:'scaleX(-1)'}}>{Icon.panel}</button>

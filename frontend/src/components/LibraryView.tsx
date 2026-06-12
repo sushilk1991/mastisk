@@ -21,6 +21,8 @@ type Tab = 'books' | 'quotes' | 'kindle';
 export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNavigate }: Props) {
   const [tab, setTab] = useState<Tab>(initialQuoteId ? 'quotes' : 'books');
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
 
   const [bookStatus, setBookStatus] = useState<BookStatus | 'all'>('all');
   const [books, setBooks] = useState<BookSummary[]>([]);
@@ -79,10 +81,13 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
 
   async function loadAll() {
     setErr(null);
+    setLoading(true);
     try {
       await Promise.all([loadBooks(), loadQuotes(), loadReview()]);
     } catch (e) {
       setErr(errorMessage(e));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -112,8 +117,10 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
         author: bookAuthor.trim() || null,
         lookup: bookLookup,
       });
+      setBooks((current) => [created, ...current.filter((book) => book.slug !== created.slug)]);
       setBookTitle('');
       setBookAuthor('');
+      setShowCreate(false);
       await loadBooks();
       setSelectedBook(created.slug);
       onNavigate('library', `book:${created.slug}`);
@@ -174,9 +181,11 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
         source_ref: quoteSourceRef.trim() || null,
         tags: splitTags(quoteTags),
       });
+      setQuotes((current) => [created, ...current.filter((quote) => quote.id !== created.id)]);
       setQuoteText('');
       setQuoteSourceRef('');
       setQuoteTags('');
+      setShowCreate(false);
       await loadQuotes();
       setSelectedQuote(created.id);
       onNavigate('library', `quote:${created.id}`);
@@ -242,24 +251,38 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
     }
   }
 
+  const createLabel = tab === 'books' ? '+ New book' : tab === 'quotes' ? '+ New quote' : '+ Import';
+
   return (
     <div className="view dash-view library-view">
-      <div className="view-h">Personal OS</div>
-      <h1 className="view-title">Library</h1>
+      <header className="view-head">
+        <div className="view-head-copy">
+          <div className="view-h">Personal OS</div>
+          <h1 className="view-title">Library</h1>
+          <p className="view-sub">Books, quotes, and imported highlights worth keeping close.</p>
+        </div>
+        <div className="view-head-actions">
+          <button className="new-action" type="button" onClick={() => setShowCreate((value) => !value)}>
+            {showCreate ? 'Close' : createLabel}
+          </button>
+        </div>
+      </header>
 
       <div className="dash-tabs">
-        <button className={tab === 'books' ? 'active' : ''} onClick={() => setTab('books')}>Books {books.length}</button>
-        <button className={tab === 'quotes' ? 'active' : ''} onClick={() => setTab('quotes')}>Quotes {quotes.length}</button>
-        <button className={tab === 'kindle' ? 'active' : ''} onClick={() => setTab('kindle')}>Kindle {reviewItems.length}</button>
+        <button className={tab === 'books' ? 'active' : ''} onClick={() => { setTab('books'); setShowCreate(false); }}>Books {books.length}</button>
+        <button className={tab === 'quotes' ? 'active' : ''} onClick={() => { setTab('quotes'); setShowCreate(false); }}>Quotes {quotes.length}</button>
+        <button className={tab === 'kindle' ? 'active' : ''} onClick={() => { setTab('kindle'); setShowCreate(false); }}>Kindle {reviewItems.length}</button>
       </div>
 
       {err && <p className="dash-error">{err}</p>}
+      {loading && <LibrarySkeleton/>}
 
-      {tab === 'books' && (
+      {!loading && tab === 'books' && (
         <BooksTab
           books={books}
           status={bookStatus}
           detail={bookDetail}
+          showCreate={showCreate}
           selected={selectedBook}
           title={bookTitle}
           author={bookAuthor}
@@ -286,14 +309,16 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
             setSelectedQuote(id);
             onNavigate('library', `quote:${id}`);
           }}
+          onRequestCreate={() => setShowCreate(true)}
         />
       )}
 
-      {tab === 'quotes' && (
+      {!loading && tab === 'quotes' && (
         <QuotesTab
           quotes={quotes}
           detail={quoteDetail}
           selected={selectedQuote}
+          showCreate={showCreate}
           text={quoteText}
           sourceType={quoteSourceType}
           sourceRef={quoteSourceRef}
@@ -310,15 +335,17 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
           onCreate={createQuote}
           onThoughtText={setThoughtText}
           onAddThought={addThought}
+          onRequestCreate={() => setShowCreate(true)}
         />
       )}
 
-      {tab === 'kindle' && (
+      {!loading && tab === 'kindle' && (
         <KindleTab
           fileRef={fileRef}
           result={importResult}
           busy={importBusy}
           reviewItems={reviewItems}
+          showCreate={showCreate}
           onImport={importKindle}
           onRetry={retryReview}
           onDismiss={dismissReview}
@@ -329,14 +356,15 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
 }
 
 function BooksTab({
-  books, status, detail, selected, title, author, lookup, highlightText,
+  books, status, detail, selected, showCreate, title, author, lookup, highlightText,
   onStatus, onSelect, onTitle, onAuthor, onLookup, onCreate, onPatch,
-  onRefresh, onHighlightText, onAddHighlight, onQuote,
+  onRefresh, onHighlightText, onAddHighlight, onQuote, onRequestCreate,
 }: {
   books: BookSummary[];
   status: BookStatus | 'all';
   detail: BookDetail | null;
   selected: string | null;
+  showCreate: boolean;
   title: string;
   author: string;
   lookup: boolean;
@@ -352,19 +380,25 @@ function BooksTab({
   onHighlightText: (value: string) => void;
   onAddHighlight: (e: FormEvent) => void;
   onQuote: (id: string) => void;
+  onRequestCreate: () => void;
 }) {
   return (
     <div className="library-layout">
       <section className="library-list-pane">
-        <form className="dash-inline-form library-create" onSubmit={onCreate}>
-          <input value={title} onChange={(e) => onTitle(e.target.value)} placeholder="Title"/>
-          <input value={author} onChange={(e) => onAuthor(e.target.value)} placeholder="Author"/>
-          <label className="library-check">
-            <input type="checkbox" checked={lookup} onChange={(e) => onLookup(e.target.checked)}/>
-            <span>lookup</span>
-          </label>
-          <button type="submit">add</button>
-        </form>
+        {showCreate && (
+          <section className="create-panel library-create-panel" aria-label="New book">
+            <div className="create-panel-title">New book</div>
+            <form className="dash-inline-form library-create" onSubmit={onCreate}>
+              <input value={title} onChange={(e) => onTitle(e.target.value)} placeholder="Title"/>
+              <input value={author} onChange={(e) => onAuthor(e.target.value)} placeholder="Author"/>
+              <label className="library-check">
+                <input type="checkbox" checked={lookup} onChange={(e) => onLookup(e.target.checked)}/>
+                <span>lookup metadata</span>
+              </label>
+              <button type="submit">Add book</button>
+            </form>
+          </section>
+        )}
         <div className="library-filter-row">
           {STATUSES.map((item) => (
             <button key={item} className={status === item ? 'active' : ''} onClick={() => void onStatus(item)}>
@@ -373,7 +407,7 @@ function BooksTab({
           ))}
         </div>
         {books.length === 0 ? (
-          <EmptyLine>No books yet.</EmptyLine>
+          <EmptyState action={{ label: '+ New book', onClick: onRequestCreate }}>No books yet. Add the first one from here.</EmptyState>
         ) : (
           <div className="library-card-grid">
             {books.map((book) => (
@@ -450,13 +484,14 @@ function BooksTab({
 }
 
 function QuotesTab({
-  quotes, detail, selected, text, sourceType, sourceRef, tags, thoughtText,
+  quotes, detail, selected, showCreate, text, sourceType, sourceRef, tags, thoughtText,
   onSelect, onText, onSourceType, onSourceRef, onTags, onCreate,
-  onThoughtText, onAddThought,
+  onThoughtText, onAddThought, onRequestCreate,
 }: {
   quotes: QuoteSummary[];
   detail: QuoteDetail | null;
   selected: string | null;
+  showCreate: boolean;
   text: string;
   sourceType: QuoteSourceType;
   sourceRef: string;
@@ -470,22 +505,28 @@ function QuotesTab({
   onCreate: (e: FormEvent) => void;
   onThoughtText: (value: string) => void;
   onAddThought: (e: FormEvent) => void;
+  onRequestCreate: () => void;
 }) {
   return (
     <div className="library-layout">
       <section className="library-list-pane">
-        <form className="library-quote-create" onSubmit={onCreate}>
-          <textarea value={text} onChange={(e) => onText(e.target.value)} placeholder="Quote text"/>
-          <div className="dash-inline-form">
-            <select value={sourceType} onChange={(e) => onSourceType(e.target.value as QuoteSourceType)}>
-              {SOURCE_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
-            </select>
-            <input value={sourceRef} onChange={(e) => onSourceRef(e.target.value)} placeholder="Source"/>
-            <input value={tags} onChange={(e) => onTags(e.target.value)} placeholder="Tags"/>
-            <button type="submit">save</button>
-          </div>
-        </form>
-        {quotes.length === 0 ? <EmptyLine>No quotes yet.</EmptyLine> : (
+        {showCreate && (
+          <section className="create-panel library-create-panel" aria-label="New quote">
+            <div className="create-panel-title">New quote</div>
+            <form className="library-quote-create" onSubmit={onCreate}>
+              <textarea value={text} onChange={(e) => onText(e.target.value)} placeholder="Quote text"/>
+              <div className="dash-inline-form">
+                <select value={sourceType} onChange={(e) => onSourceType(e.target.value as QuoteSourceType)}>
+                  {SOURCE_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+                <input value={sourceRef} onChange={(e) => onSourceRef(e.target.value)} placeholder="Source"/>
+                <input value={tags} onChange={(e) => onTags(e.target.value)} placeholder="Tags"/>
+                <button type="submit">Save quote</button>
+              </div>
+            </form>
+          </section>
+        )}
+        {quotes.length === 0 ? <EmptyState action={{ label: '+ New quote', onClick: onRequestCreate }}>No quotes yet. Capture one from scratch.</EmptyState> : (
           <div className="dash-list">
             {quotes.map((quote) => (
               <button
@@ -538,12 +579,13 @@ function QuotesTab({
 }
 
 function KindleTab({
-  fileRef, result, busy, reviewItems, onImport, onRetry, onDismiss,
+  fileRef, result, busy, reviewItems, showCreate, onImport, onRetry, onDismiss,
 }: {
   fileRef: RefObject<HTMLInputElement>;
   result: KindleImportResult | null;
   busy: boolean;
   reviewItems: KindleReviewItem[];
+  showCreate: boolean;
   onImport: (e: FormEvent) => void;
   onRetry: (item: KindleReviewItem) => Promise<void>;
   onDismiss: (item: KindleReviewItem) => Promise<void>;
@@ -551,10 +593,15 @@ function KindleTab({
   return (
     <div className="library-layout single">
       <section className="library-list-pane">
-        <form className="dash-inline-form library-import-form" onSubmit={onImport}>
-          <input ref={fileRef} type="file" accept=".txt,text/plain"/>
-          <button type="submit" disabled={busy}>{busy ? 'importing' : 'import'}</button>
-        </form>
+        {showCreate && (
+          <section className="create-panel library-create-panel" aria-label="Import Kindle highlights">
+            <div className="create-panel-title">Import Kindle highlights</div>
+            <form className="dash-inline-form library-import-form" onSubmit={onImport}>
+              <input ref={fileRef} type="file" accept=".txt,text/plain"/>
+              <button type="submit" disabled={busy}>{busy ? 'importing' : 'Import'}</button>
+            </form>
+          </section>
+        )}
         {result && (
           <div className="dash-tags">
             <span>{result.imported} imported</span>
@@ -563,7 +610,7 @@ function KindleTab({
           </div>
         )}
         <h2>Import review</h2>
-        {reviewItems.length === 0 ? <EmptyLine>No review items.</EmptyLine> : (
+        {reviewItems.length === 0 ? <EmptyState>No review items.</EmptyState> : (
           <div className="dash-list">
             {reviewItems.map((item) => (
               <div className="dash-card library-review-card" key={item.id}>
@@ -587,6 +634,32 @@ function KindleTab({
 
 function EmptyLine({ children }: { children: ReactNode }) {
   return <p className="dash-empty">{children}</p>;
+}
+
+function EmptyState({
+  children,
+  action,
+}: {
+  children: ReactNode;
+  action?: { label: string; onClick: () => void };
+}) {
+  return (
+    <div className="dash-empty-state">
+      <p>{children}</p>
+      {action && <button className="chip" type="button" onClick={action.onClick}>{action.label}</button>}
+    </div>
+  );
+}
+
+function LibrarySkeleton() {
+  return (
+    <div className="dash-skeleton library-skeleton" aria-label="Loading library">
+      <span/>
+      <span/>
+      <span/>
+      <span/>
+    </div>
+  );
 }
 
 function splitTags(value: string): string[] {
