@@ -60,6 +60,11 @@ class CaptureSettings(BaseSettings):
     router_timeout_s: int = 25
 
 
+class ServerSettings(BaseSettings):
+    """HTTP server trust-boundary config."""
+    allowed_origins: list[str] = Field(default_factory=list)
+
+
 class RemindersSettings(BaseSettings):
     """Config for reminder defaults and reminder engine cadence."""
     default_lead_minutes: int = 15
@@ -237,6 +242,7 @@ class Settings(BaseSettings):
     # Server
     host: str = Field(default="0.0.0.0", alias="MASTISK_HOST")
     port: int = Field(default=5555, alias="MASTISK_PORT")
+    server: ServerSettings = Field(default_factory=ServerSettings)
 
     # Claude
     claude_cmd: str = Field(default="claude", alias="CLAUDE_CMD")

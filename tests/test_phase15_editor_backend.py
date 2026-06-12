@@ -12,6 +12,21 @@ def _client(vault_tmp, data_tmp, db):
     return TestClient(create_app())
 
 
+def test_default_cors_blocks_drive_by_browser_origins_but_same_origin_still_works(
+    vault_tmp, data_tmp, db
+):
+    with _client(vault_tmp, data_tmp, db) as client:
+        same_origin = client.get("/api/health")
+        cross_origin = client.get(
+            "/api/health",
+            headers={"Origin": "https://evil.example"},
+        )
+
+    assert same_origin.status_code == 200
+    assert cross_origin.status_code == 200
+    assert "access-control-allow-origin" not in cross_origin.headers
+
+
 def test_attachment_upload_dedupes_and_returns_markdown(vault_tmp, data_tmp, db):
     with _client(vault_tmp, data_tmp, db) as client:
         first = client.post(

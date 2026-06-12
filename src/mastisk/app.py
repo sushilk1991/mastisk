@@ -51,6 +51,7 @@ from mastisk.routes import (
     tweet_route,
     vault_route,
 )
+from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.app")
 
@@ -73,6 +74,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
     app = FastAPI(
         title="Mastisk",
         version="0.1.0",
@@ -81,12 +83,18 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # single-user, private via Tailscale — wide-open is fine
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # Trust model: the PWA is served by this daemon and calls the API same-origin,
+    # so browsers do not need cross-origin API access. Non-browser local clients
+    # are not governed by CORS. The tunnel-exposed capture path is /api/capture,
+    # which has its own bearer-token check; raw vault/editor APIs must not be
+    # readable or writable by arbitrary web pages the user visits.
+    if settings.server.allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.server.allowed_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     app.include_router(articles.router, prefix="/api")
     app.include_router(attachments.router)
