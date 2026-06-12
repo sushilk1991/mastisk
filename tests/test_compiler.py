@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
 COMPILER_ENRICH_JSON = {
     "text": (
         "```json\n"
@@ -79,6 +78,16 @@ def _patch_intelligence(return_value=COMPILER_ENRICH_JSON):
         new_callable=AsyncMock,
         return_value=(return_value, "claude"),
     )
+
+
+def test_schema_guidance_requires_short_single_clause_titles():
+    """Compiler titles must stay digest-sized before the persist guard runs."""
+    from mastisk.agents.compiler import SCHEMA_MD
+
+    assert "single clause" in SCHEMA_MD
+    assert "70 characters" in SCHEMA_MD
+    assert "No subtitles" in SCHEMA_MD
+    assert "no em-dash appendages" in SCHEMA_MD
 
 
 def test_enrich_stub_overwrites_placeholder_in_place(compiler, db, vault_tmp):

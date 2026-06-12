@@ -34,7 +34,6 @@ import hashlib
 import json
 import logging
 import re
-from pathlib import Path
 
 from slugify import slugify
 
@@ -52,7 +51,7 @@ log = logging.getLogger("mastisk.synthesizer")
 # clusters' cached outputs. Cluster-hash dedup still applies, but a version
 # bump means we *could* decide to re-run historic clusters — we currently
 # don't, but the column is there for future replays.
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
 
 # PPR hyperparameters. Tuned for a small-to-medium wiki (hundreds of nodes).
 # On a larger graph we'd want to trim the adjacency to high-weight edges
@@ -101,6 +100,7 @@ Return a single JSON object in a ```json``` fenced block matching this shape:
 
 Rules:
 - "kind" MUST be "Synthesis". Do not emit any other kind.
+- "title" must be a single clause, max 70 characters. No subtitles or subtitle sentences; no em-dash appendages.
 - "id" and related ids must be kebab-case, ASCII, no spaces.
 - "related" SHOULD contain every cluster member you actually leaned on, with
   weights in [0,1]. Link back to each source article via a wiki-link span
@@ -536,8 +536,8 @@ class Synthesizer(Agent):
             "- Avoid high-level title nouns like layer, boundary, constraint, check,",
             "  gate, thread, pattern, or rule when a cluster-specific noun can carry",
             "  the title.",
-            "- Prefer one clear sentence. Use a two-sentence title only when the",
-            "  second sentence names a concrete consequence unique to this cluster.",
+            "- Title must be a single clause, max 70 characters.",
+            "- No subtitles or subtitle sentences; no em-dash appendages.",
             "",
             "Concrete title anchors available in this cluster:",
         ]
@@ -703,6 +703,7 @@ class Synthesizer(Agent):
             data["id"] = (slugify(title) or "synthesis")[:80]
         if not data.get("title"):
             data["title"] = data["id"].replace("-", " ").title()
+        data["title"] = q.clamp_generated_title(data["title"])
         data.setdefault("summary", "")
         data.setdefault("sections", [])
         # Clamp confidence / reading_minutes to the Compiler's ranges.

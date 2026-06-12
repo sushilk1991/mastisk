@@ -52,6 +52,7 @@ Return a single JSON object in a ```json``` fenced block, matching this shape:
 
 Rules:
 - If the source isn't relevant to the user's interests (see their profile above), set "skip": true and "skip_reason": "...".
+- "title" must be a single clause, max 70 characters. No subtitles or subtitle sentences; no em-dash appendages.
 - "id" and slugs must be kebab-case, ASCII, no spaces.
 - Weight in [0, 1]. Confidence in [0, 1] — your subjective calibration of how solid this page is.
 - Never invent sources you didn't see. Never hallucinate URLs.
@@ -263,6 +264,7 @@ class Compiler(Agent):
 
     def _persist_article(self, data: dict, *, source_id: str | None) -> None:
         article_id = data["id"]
+        data["title"] = q.clamp_generated_title(data.get("title") or article_id)
         slug = slugify(data["title"])[:80] or article_id
         vault_path = self._vault_path_for(data["kind"], slug)
 

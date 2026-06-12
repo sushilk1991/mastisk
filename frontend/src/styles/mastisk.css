@@ -1154,6 +1154,9 @@ a { color: inherit; }
   font-family: var(--serif); font-size: 26px; line-height: 1.2;
   font-weight: 500; margin: 0 0 10px;
   cursor: pointer;
+  overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 .thread-title:hover { color: var(--accent); }
 .thread-body { font-family: var(--serif); font-size: 16px; line-height: 1.55; color: var(--fg-mute); margin: 0 0 14px; }

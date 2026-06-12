@@ -16,6 +16,7 @@ from typing import Any
 from mastisk.paths import db_path
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+MAX_GENERATED_ARTICLE_TITLE_CHARS = 90
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -26,6 +27,22 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     return conn
+
+
+def clamp_generated_title(
+    title: str, *, max_chars: int = MAX_GENERATED_ARTICLE_TITLE_CHARS
+) -> str:
+    """Cap generated article titles at a word boundary before persistence."""
+    clean = str(title or "").strip()
+    if len(clean) <= max_chars:
+        return clean
+    suffix = "..."
+    hard_limit = max_chars - len(suffix)
+    clipped = clean[:hard_limit].rstrip()
+    boundary = clipped.rfind(" ")
+    if boundary >= max(24, hard_limit // 2):
+        clipped = clipped[:boundary].rstrip()
+    return clipped.rstrip(" ,;:-") + suffix
 
 
 def init_schema(conn: sqlite3.Connection | None = None) -> None:
@@ -616,6 +633,9 @@ def upsert_article(conn: sqlite3.Connection, art: dict) -> None:
     # hero_image_url uses COALESCE-on-update so a recompile doesn't wipe a
     # hero set by an earlier ingest pass. Pass an empty string (not None) to
     # explicitly clear it if that's ever needed.
+    title = art["title"]
+    if art.get("updated_by") in {"Compiler", "Synthesizer"}:
+        title = clamp_generated_title(title)
     conn.execute(
         """INSERT INTO articles (id, kind, title, slug, aka_json, summary, body_md,
                                  confidence, reading_minutes, updated_by, vault_path,
@@ -633,7 +653,7 @@ def upsert_article(conn: sqlite3.Connection, art: dict) -> None:
         {
             "id": art["id"],
             "kind": art["kind"],
-            "title": art["title"],
+            "title": title,
             "slug": art.get("slug", art["id"]),
             "aka_json": json.dumps(art.get("aka", [])),
             "summary": art.get("summary", ""),
@@ -877,7 +897,9 @@ def vault_tree(conn: sqlite3.Connection) -> list[dict]:
 
 def user_info(conn: sqlite3.Connection) -> dict:
     """Pull a personalized label from identity.md + live counts for the sidebar pill."""
-    import getpass, re
+    import getpass
+    import re
+
     from mastisk.paths import self_dir
 
     # Name: prefer first bullet under `## Role` in identity.md, else OS user, else "You".
@@ -1099,12 +1121,15 @@ def search_articles(conn: sqlite3.Connection, q: str, *, limit: int = 20) -> lis
     return [dict(r) for r in rows]
 
 
-_STOPWORDS = frozenset("""
-a an and are as at be but by do does for from how i if in is it its of on
-or that the their them then there they this to was were what when where
-which who why will with you your me my our us me what's that's there's
-about know knows tell show please
-""".split())
+_STOPWORDS = frozenset([
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "do", "does",
+    "for", "from", "how", "i", "if", "in", "is", "it", "its", "of", "on",
+    "or", "that", "the", "their", "them", "then", "there", "they", "this",
+    "to", "was", "were", "what", "when", "where", "which", "who", "why",
+    "will", "with", "you", "your", "me", "my", "our", "us", "me",
+    "what's", "that's", "there's", "about", "know", "knows", "tell",
+    "show", "please",
+])
 
 
 def _fts_escape(q: str) -> str:

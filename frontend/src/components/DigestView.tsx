@@ -145,6 +145,7 @@ function ThreadCard({
       </div>
       <h2
         className="thread-title"
+        title={thread.title}
         onClick={() => thread.article_id && onNavigate('article', thread.article_id)}
       >
         {thread.title}
