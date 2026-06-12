@@ -52,14 +52,14 @@ Return a single JSON object in a ```json``` fenced block, matching this shape:
 
 Rules:
 - If the source isn't relevant to the user's interests (see their profile above), set "skip": true and "skip_reason": "...".
-- "title" must be a single clause, max 70 characters. No subtitles or subtitle sentences; no em-dash appendages.
+- "title" must be a single clause, max __TITLE_MAX_CHARS__ characters. No subtitles or subtitle sentences; no em-dash appendages.
 - "id" and slugs must be kebab-case, ASCII, no spaces.
 - Weight in [0, 1]. Confidence in [0, 1] — your subjective calibration of how solid this page is.
 - Never invent sources you didn't see. Never hallucinate URLs.
 - Write body text in HTML. Use <em> for emphasis, <span class="link" data-target="slug"> for cross-references.
 - Match the user's writing style from their profile.
 - "open" sections are ANALYTICAL threads the article leaves unresolved — genuine conceptual loose ends a reader would still be thinking about. NEVER use "open" to flag missing metadata ("what's the publish date?", "who is the author?", "what's his role?", "when was this written?"). If you lacked a fact, leave the field empty; do not convert metadata gaps into open questions. If the source has no genuine analytical loose ends, omit the "Open questions" section entirely.
-"""
+""".replace("__TITLE_MAX_CHARS__", str(q.MAX_GENERATED_ARTICLE_TITLE_CHARS))
 
 
 class Compiler(Agent):

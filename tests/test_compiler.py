@@ -83,9 +83,10 @@ def _patch_intelligence(return_value=COMPILER_ENRICH_JSON):
 def test_schema_guidance_requires_short_single_clause_titles():
     """Compiler titles must stay digest-sized before the persist guard runs."""
     from mastisk.agents.compiler import SCHEMA_MD
+    from mastisk.db.queries import MAX_GENERATED_ARTICLE_TITLE_CHARS
 
     assert "single clause" in SCHEMA_MD
-    assert "70 characters" in SCHEMA_MD
+    assert f"{MAX_GENERATED_ARTICLE_TITLE_CHARS} characters" in SCHEMA_MD
     assert "No subtitles" in SCHEMA_MD
     assert "no em-dash appendages" in SCHEMA_MD
 

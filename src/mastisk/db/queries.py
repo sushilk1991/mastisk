@@ -16,7 +16,7 @@ from typing import Any
 from mastisk.paths import db_path
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-MAX_GENERATED_ARTICLE_TITLE_CHARS = 90
+MAX_GENERATED_ARTICLE_TITLE_CHARS = 70
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -42,7 +42,7 @@ def clamp_generated_title(
     boundary = clipped.rfind(" ")
     if boundary >= max(24, hard_limit // 2):
         clipped = clipped[:boundary].rstrip()
-    return clipped.rstrip(" ,;:-") + suffix
+    return clipped.rstrip(" ,;:-.") + suffix
 
 
 def init_schema(conn: sqlite3.Connection | None = None) -> None:

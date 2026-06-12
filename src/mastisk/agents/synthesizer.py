@@ -100,7 +100,7 @@ Return a single JSON object in a ```json``` fenced block matching this shape:
 
 Rules:
 - "kind" MUST be "Synthesis". Do not emit any other kind.
-- "title" must be a single clause, max 70 characters. No subtitles or subtitle sentences; no em-dash appendages.
+- "title" must be a single clause, max __TITLE_MAX_CHARS__ characters. No subtitles or subtitle sentences; no em-dash appendages.
 - "id" and related ids must be kebab-case, ASCII, no spaces.
 - "related" SHOULD contain every cluster member you actually leaned on, with
   weights in [0,1]. Link back to each source article via a wiki-link span
@@ -110,7 +110,7 @@ Rules:
   in the cluster below.
 - Do NOT summarise each article separately — that's already done per-article.
   Find the *thread*, the shared pattern, or the tension between them.
-"""
+""".replace("__TITLE_MAX_CHARS__", str(q.MAX_GENERATED_ARTICLE_TITLE_CHARS))
 
 
 _CRITIC_TEMPLATE = """You are grading a Synthesis article written by a less capable model. The
@@ -536,7 +536,7 @@ class Synthesizer(Agent):
             "- Avoid high-level title nouns like layer, boundary, constraint, check,",
             "  gate, thread, pattern, or rule when a cluster-specific noun can carry",
             "  the title.",
-            "- Title must be a single clause, max 70 characters.",
+            f"- Title must be a single clause, max {q.MAX_GENERATED_ARTICLE_TITLE_CHARS} characters.",
             "- No subtitles or subtitle sentences; no em-dash appendages.",
             "",
             "Concrete title anchors available in this cluster:",

@@ -5,6 +5,8 @@ def test_generated_article_title_is_truncated_before_storage(db):
     """Generated article titles over the storage cap are shortened deterministically."""
     from mastisk.db import queries as q
 
+    assert q.MAX_GENERATED_ARTICLE_TITLE_CHARS == 70
+
     long_title = (
         "MTG Bench Found Models Judge a Turn Better Than They Play One. "
         "Everywhere Else This Week, the Judging Job Was Being Reassigned "
@@ -28,7 +30,7 @@ def test_generated_article_title_is_truncated_before_storage(db):
     row = db.execute("SELECT title FROM articles WHERE id='too-long'").fetchone()
     assert row is not None
     assert row["title"].endswith("...")
-    assert len(row["title"]) <= 90
+    assert len(row["title"]) <= q.MAX_GENERATED_ARTICLE_TITLE_CHARS
     assert row["title"] == (
-        "MTG Bench Found Models Judge a Turn Better Than They Play One. Everywhere Else This..."
+        "MTG Bench Found Models Judge a Turn Better Than They Play One..."
     )

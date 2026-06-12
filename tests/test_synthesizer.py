@@ -81,6 +81,7 @@ def test_title_guidance_requires_cluster_specific_titles():
 def test_title_guidance_requires_short_single_clause_titles():
     """Synthesis titles must not become whole headline paragraphs."""
     from mastisk.agents.synthesizer import _SCHEMA_MD, Synthesizer
+    from mastisk.db.queries import MAX_GENERATED_ARTICLE_TITLE_CHARS
 
     guidance = Synthesizer._render_title_guidance([
         {"title": "Digital Age Assurance Act"},
@@ -88,6 +89,6 @@ def test_title_guidance_requires_short_single_clause_titles():
 
     contract = f"{_SCHEMA_MD}\n{guidance}"
     assert "single clause" in contract
-    assert "70 characters" in contract
+    assert f"{MAX_GENERATED_ARTICLE_TITLE_CHARS} characters" in contract
     assert "No subtitles" in contract
     assert "no em-dash appendages" in contract
