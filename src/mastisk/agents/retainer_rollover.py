@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from mastisk.editing import is_user_editing
 from mastisk.file_locks import host_file_lock
 from mastisk.markdown_sections import append_to_section, section_line_numbers
 from mastisk.paths import vault_dir
@@ -53,6 +54,12 @@ def retainer_rollover(
         if project.get("type") != "retainer" or project.get("status") != "active":
             continue
         path = vault_dir() / project["path"]
+        if is_user_editing(path):
+            log.info(
+                "retainer_rollover: %s is user-editing locked, retrying next tick",
+                project["path"],
+            )
+            continue
         with host_file_lock(path):
             parsed = parse_project_file(path)
             if parsed["type"] != "retainer" or parsed["status"] != "active":

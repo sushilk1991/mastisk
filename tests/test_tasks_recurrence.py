@@ -147,6 +147,58 @@ def test_scheduled_only_recurrence_tick_materializes_once_across_days(
         assert row["recurrence_materialized_key"] == f"{uid}:2026-06-10:daily"
 
 
+def test_recurrence_tick_skips_locked_host_and_retries_after_unlock(
+    vault_tmp, data_tmp, db
+):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        created = client.post(
+            "/api/tasks",
+            json={
+                "text": "Plan tomorrow",
+                "scheduled": "2026-06-10",
+                "recurrence": "daily",
+            },
+        )
+        assert created.status_code == 201, created.text
+        uid = created.json()["uid"]
+        rel_path = created.json()["host_path"]
+        host_path = vault_tmp / rel_path
+
+    host_path.write_text(
+        host_path.read_text(encoding="utf-8").replace("- [ ] Plan tomorrow", "- [x] Plan tomorrow"),
+        encoding="utf-8",
+    )
+
+    from mastisk.editing import lock_path, unlock_path
+    from mastisk.tasks.recurrence import recurrence_tick
+    from mastisk.tasks.sync import scan_task_hosts
+
+    scan_task_hosts([host_path])
+    lock_path(rel_path)
+
+    now = datetime(2026, 6, 11, 0, 10, tzinfo=ZoneInfo("UTC"))
+    assert recurrence_tick(now=now) == 0
+    assert host_path.read_text(encoding="utf-8").count("Plan tomorrow") == 1
+    row = db.execute(
+        "SELECT recurrence_materialized_key FROM tasks WHERE uid = ?",
+        (uid,),
+    ).fetchone()
+    assert row["recurrence_materialized_key"] is None
+
+    unlock_path(rel_path)
+
+    assert recurrence_tick(now=now) == 1
+    assert host_path.read_text(encoding="utf-8").count("Plan tomorrow") == 2
+    row = db.execute(
+        "SELECT recurrence_materialized_key FROM tasks WHERE uid = ?",
+        (uid,),
+    ).fetchone()
+    assert row["recurrence_materialized_key"] == f"{uid}:2026-06-10:daily"
+
+
 def test_recurrence_tick_materializes_when_first_called_late(vault_tmp, data_tmp, db):
     from datetime import datetime
     from zoneinfo import ZoneInfo

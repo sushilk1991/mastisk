@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import calendar
 import json
+import logging
 import re
 from datetime import date, timedelta
 
 from mastisk.db.queries import connect
+from mastisk.editing import is_user_editing
 from mastisk.file_locks import host_file_lock
 from mastisk.markdown_sections import append_to_section
 from mastisk.paths import vault_dir
@@ -35,6 +37,8 @@ _WEEKDAYS = {
     "saturday": 5,
     "sunday": 6,
 }
+
+log = logging.getLogger("mastisk.tasks.recurrence")
 
 
 def next_due_date(rule: str | None, base_date: str) -> str | None:
@@ -137,6 +141,12 @@ def materialize_next_instance(uid: str, *, completed_on: str | None = None) -> b
     else:
         next_due = next_day
     next_scheduled = _next_scheduled_date(task, next_day) if has_scheduled else None
+    if is_user_editing(host):
+        log.info(
+            "recurrence_tick: %s is user-editing locked, retrying next tick",
+            task["host_path"],
+        )
+        return False
     next_uid = generate_uid()
     line = format_task_line(
         task["text"],

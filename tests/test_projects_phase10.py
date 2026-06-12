@@ -408,6 +408,52 @@ def test_retainer_rollover_idempotent_carries_forward_and_skips_inactive(
     ]
 
 
+def test_retainer_rollover_skips_locked_host_and_retries_after_unlock(
+    db, vault_tmp, data_tmp
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "UTC"\n', encoding="utf-8")
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.agents.retainer_rollover import retainer_rollover
+    from mastisk.editing import lock_path, unlock_path
+    from mastisk.projects.sync import scan_projects
+
+    path = vault_tmp / "projects" / "client.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\n"
+        "name: Client\n"
+        "type: retainer\n"
+        "status: active\n"
+        "recurring_items:\n"
+        "  - Monthly report\n"
+        "---\n\n"
+        "## Tasks\n"
+        "- [ ] Old followup 📅 2026-06-20 🆔 old1\n",
+        encoding="utf-8",
+    )
+    scan_projects([path])
+    lock_path("projects/client.md")
+
+    now = datetime(2026, 7, 5, 9, 0, tzinfo=UTC)
+    assert retainer_rollover(now=now, uid_factory=lambda: "new1") == 0
+    locked_text = path.read_text(encoding="utf-8")
+    assert "Monthly report" in locked_text
+    assert "### 2026-07" not in locked_text
+    assert "rolled_months" not in locked_text
+
+    unlock_path("projects/client.md")
+
+    assert retainer_rollover(now=now, uid_factory=lambda: "new1") == 1
+    unlocked_text = path.read_text(encoding="utf-8")
+    assert "### 2026-07" in unlocked_text
+    assert "- [ ] Monthly report 📅 2026-07-31 🆔 new1" in unlocked_text
+    assert "- [ ] Old followup 📅 2026-07-31 🆔 old1" in unlocked_text
+    assert "rolled_months" in unlocked_text
+
+
 def test_retainer_rollover_skips_bad_due_dates_and_continues(
     db, vault_tmp, data_tmp, caplog
 ):
