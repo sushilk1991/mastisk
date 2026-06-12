@@ -175,6 +175,35 @@ def test_prompt_validation_rejects_unknown_fields_and_skill_braces_are_safe(db, 
     assert resolve_prompt("notetaker", "classify", "DEFAULT {body}") == "DEFAULT {body}"
 
 
+def test_skill_name_braces_do_not_break_prompt_formatting(db, vault_tmp) -> None:
+    from mastisk.agents.registry import resolve_prompt
+    from mastisk.agents.studio import scan_agent_profiles
+
+    db.execute(
+        """INSERT INTO agent_skills (slug, path, name, tags_json, body)
+           VALUES ('brace-name', '_agents/skills/brace-name.md', 'Use {foo} style', '[]', 'Keep it direct.')"""
+    )
+    profile_dir = vault_tmp / "_agents"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "notetaker.md").write_text(
+        "---\n"
+        "enabled: true\n"
+        "skills:\n"
+        "  - brace-name\n"
+        "---\n\n"
+        "SAFE {identity} {article_ids} {body}\n",
+        encoding="utf-8",
+    )
+
+    scan_agent_profiles()
+
+    template = resolve_prompt("notetaker", "classify", "DEFAULT {body}")
+    rendered = template.format(identity="", article_ids="", body="")
+
+    assert "## Additional instructions (skill: Use {foo} style)" in rendered
+    assert "Keep it direct." in rendered
+
+
 def test_agent_routes_validate_placeholders_and_tag_skills(db, vault_tmp, data_tmp) -> None:
     with _client(vault_tmp, data_tmp, db) as client:
         skill = client.post(
@@ -223,6 +252,17 @@ def test_agent_routes_validate_placeholders_and_tag_skills(db, vault_tmp, data_t
         assert payload["slots"][0]["override"] == "OK {identity} {article_ids} {body}"
         assert payload["skills"][0]["slug"] == "sharper-json"
         assert (vault_tmp / "_agents" / "notetaker.md").exists()
+
+
+def test_agent_skill_create_rejects_unsafe_name_characters(db, vault_tmp, data_tmp) -> None:
+    with _client(vault_tmp, data_tmp, db) as client:
+        response = client.post(
+            "/api/agent-skills",
+            json={"slug": "brace-name", "name": "Use {foo} style", "body": "Keep it direct."},
+        )
+
+    assert response.status_code == 422, response.text
+    assert "name" in response.text
 
 
 def test_agent_skill_crud_routes_are_file_first(db, vault_tmp, data_tmp) -> None:
@@ -377,6 +417,8 @@ def test_frontend_agent_studio_static_contract() -> None:
     assert "cmd+enter" in source.lower() or "⌘↵" in source
     assert "override ignored" in source
     assert "Additional instructions" in source
+    assert "isSafeSkillName" in source
+    assert "letters, numbers, spaces" in source
     assert "agent_detail" in router
     assert "/agents/" in router
     assert ".agent-studio-layout" in css

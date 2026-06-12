@@ -163,6 +163,7 @@ function AgentDetailView({
   );
   const knownAgent = agents.find((agent) => agent.id === agentId);
   const status = detail?.agent.status ?? knownAgent?.status ?? 'idle';
+  const skillNameInvalid = Boolean(newSkillName.trim() && !isSafeSkillName(newSkillName.trim()));
 
   const save = useCallback(async () => {
     if (!detail || !primarySlot) return;
@@ -218,6 +219,10 @@ function AgentDetailView({
     const name = newSkillName.trim();
     const body = newSkillBody.trim();
     if (!name || !body) return;
+    if (!isSafeSkillName(name)) {
+      setSkillError('Skill name may only use letters, numbers, spaces, and . , ( ) & / -');
+      return;
+    }
     setSkillSaving(true);
     setSkillError(null);
     try {
@@ -365,13 +370,18 @@ function AgentDetailView({
                 value={newSkillName}
                 onChange={(event) => setNewSkillName(event.target.value)}
                 placeholder="+ New skill name"
+                aria-invalid={skillNameInvalid}
+                title="Skill names may only use letters, numbers, spaces, and . , ( ) & / -"
               />
+              {skillNameInvalid && (
+                <p className="agent-note">Skill names may only use letters, numbers, spaces, and . , ( ) & / -.</p>
+              )}
               <textarea
                 value={newSkillBody}
                 onChange={(event) => setNewSkillBody(event.target.value)}
                 placeholder="Reusable instruction snippet"
               />
-              <button className="chip" type="button" disabled={skillSaving || !newSkillName.trim() || !newSkillBody.trim()} onClick={addSkill}>
+              <button className="chip" type="button" disabled={skillSaving || skillNameInvalid || !newSkillName.trim() || !newSkillBody.trim()} onClick={addSkill}>
                 {skillSaving ? 'creating' : '+ New skill'}
               </button>
               {skillError && <p className="dash-error">{skillError}</p>}
@@ -518,4 +528,8 @@ function containsPlaceholder(text: string, name: string): boolean {
     text.includes(`{${name}.`) ||
     text.includes(`{${name}[`)
   );
+}
+
+function isSafeSkillName(name: string): boolean {
+  return /^[\w\s.,()&\/-]+$/u.test(name);
 }

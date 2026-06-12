@@ -20,6 +20,7 @@ from mastisk.routes.notes import atomic_write
 
 _WRITE_PROFILE_LOCK = threading.Lock()
 _WRITE_SKILL_LOCK = threading.Lock()
+_SAFE_SKILL_NAME_RE = re.compile(r"^[\w\s.,()&/-]+$")
 
 
 class PlaceholderValidationError(ValueError):
@@ -158,6 +159,7 @@ def parse_agent_profile_file(path: Path) -> dict[str, Any]:
 def parse_agent_skill_file(path: Path) -> dict[str, Any]:
     meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
     name = _clean_optional(meta.get("name")) or path.stem.replace("-", " ").title()
+    validate_skill_name(name)
     return {
         "slug": path.stem,
         "path": str(path.relative_to(vault_dir())),
@@ -225,6 +227,7 @@ def write_agent_skill(
     clean_name = _clean_optional(name)
     if not clean_name:
         raise ValueError("name must be non-blank")
+    validate_skill_name(clean_name)
     skill_slug = slugify(slug or clean_name)[:80] or "skill"
     path = agent_skills_dir() / f"{skill_slug}.md"
     with _WRITE_SKILL_LOCK, host_file_lock(path):
@@ -253,6 +256,11 @@ def delete_agent_skill(slug: str) -> bool:
         path.unlink(missing_ok=True)
     scan_agent_skills([path])
     return True
+
+
+def validate_skill_name(name: str) -> None:
+    if not _SAFE_SKILL_NAME_RE.fullmatch(name):
+        raise ValueError("name may only contain letters, numbers, spaces, and . , ( ) & / -")
 
 
 def profile_payload(agent_id: str) -> dict[str, Any]:

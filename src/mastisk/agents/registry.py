@@ -403,6 +403,7 @@ def _append_skill_bodies(prompt: str, skill_slugs: list[str], *, escape_braces: 
         name = str(row.get("name") or row["slug"])
         body = str(row.get("body") or "").strip()
         if escape_braces:
+            name = name.replace("{", "{{").replace("}", "}}")
             body = body.replace("{", "{{").replace("}", "}}")
         parts.append(f"\n\n## Additional instructions (skill: {name})\n{body}")
     return "".join(parts)
