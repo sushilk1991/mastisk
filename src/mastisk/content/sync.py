@@ -341,17 +341,19 @@ def _clean_status(value: object) -> str:
 
 def _require_kind(value: object) -> str:
     kind = _clean_kind(value)
-    if kind != value:
-        if not isinstance(value, str) or value.strip().lower() not in _VALID_KINDS:
-            raise ValueError("kind must be one of video, article, podcast, newsletter")
+    if kind != value and (
+        not isinstance(value, str) or value.strip().lower() not in _VALID_KINDS
+    ):
+        raise ValueError("kind must be one of video, article, podcast, newsletter")
     return kind
 
 
 def _require_status(value: object) -> str:
     status = _clean_status(value)
-    if status != value:
-        if not isinstance(value, str) or value.strip().lower() not in _VALID_STATUSES:
-            raise ValueError("status must be one of idea, outline, editing, waiting, published, done")
+    if status != value and (
+        not isinstance(value, str) or value.strip().lower() not in _VALID_STATUSES
+    ):
+        raise ValueError("status must be one of idea, outline, editing, waiting, published, done")
     return status
 
 
