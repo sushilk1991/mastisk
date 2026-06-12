@@ -196,7 +196,11 @@ def total_value(items: list[dict[str, Any]]) -> float:
 
 def dump_inventory_file(meta: dict[str, Any], body: str) -> str:
     frontmatter = yaml.safe_dump(
-        _clean_frontmatter(meta),
+        {
+            key: value
+            for key, value in meta.items()
+            if value is not None and value != ""
+        },
         sort_keys=False,
         default_flow_style=False,
         allow_unicode=True,
@@ -239,26 +243,6 @@ def _create_inventory_file_exclusive(name: str, acquired: str, content: str) -> 
         except FileExistsError:
             continue
     raise RuntimeError(f"unable to allocate inventory id for {name!r}")
-
-
-def _clean_frontmatter(meta: dict[str, Any]) -> dict[str, Any]:
-    clean: dict[str, Any] = {}
-    for key, value in meta.items():
-        if key == "photo":
-            clean[key] = _clean_text(value)
-        elif value is not None and value != "":
-            clean[key] = value
-    clean["name"] = _clean_text(clean.get("name")) or "Untitled item"
-    clean["status"] = _clean_status(clean.get("status"))
-    if clean.get("acquired") is not None:
-        clean["acquired"] = _clean_date(clean.get("acquired"))
-    if clean.get("value") is not None:
-        clean["value"] = _clean_value(clean.get("value"))
-    if clean.get("location") is not None:
-        clean["location"] = _clean_text(clean.get("location"))
-    clean.setdefault("photo", None)
-    return clean
-
 
 def _clean_text(value: object) -> str | None:
     if value in (None, ""):

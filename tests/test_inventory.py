@@ -130,6 +130,57 @@ def test_inventory_routes_create_patch_filter_and_export_csv(db, vault_tmp, data
         assert "2026-06-10,275.25,owned,Home office" in lines[1]
 
 
+def test_inventory_patch_preserves_hand_edited_unparseable_frontmatter(
+    db, vault_tmp, data_tmp
+):
+    from mastisk.inventory.sync import scan_inventory
+
+    path = vault_tmp / "inventory" / "hand-edited-item.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\n"
+        "name: Hand edited item\n"
+        "acquired: Christmas 2024\n"
+        "value: ~$200\n"
+        "status: lent\n"
+        "location: Closet\n"
+        "---\n\n"
+        "Keep the original receipt.\n",
+        encoding="utf-8",
+    )
+    scan_inventory()
+    before = path.read_text(encoding="utf-8")
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        patched = client.patch(
+            "/api/inventory/hand-edited-item",
+            json={"location": "Hall closet"},
+        )
+
+    assert patched.status_code == 200, patched.text
+    after = path.read_text(encoding="utf-8")
+    for line in (
+        "acquired: Christmas 2024",
+        "value: ~$200",
+        "status: lent",
+    ):
+        assert line in before
+        assert line in after
+    assert "location: Hall closet" in after
+    assert "photo:" not in after
+
+    row = db.execute(
+        """SELECT acquired, value, status, location
+           FROM inventory WHERE id = 'hand-edited-item'"""
+    ).fetchone()
+    assert dict(row) == {
+        "acquired": None,
+        "value": None,
+        "status": "owned",
+        "location": "Hall closet",
+    }
+
+
 def test_capture_inventory_command_creates_item_and_medium_confidence_triages(
     db, vault_tmp, data_tmp
 ):
