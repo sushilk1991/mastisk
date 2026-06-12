@@ -1,8 +1,4 @@
-"""Intelligence-bridge unit tests. Mocks each tier so no subprocess fires.
-
-See src/mastisk/bridges/intelligence.py — the Claude → Codex → Ollama
-fallback helper.
-"""
+"""Intelligence-bridge unit tests. Mocks each tier so no subprocess fires."""
 from __future__ import annotations
 
 import asyncio
@@ -45,68 +41,109 @@ def _patch_chain(*, claude=None, codex=None, ollama_chat=None):
     )
 
 
-def test_claude_success_returns_claude_label():
-    """Claude returns ok → result + 'claude' label, codex/ollama untouched."""
+def _reload_settings() -> None:
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+
+
+def test_default_provider_order_is_codex_first(data_tmp):
+    """The default chain starts with Codex, then falls back to Claude/Ollama."""
+    _reload_settings()
+    from mastisk.settings import get_settings
+
+    assert get_settings().intelligence.provider_order == [
+        "codex",
+        "claude",
+        "ollama",
+    ]
+
+
+def test_default_codex_success_returns_codex_label(data_tmp):
+    """Codex returns ok → result + 'codex' label, claude/ollama untouched."""
+    _reload_settings()
     from mastisk.bridges import intelligence
 
     p_claude, p_codex, p_ollama = _patch_chain(
-        claude={"text": "ok"},
-        # codex/ollama default to AssertionError-on-call
-    )
-    with p_claude as m_c, p_codex as m_x, p_ollama as m_o:
-        result, label = asyncio.run(intelligence.run_intelligence("hello"))
-    assert label == "claude"
-    assert result == {"text": "ok"}
-    assert m_c.call_count == 1
-    assert m_x.call_count == 0
-    assert m_o.call_count == 0
-
-
-def test_claude_fail_codex_success_returns_codex_label():
-    """Claude raises → Codex returns ok → result + 'codex' label."""
-    from mastisk.bridges import intelligence
-
-    p_claude, p_codex, p_ollama = _patch_chain(
-        claude=RuntimeError("claude down"),
-        codex={"text": "from-codex", "raw": "from-codex"},
+        codex={"text": "ok", "raw": "ok"},
+        # claude/ollama default to AssertionError-on-call
     )
     with p_claude as m_c, p_codex as m_x, p_ollama as m_o:
         result, label = asyncio.run(intelligence.run_intelligence("hello"))
     assert label == "codex"
-    assert result["text"] == "from-codex"
-    assert m_c.call_count == 1
+    assert result == {"text": "ok", "raw": "ok"}
     assert m_x.call_count == 1
+    assert m_c.call_count == 0
     assert m_o.call_count == 0
 
 
-def test_both_cloud_fail_falls_back_to_ollama():
-    """Claude + Codex raise → Ollama serves → 'ollama' label."""
+def test_codex_fail_claude_success_returns_claude_label(data_tmp):
+    """Codex raises → Claude returns ok → result + 'claude' label."""
+    _reload_settings()
     from mastisk.bridges import intelligence
 
     p_claude, p_codex, p_ollama = _patch_chain(
-        claude=RuntimeError("claude down"),
         codex=RuntimeError("codex down"),
+        claude={"text": "from-claude"},
+    )
+    with p_claude as m_c, p_codex as m_x, p_ollama as m_o:
+        result, label = asyncio.run(intelligence.run_intelligence("hello"))
+    assert label == "claude"
+    assert result["text"] == "from-claude"
+    assert m_x.call_count == 1
+    assert m_c.call_count == 1
+    assert m_o.call_count == 0
+
+
+def test_config_override_changes_provider_order(data_tmp):
+    """TOML order is authoritative; Ollama can be tried before cloud bridges."""
+    (data_tmp / "config.toml").write_text(
+        "[intelligence]\n"
+        'provider_order = ["ollama", "codex"]\n',
+        encoding="utf-8",
+    )
+    _reload_settings()
+    from mastisk.bridges import intelligence
+
+    p_claude, p_codex, p_ollama = _patch_chain(
         ollama_chat="ollama-text",
     )
     with p_claude as m_c, p_codex as m_x, p_ollama as m_o:
         result, label = asyncio.run(intelligence.run_intelligence("hello"))
     assert label == "ollama"
     assert result == {"text": "ollama-text", "raw": "ollama-text"}
-    assert m_c.call_count == 1
-    assert m_x.call_count == 1
     assert m_o.call_count == 1
+    assert m_x.call_count == 0
+    assert m_c.call_count == 0
 
 
-def test_all_three_fail_raises_with_full_chain_context():
-    """All three raise → IntelligenceUnavailable carries every tier's
-    error, not just the Ollama one. Without the chain context, operators
-    chase the wrong layer when (e.g.) Codex was the real root cause and
-    Ollama just happens to also be down."""
+def test_codex_and_claude_fail_falls_back_to_ollama(data_tmp):
+    """Codex + Claude raise → Ollama serves → 'ollama' label."""
+    _reload_settings()
     from mastisk.bridges import intelligence
 
     p_claude, p_codex, p_ollama = _patch_chain(
-        claude=RuntimeError("claude down"),
         codex=RuntimeError("codex down"),
+        claude=RuntimeError("claude down"),
+        ollama_chat="ollama-text",
+    )
+    with p_claude as m_c, p_codex as m_x, p_ollama as m_o:
+        result, label = asyncio.run(intelligence.run_intelligence("hello"))
+    assert label == "ollama"
+    assert result == {"text": "ollama-text", "raw": "ollama-text"}
+    assert m_x.call_count == 1
+    assert m_c.call_count == 1
+    assert m_o.call_count == 1
+
+
+def test_all_three_fail_raises_with_full_chain_context(data_tmp):
+    """All configured tiers failing includes every attempted root cause."""
+    _reload_settings()
+    from mastisk.bridges import intelligence
+
+    p_claude, p_codex, p_ollama = _patch_chain(
+        codex=RuntimeError("codex down"),
+        claude=RuntimeError("claude down"),
         ollama_chat=RuntimeError("ollama dead"),
     )
     with p_claude, p_codex, p_ollama, pytest.raises(
@@ -114,43 +151,78 @@ def test_all_three_fail_raises_with_full_chain_context():
     ) as exc_info:
         asyncio.run(intelligence.run_intelligence("hello"))
     msg = str(exc_info.value)
-    assert "claude=claude down" in msg
+    assert msg.startswith("all configured tiers failed: codex=codex down")
     assert "codex=codex down" in msg
+    assert "claude=claude down" in msg
     assert "ollama=ollama dead" in msg
 
 
-def test_timeout_kwarg_is_forwarded_to_each_tier():
+def test_timeout_kwarg_is_forwarded_to_each_tier(data_tmp):
     """timeout_s passes through as int to claude, float to codex.
 
     Pins the cast: codex_bridge.run_codex uses ``timeout`` (float seconds),
     not ``timeout_s``. Mismatching here would silently break the codex tier.
     """
+    _reload_settings()
     from mastisk.bridges import intelligence
 
     p_claude, p_codex, p_ollama = _patch_chain(
-        claude=RuntimeError("nope"),
-        codex={"text": "ok", "raw": "ok"},
+        codex=RuntimeError("nope"),
+        claude={"text": "ok"},
     )
     with p_claude as m_c, p_codex as m_x, p_ollama:
         asyncio.run(intelligence.run_intelligence("hi", timeout_s=42))
 
-    # Claude was called with the kwargs we expected.
-    assert m_c.call_args.kwargs.get("timeout_s") == 42
     # Codex got float(timeout_s) under the kw name 'timeout'.
     assert m_x.call_args.kwargs.get("timeout") == pytest.approx(42.0)
     assert isinstance(m_x.call_args.kwargs.get("timeout"), float)
+    # Claude was called with the kwargs we expected.
+    assert m_c.call_args.kwargs.get("timeout_s") == 42
 
 
-def test_classification_mode_is_forwarded_to_claude_only():
-    """Classification mode constrains Claude; fallback tiers keep their existing API."""
+def test_classification_mode_is_forwarded_to_claude_only(data_tmp):
+    """Classification constrains Claude; Codex has no equivalent bridge kwarg."""
+    _reload_settings()
     from mastisk.bridges import intelligence
 
     p_claude, p_codex, p_ollama = _patch_chain(
-        claude=RuntimeError("nope"),
-        codex={"text": "ok", "raw": "ok"},
+        codex=RuntimeError("nope"),
+        claude={"text": "ok"},
     )
     with p_claude as m_c, p_codex as m_x, p_ollama:
         asyncio.run(intelligence.run_intelligence("hi", classification=True))
 
-    assert m_c.call_args.kwargs["classification"] is True
     assert "classification" not in m_x.call_args.kwargs
+    assert m_c.call_args.kwargs["classification"] is True
+
+
+def test_classification_mode_keeps_codex_first(data_tmp):
+    """Classification requests still honor the configured provider order."""
+    _reload_settings()
+    from mastisk.bridges import intelligence
+
+    p_claude, p_codex, p_ollama = _patch_chain(
+        codex={"text": "ok", "raw": "ok"},
+    )
+    with p_claude as m_c, p_codex as m_x, p_ollama as m_o:
+        result, label = asyncio.run(
+            intelligence.run_intelligence("hi", classification=True)
+        )
+
+    assert label == "codex"
+    assert result["text"] == "ok"
+    assert "classification" not in m_x.call_args.kwargs
+    assert m_c.call_count == 0
+    assert m_o.call_count == 0
+
+
+def test_provider_order_rejects_unknown_provider(data_tmp):
+    (data_tmp / "config.toml").write_text(
+        "[intelligence]\n"
+        'provider_order = ["codex", "gemini"]\n',
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    with pytest.raises(ValueError, match="provider_order"):
+        reload_settings()

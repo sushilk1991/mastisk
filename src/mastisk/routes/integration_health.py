@@ -24,6 +24,7 @@ def integration_health() -> dict:
             "notify_failed_last_24h": _notify_failed_last_24h(),
         },
         "bridges": {
+            "provider_order": settings.intelligence.provider_order,
             "claude": {
                 "configured": bool(settings.claude_cmd),
                 "cmd": settings.claude_cmd,

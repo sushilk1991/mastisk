@@ -324,6 +324,7 @@ A classic PAT with `public_repo` scope gets you 5,000 GitHub API requests/hour. 
 
 - daily budget caps per agent (`[budget]`) — hard limits on how many jobs each agent runs per day
 - model selection (`embed_model`, `summarize_model_heavy`, `summarize_model_cheap`)
+- shared intelligence routing (`[intelligence] provider_order = ["codex", "claude", "ollama"]` by default)
 - subsystem-specific config blocks: `[notes]`, `[roundtable]`, `[github]`, `[blog]`, `[calendar]`
 
 Safe to edit. Mastisk reloads config on the next agent tick — no restart needed.

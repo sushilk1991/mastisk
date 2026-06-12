@@ -11,7 +11,9 @@ def test_integration_health_endpoint_shape(db, data_tmp, monkeypatch):
         "[calendar]\n"
         'client_id = "client"\n'
         'client_secret = "secret"\n'
-        'calendar_ids = ["primary"]\n',
+        'calendar_ids = ["primary"]\n'
+        "[intelligence]\n"
+        'provider_order = ["ollama", "codex"]\n',
         encoding="utf-8",
     )
     from mastisk.settings import reload_settings
@@ -37,8 +39,8 @@ def test_integration_health_endpoint_shape(db, data_tmp, monkeypatch):
         "notify_failed_last_24h": 1,
     }
     assert body["bridges"]["claude"]["configured"] is True
+    assert body["bridges"]["provider_order"] == ["ollama", "codex"]
     assert "ollama_chat" in body["bridges"]
     assert body["ingest"]["markitdown"] is True
     assert body["ingest"]["docling"] is False
     assert body["ingest"]["mlx_whisper"] is False
-

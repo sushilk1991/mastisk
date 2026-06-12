@@ -16,7 +16,7 @@ from typing import Any
 
 import tomli_w
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from mastisk.paths import config_path
@@ -58,6 +58,35 @@ class CaptureSettings(BaseSettings):
     bearer_token: str | None = None
     default_timezone: str = "America/Los_Angeles"
     router_timeout_s: int = 25
+
+
+class IntelligenceSettings(BaseSettings):
+    """Shared LLM fallback order for intelligence-heavy agents."""
+    provider_order: list[str] = Field(
+        default_factory=lambda: ["codex", "claude", "ollama"]
+    )
+
+    @field_validator("provider_order")
+    @classmethod
+    def _validate_provider_order(cls, value: list[str]) -> list[str]:
+        allowed = {"codex", "claude", "ollama"}
+        if not value:
+            raise ValueError("provider_order must include at least one provider")
+        seen: set[str] = set()
+        order: list[str] = []
+        for raw in value:
+            provider = raw.strip().lower() if isinstance(raw, str) else ""
+            if provider not in allowed:
+                raise ValueError(
+                    "provider_order entries must be one of: codex, claude, ollama"
+                )
+            if provider in seen:
+                raise ValueError(
+                    f"provider_order contains duplicate provider: {provider}"
+                )
+            seen.add(provider)
+            order.append(provider)
+        return order
 
 
 class ServerSettings(BaseSettings):
@@ -265,6 +294,8 @@ class Settings(BaseSettings):
     notes: NotesSettings = Field(default_factory=NotesSettings)
 
     capture: CaptureSettings = Field(default_factory=CaptureSettings)
+
+    intelligence: IntelligenceSettings = Field(default_factory=IntelligenceSettings)
 
     reminders: RemindersSettings = Field(default_factory=RemindersSettings)
 
