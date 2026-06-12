@@ -234,6 +234,66 @@ def test_task_routes_validate_due_and_emit_time_marker(client, vault_tmp):
     assert "📅 2026-06-10 ⏰ 14:00" in host_text
 
 
+def test_task_create_queues_default_due_reminder_for_future_due(
+    client, db, data_tmp
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "Asia/Kolkata"\n'
+        "[reminders]\ndefault_lead_minutes = 30\n",
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+
+    created = client.post(
+        "/api/tasks",
+        json={"text": "Pay rent", "due": "2099-01-01"},
+    )
+
+    assert created.status_code == 201, created.text
+    task = created.json()
+    row = db.execute(
+        """SELECT entity_id, fire_at, lead_minutes, status, title, body
+           FROM reminders
+           WHERE entity_type = 'task' AND kind = 'task_due'""",
+    ).fetchone()
+    assert dict(row) == {
+        "entity_id": task["uid"],
+        "fire_at": "2098-12-31T18:00:00+00:00",
+        "lead_minutes": 30,
+        "status": "pending",
+        "title": "Task due",
+        "body": "Pay rent",
+    }
+
+
+def test_task_create_skips_due_reminder_when_default_fire_time_is_past(
+    client, db, data_tmp
+):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text(
+        '[capture]\ndefault_timezone = "Asia/Kolkata"\n'
+        "[reminders]\ndefault_lead_minutes = 30\n",
+        encoding="utf-8",
+    )
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+
+    created = client.post(
+        "/api/tasks",
+        json={"text": "Already stale", "due": "2000-01-01"},
+    )
+
+    assert created.status_code == 201, created.text
+    count = db.execute(
+        "SELECT COUNT(*) AS n FROM reminders WHERE entity_type = 'task'",
+    ).fetchone()["n"]
+    assert count == 0
+
+
 def test_task_toggle_missing_file_line_returns_404_and_refreshes_mirror(client, vault_tmp, db):
     created = client.post("/api/tasks", json={"text": "Delete me"})
     assert created.status_code == 201, created.text

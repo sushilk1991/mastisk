@@ -1,15 +1,20 @@
 """Tasks API."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from mastisk.agents.reminder_engine import reconcile_task_due_reminders
+from mastisk.agents.reminder_engine import (
+    create_task_due_reminder,
+    reconcile_task_due_reminders,
+)
 from mastisk.paths import vault_dir
 from mastisk.projects.sync import get_project
+from mastisk.settings import get_settings
 from mastisk.tasks.parser import normalize_date_or_datetime
 from mastisk.tasks.sync import (
     TaskLineMissingError,
@@ -22,6 +27,7 @@ from mastisk.tasks.sync import (
 )
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+log = logging.getLogger("mastisk.routes.tasks")
 
 
 class TaskCreate(BaseModel):
@@ -83,7 +89,7 @@ async def list_tasks_endpoint(
 @router.post("", status_code=201)
 async def create_task_endpoint(req: TaskCreate) -> dict:
     host = _host_for_task(req.project, req.host_path)
-    return append_task_to_host(
+    row = append_task_to_host(
         host,
         text=req.text,
         due=req.due,
@@ -93,6 +99,21 @@ async def create_task_endpoint(req: TaskCreate) -> dict:
         tags=req.tags,
         links=req.links,
     )
+    try:
+        create_task_due_reminder(
+            task_uid=row["uid"],
+            task_text=row["text"],
+            due=row.get("due"),
+            lead_minutes=(
+                get_settings().reminders.default_lead_minutes
+                if row.get("due")
+                else None
+            ),
+            no_reminder=False,
+        )
+    except Exception:
+        log.exception("task create reminder creation failed for task %s", row["uid"])
+    return row
 
 
 @router.patch("/{uid}/toggle")
