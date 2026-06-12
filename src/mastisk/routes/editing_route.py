@@ -21,6 +21,17 @@ class EditingPath(BaseModel):
         return value.strip()
 
 
+class EditingTokenPath(EditingPath):
+    token: str = Field(min_length=1)
+
+    @field_validator("token")
+    @classmethod
+    def _token_non_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("token must be non-blank")
+        return value.strip()
+
+
 @router.post("/lock")
 async def lock_editing_endpoint(req: EditingPath) -> dict[str, str]:
     try:
@@ -30,16 +41,16 @@ async def lock_editing_endpoint(req: EditingPath) -> dict[str, str]:
 
 
 @router.post("/unlock")
-async def unlock_editing_endpoint(req: EditingPath) -> dict[str, str]:
+async def unlock_editing_endpoint(req: EditingTokenPath) -> dict[str, str]:
     try:
-        return unlock_path(req.path)
+        return unlock_path(req.path, req.token)
     except VaultPathError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.put("/heartbeat")
-async def heartbeat_editing_endpoint(req: EditingPath) -> dict[str, str]:
+async def heartbeat_editing_endpoint(req: EditingTokenPath) -> dict[str, str]:
     try:
-        return heartbeat_path(req.path)
+        return heartbeat_path(req.path, req.token)
     except VaultPathError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

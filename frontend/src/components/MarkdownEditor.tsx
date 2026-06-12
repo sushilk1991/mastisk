@@ -105,6 +105,7 @@ export function MarkdownEditor({
   const split = useMemo(() => splitFrontmatter(initialContent), [initialContent]);
   const [body, setBody] = useState(split.body);
   const bodyRef = useRef(split.body);
+  const editingTokenRef = useRef<string | null>(null);
   const [currentBaseSha256, setCurrentBaseSha256] = useState(baseSha256);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -120,16 +121,24 @@ export function MarkdownEditor({
 
   useEffect(() => {
     let active = true;
-    api.editing.lock(path).catch((e) => {
-      if (active) setErr(e instanceof Error ? e.message : 'lock failed');
-    });
+    editingTokenRef.current = null;
+    api.editing.lock(path)
+      .then((locked) => {
+        if (active) editingTokenRef.current = locked.token;
+      })
+      .catch((e) => {
+        if (active) setErr(e instanceof Error ? e.message : 'lock failed');
+      });
     const heartbeat = window.setInterval(() => {
-      api.editing.heartbeat(path).catch(() => void 0);
+      const token = editingTokenRef.current;
+      if (token) api.editing.heartbeat(path, token).catch(() => void 0);
     }, 30000);
     return () => {
       active = false;
       window.clearInterval(heartbeat);
-      api.editing.unlock(path).catch(() => void 0);
+      const token = editingTokenRef.current;
+      editingTokenRef.current = null;
+      if (token) api.editing.unlock(path, token).catch(() => void 0);
     };
   }, [path]);
 

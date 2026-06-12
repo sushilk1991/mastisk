@@ -288,11 +288,14 @@ CREATE INDEX IF NOT EXISTS idx_notes_deleted_at         ON notes(deleted_at);
 -- Full-file editor sessions. Advisory only: blocks agent rewrites while a
 -- user has the rich editor open; user-initiated appends still use file locks.
 CREATE TABLE IF NOT EXISTS editing_locks (
-  path         TEXT PRIMARY KEY,
+  path         TEXT NOT NULL,
+  token        TEXT NOT NULL,
   locked_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  heartbeat_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  heartbeat_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(path, token)
 );
 
+CREATE INDEX IF NOT EXISTS idx_editing_locks_path ON editing_locks(path);
 CREATE INDEX IF NOT EXISTS idx_editing_locks_heartbeat ON editing_locks(heartbeat_at);
 
 -- External-content FTS5 over user notes. Same shape as articles_fts: rowid in

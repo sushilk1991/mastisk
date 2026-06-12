@@ -435,7 +435,7 @@ def test_retainer_rollover_skips_locked_host_and_retries_after_unlock(
         encoding="utf-8",
     )
     scan_projects([path])
-    lock_path("projects/client.md")
+    token = lock_path("projects/client.md")["token"]
 
     now = datetime(2026, 7, 5, 9, 0, tzinfo=UTC)
     assert retainer_rollover(now=now, uid_factory=lambda: "new1") == 0
@@ -444,7 +444,7 @@ def test_retainer_rollover_skips_locked_host_and_retries_after_unlock(
     assert "### 2026-07" not in locked_text
     assert "rolled_months" not in locked_text
 
-    unlock_path("projects/client.md")
+    unlock_path("projects/client.md", token)
 
     assert retainer_rollover(now=now, uid_factory=lambda: "new1") == 1
     unlocked_text = path.read_text(encoding="utf-8")

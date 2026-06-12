@@ -261,23 +261,23 @@ export const api = {
   },
 
   editing: {
-    lock: (path: string): Promise<{ path: string; status: string }> =>
-      j<{ path: string; status: string }>(`${BASE}/editing/lock`, {
+    lock: (path: string): Promise<{ path: string; token: string; status: string }> =>
+      j<{ path: string; token: string; status: string }>(`${BASE}/editing/lock`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path }),
       }),
-    unlock: (path: string): Promise<{ path: string; status: string }> =>
-      j<{ path: string; status: string }>(`${BASE}/editing/unlock`, {
+    unlock: (path: string, token: string): Promise<{ path: string; token: string; status: string }> =>
+      j<{ path: string; token: string; status: string }>(`${BASE}/editing/unlock`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path }),
+        body: JSON.stringify({ path, token }),
       }),
-    heartbeat: (path: string): Promise<{ path: string; status: string }> =>
-      j<{ path: string; status: string }>(`${BASE}/editing/heartbeat`, {
+    heartbeat: (path: string, token: string): Promise<{ path: string; token: string; status: string }> =>
+      j<{ path: string; token: string; status: string }>(`${BASE}/editing/heartbeat`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path }),
+        body: JSON.stringify({ path, token }),
       }),
   },
 

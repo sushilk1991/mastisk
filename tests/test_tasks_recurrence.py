@@ -177,7 +177,7 @@ def test_recurrence_tick_skips_locked_host_and_retries_after_unlock(
     from mastisk.tasks.sync import scan_task_hosts
 
     scan_task_hosts([host_path])
-    lock_path(rel_path)
+    token = lock_path(rel_path)["token"]
 
     now = datetime(2026, 6, 11, 0, 10, tzinfo=ZoneInfo("UTC"))
     assert recurrence_tick(now=now) == 0
@@ -188,7 +188,7 @@ def test_recurrence_tick_skips_locked_host_and_retries_after_unlock(
     ).fetchone()
     assert row["recurrence_materialized_key"] is None
 
-    unlock_path(rel_path)
+    unlock_path(rel_path, token)
 
     assert recurrence_tick(now=now) == 1
     assert host_path.read_text(encoding="utf-8").count("Plan tomorrow") == 2

@@ -102,16 +102,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     """Idempotent column additions for pre-existing DBs. CREATE TABLE IF NOT
     EXISTS handles fresh installs; this handles upgrade-in-place."""
     _add_column_if_missing(conn, "articles", "hero_image_url", "TEXT")
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS editing_locks (
-             path         TEXT PRIMARY KEY,
-             locked_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-             heartbeat_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-           )"""
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_editing_locks_heartbeat ON editing_locks(heartbeat_at)"
-    )
+    _ensure_editing_locks_schema(conn)
     _add_column_if_missing(conn, "sources", "hero_image_url", "TEXT")
     _add_column_if_missing(conn, "sources", "media_json", "TEXT")
     _add_column_if_missing(conn, "sources", "duration_sec", "INTEGER")
@@ -206,6 +197,36 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     _ensure_fts_initialized(conn, "notes_fts", "notes")
     _ensure_fts_initialized(conn, "blog_posts_fts", "blog_posts")
     _add_column_if_missing(conn, "blog_posts", "content_slug", "TEXT")
+
+
+def _ensure_editing_locks_schema(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("PRAGMA table_info(editing_locks)").fetchall()
+    columns = {row["name"] for row in rows}
+    pk_columns = [
+        row["name"] for row in sorted(rows, key=lambda row: row["pk"]) if row["pk"]
+    ]
+    if rows and (
+        columns != {"path", "token", "locked_at", "heartbeat_at"}
+        or pk_columns != ["path", "token"]
+    ):
+        # Editor locks are ephemeral advisory rows. Rebuilding avoids carrying
+        # path-only locks that cannot prove tab ownership into the token schema.
+        conn.execute("DROP TABLE IF EXISTS editing_locks")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS editing_locks (
+             path         TEXT NOT NULL,
+             token        TEXT NOT NULL,
+             locked_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+             heartbeat_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY(path, token)
+           )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_editing_locks_path ON editing_locks(path)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_editing_locks_heartbeat ON editing_locks(heartbeat_at)"
+    )
 
 
 def _ensure_library_schema(conn: sqlite3.Connection) -> None:

@@ -75,30 +75,52 @@ def test_attachment_upload_enforces_type_size_and_safe_serving(vault_tmp, data_t
     assert traversal.status_code in {404, 422}
 
 
-def test_editing_lock_unlock_is_idempotent_and_expires(vault_tmp, data_tmp, db):
+def test_editing_locks_are_owned_by_session_token_and_refcounted(
+    vault_tmp, data_tmp, db
+):
     from mastisk.editing import is_user_editing
 
     path = "journal/2026-06-11.md"
     with _client(vault_tmp, data_tmp, db) as client:
-        locked = client.post("/api/editing/lock", json={"path": path})
-        heartbeat = client.put("/api/editing/heartbeat", json={"path": path})
-        assert locked.status_code == 200, locked.text
+        first_lock = client.post("/api/editing/lock", json={"path": path})
+        second_lock = client.post("/api/editing/lock", json={"path": path})
+        assert first_lock.status_code == 200, first_lock.text
+        assert second_lock.status_code == 200, second_lock.text
+        first_token = first_lock.json()["token"]
+        second_token = second_lock.json()["token"]
+        assert first_token != second_token
+
+        heartbeat = client.put(
+            "/api/editing/heartbeat",
+            json={"path": path, "token": second_token},
+        )
+        missing_token = client.put("/api/editing/heartbeat", json={"path": path})
         assert heartbeat.status_code == 200, heartbeat.text
+        assert missing_token.status_code == 422, missing_token.text
         assert is_user_editing(path)
 
-        first_unlock = client.post("/api/editing/unlock", json={"path": path})
-        second_unlock = client.post("/api/editing/unlock", json={"path": path})
+        first_unlock = client.post(
+            "/api/editing/unlock",
+            json={"path": path, "token": first_token},
+        )
+        assert first_unlock.status_code == 200, first_unlock.text
+        assert is_user_editing(path)
 
-    assert first_unlock.status_code == 200, first_unlock.text
+        second_unlock = client.post(
+            "/api/editing/unlock",
+            json={"path": path, "token": second_token},
+        )
+
     assert second_unlock.status_code == 200, second_unlock.text
     assert not is_user_editing(path)
 
     with _client(vault_tmp, data_tmp, db) as client:
-        client.post("/api/editing/lock", json={"path": path})
+        locked = client.post("/api/editing/lock", json={"path": path})
+        token = locked.json()["token"]
     stale = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
     db.execute(
-        "UPDATE editing_locks SET heartbeat_at = ? WHERE path = ?",
-        (stale, path),
+        "UPDATE editing_locks SET heartbeat_at = ? WHERE path = ? AND token = ?",
+        (stale, path, token),
     )
 
     assert not is_user_editing(path)

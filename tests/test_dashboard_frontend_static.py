@@ -105,6 +105,7 @@ def test_editor_affordances_cover_journal_notes_projects_and_content():
 
 def test_editor_api_client_exposes_vault_lock_and_attachment_routes():
     source = Path("frontend/src/api.ts").read_text(encoding="utf-8")
+    editor = Path("frontend/src/components/MarkdownEditor.tsx").read_text(encoding="utf-8")
 
     assert "vaultFile:" in source
     assert "editing:" in source
@@ -113,3 +114,7 @@ def test_editor_api_client_exposes_vault_lock_and_attachment_routes():
     assert "base_sha256" in source
     assert "/editing/heartbeat" in source
     assert "/attachments" in source
+    assert "token: string" in source
+    assert "editingTokenRef" in editor
+    assert "api.editing.heartbeat(path, token)" in editor
+    assert "api.editing.unlock(path, token)" in editor
