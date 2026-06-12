@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,9 @@ from mastisk.routes.notes import persist_note_capture
 ALLOWED_DOCUMENT_EXTS = {"pdf", "docx", "pptx", "xlsx", "html", "txt", "md", "epub"}
 AUDIO_EXTS = {"m4a", "mp3", "wav", "aac"}
 MAX_EXTRACTION_CHARS = 24000
+CAPTURE_AUDIO_TMP_SUBDIR = "capture-audio"
+CAPTURE_AUDIO_STALE_SECONDS = 24 * 60 * 60
+CAPTURE_AUDIO_SWEEP_LIMIT = 200
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,10 @@ Return exactly one JSON object:
 
 
 async def process_document_job(job_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    existing_result = payload.get("result")
+    if isinstance(existing_result, dict):
+        return existing_result
+
     source_path = Path(str(payload["source_path"]))
     if not source_path.exists():
         raise RuntimeError(f"document source missing: {source_path}")
@@ -152,9 +160,84 @@ def store_vault_source_file(raw: bytes, filename: str) -> tuple[Path, str, str]:
 def store_temp_audio_file(raw: bytes, filename: str) -> tuple[Path, str]:
     ext = extension_for_filename(filename)
     digest = hashlib.sha256(raw).hexdigest()
-    target = tmp_dir() / "capture-audio" / f"{digest[:12]}-{uuid.uuid4().hex}.{ext}"
+    target = tmp_dir() / CAPTURE_AUDIO_TMP_SUBDIR / f"{digest[:12]}-{uuid.uuid4().hex}.{ext}"
     atomic_write_bytes(target, raw)
     return target, digest
+
+
+def cleanup_temp_audio_file(audio_path: str | Path | None) -> None:
+    if not audio_path:
+        return
+    path = Path(audio_path)
+    try:
+        capture_dir = (tmp_dir() / CAPTURE_AUDIO_TMP_SUBDIR).resolve(strict=False)
+        resolved = path.resolve(strict=False)
+    except OSError:
+        return
+    if resolved.parent != capture_dir:
+        return
+    with contextlib.suppress(FileNotFoundError):
+        path.unlink()
+
+
+def sweep_stale_capture_audio_files(
+    *,
+    max_age_seconds: int = CAPTURE_AUDIO_STALE_SECONDS,
+    limit: int = CAPTURE_AUDIO_SWEEP_LIMIT,
+) -> int:
+    capture_dir = tmp_dir() / CAPTURE_AUDIO_TMP_SUBDIR
+    if not capture_dir.exists():
+        return 0
+    active_paths = _active_capture_audio_paths()
+    now = time.time()
+    candidates: list[tuple[float, Path]] = []
+    for path in capture_dir.iterdir():
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            continue
+        if not path.is_file():
+            continue
+        candidates.append((stat.st_mtime, path))
+    removed = 0
+    for mtime, path in sorted(candidates, key=lambda item: item[0])[: max(0, limit)]:
+        if now - mtime < max_age_seconds:
+            continue
+        try:
+            resolved = str(path.resolve(strict=False))
+        except OSError:
+            continue
+        if resolved in active_paths:
+            continue
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+            removed += 1
+    return removed
+
+
+def _active_capture_audio_paths() -> set[str]:
+    active: set[str] = set()
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT payload_json
+               FROM jobs
+               WHERE agent = 'ingest'
+                 AND kind = 'capture_audio'
+                 AND status IN ('queued', 'running')"""
+        ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        audio_path = payload.get("audio_path")
+        if not audio_path:
+            continue
+        try:
+            active.add(str(Path(str(audio_path)).resolve(strict=False)))
+        except OSError:
+            continue
+    return active
 
 
 def extension_for_filename(filename: str | None) -> str:

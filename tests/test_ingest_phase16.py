@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
 import types
 from unittest.mock import AsyncMock
 
@@ -187,6 +189,72 @@ def test_document_ingest_queues_job_and_job_writes_inbox_note(
     assert note["escalation_state"] == "none"
 
 
+def test_document_requeue_after_result_does_not_duplicate_companion_note(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    from mastisk.agents.base import enqueue
+    from mastisk.agents.ingest import IngestAgent
+    from mastisk.ingest.converters import ConversionResult
+    from mastisk.ingest.pipeline import (
+        SourceMetadata,
+        process_document_job,
+        store_vault_source_file,
+    )
+
+    source_path, rel_path, digest = store_vault_source_file(b"pdf", "report.pdf")
+    payload = {
+        "source_path": str(source_path),
+        "source_rel_path": rel_path,
+        "filename": "report.pdf",
+        "content_type": "application/pdf",
+        "sha256": digest,
+    }
+    job_id = enqueue("ingest", "document", payload)
+    IngestAgent()._mark_running(job_id)
+    convert_calls = 0
+
+    def fake_convert(path):
+        nonlocal convert_calls
+        convert_calls += 1
+        return ConversionResult(markdown="# Converted\n\nBody", provider="markitdown")
+
+    monkeypatch.setattr("mastisk.ingest.pipeline.convert_document", fake_convert)
+    monkeypatch.setattr(
+        "mastisk.ingest.pipeline.extract_source_metadata",
+        AsyncMock(
+            return_value=SourceMetadata(
+                summary="A useful report.",
+                tags=["reports"],
+                entities=[],
+                source_type="report",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "mastisk.ingest.pipeline.emit_ingest_feed",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("crash after result")),
+    )
+
+    with pytest.raises(RuntimeError, match="crash after result"):
+        asyncio.run(process_document_job(job_id, payload))
+
+    job_payload = json.loads(
+        db.execute("SELECT payload_json FROM jobs WHERE id = ?", (job_id,)).fetchone()["payload_json"]
+    )
+    assert job_payload["result"]["note_id"]
+    assert db.execute("SELECT COUNT(*) AS n FROM notes WHERE source='document'").fetchone()["n"] == 1
+
+    db.execute("UPDATE jobs SET status='queued', started_at=NULL WHERE id = ?", (job_id,))
+    monkeypatch.setattr("mastisk.ingest.pipeline.emit_ingest_feed", lambda *args, **kwargs: None)
+
+    asyncio.run(IngestAgent().run_once())
+
+    job = db.execute("SELECT status, error FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    assert dict(job) == {"status": "done", "error": None}
+    assert db.execute("SELECT COUNT(*) AS n FROM notes WHERE source='document'").fetchone()["n"] == 1
+    assert convert_calls == 1
+
+
 def test_document_ingest_enforces_type_size_and_converter_503(
     vault_tmp, data_tmp, db, monkeypatch
 ):
@@ -311,6 +379,155 @@ def test_capture_audio_job_transcribes_and_routes_as_phone(vault_tmp, data_tmp, 
     routed.assert_awaited_once_with("remember to call Sam", source="phone", ts=None)
     assert job["status"] == "done"
     assert job["result"]["capture"]["type"] == "task"
+
+
+def test_capture_audio_requeue_after_result_does_not_duplicate_capture(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    from mastisk.agents.base import enqueue
+    from mastisk.agents.ingest import IngestAgent
+    from mastisk.ingest.pipeline import store_temp_audio_file
+    from mastisk.integrations.whisper import TranscriptResult
+
+    audio_path, digest = store_temp_audio_file(b"audio", "note.m4a")
+    payload = {
+        "audio_path": str(audio_path),
+        "filename": "note.m4a",
+        "sha256": digest,
+    }
+    job_id = enqueue("ingest", "capture_audio", payload)
+    agent = IngestAgent()
+    agent._mark_running(job_id)
+
+    monkeypatch.setattr(
+        "mastisk.agents.ingest.whisper.transcribe",
+        AsyncMock(return_value=TranscriptResult(text="remember Sam", segments=[])),
+    )
+    routed = AsyncMock(return_value={
+        "id": 123,
+        "type": "task",
+        "destination": "journal/2026-06-12.md",
+        "needs_triage": False,
+    })
+    monkeypatch.setattr("mastisk.agents.ingest.route_and_persist_capture", routed)
+    monkeypatch.setattr(
+        "mastisk.agents.ingest.emit_ingest_feed",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("crash after result")),
+    )
+
+    with pytest.raises(RuntimeError, match="crash after result"):
+        asyncio.run(agent._handle_capture_audio(job_id, payload))
+
+    job_payload = json.loads(
+        db.execute("SELECT payload_json FROM jobs WHERE id = ?", (job_id,)).fetchone()["payload_json"]
+    )
+    assert job_payload["result"]["capture"]["type"] == "task"
+
+    db.execute("UPDATE jobs SET status='queued', started_at=NULL WHERE id = ?", (job_id,))
+    monkeypatch.setattr("mastisk.agents.ingest.emit_ingest_feed", lambda *args, **kwargs: None)
+
+    asyncio.run(IngestAgent().run_once())
+
+    job = db.execute("SELECT status, error FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    assert dict(job) == {"status": "done", "error": None}
+    assert routed.await_count == 1
+    assert not audio_path.exists()
+
+
+def test_capture_audio_requeue_after_temp_cleanup_uses_payload_result(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    from mastisk.agents.base import enqueue
+    from mastisk.agents.ingest import IngestAgent
+    from mastisk.ingest.pipeline import store_temp_audio_file
+
+    audio_path, digest = store_temp_audio_file(b"audio", "note.m4a")
+    audio_path.unlink()
+    job_id = enqueue(
+        "ingest",
+        "capture_audio",
+        {
+            "audio_path": str(audio_path),
+            "filename": "note.m4a",
+            "sha256": digest,
+            "result": {
+                "transcript": "remember Sam",
+                "capture": {
+                    "id": 123,
+                    "type": "task",
+                    "destination": "journal/2026-06-12.md",
+                    "needs_triage": False,
+                },
+            },
+        },
+    )
+    routed = AsyncMock()
+    monkeypatch.setattr("mastisk.agents.ingest.route_and_persist_capture", routed)
+
+    asyncio.run(IngestAgent().run_once())
+
+    job = db.execute("SELECT status, error FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    assert dict(job) == {"status": "done", "error": None}
+    routed.assert_not_awaited()
+
+
+def test_capture_audio_failed_job_removes_temp_file(vault_tmp, data_tmp, db, monkeypatch):
+    from mastisk.agents.base import enqueue
+    from mastisk.agents.ingest import IngestAgent
+    from mastisk.ingest.pipeline import store_temp_audio_file
+    from mastisk.integrations.whisper import TranscriptResult
+
+    audio_path, digest = store_temp_audio_file(b"audio", "note.m4a")
+    enqueue(
+        "ingest",
+        "capture_audio",
+        {
+            "audio_path": str(audio_path),
+            "filename": "note.m4a",
+            "sha256": digest,
+        },
+    )
+    monkeypatch.setattr(
+        "mastisk.agents.ingest.whisper.transcribe",
+        AsyncMock(return_value=TranscriptResult(text=" ", segments=[])),
+    )
+
+    asyncio.run(IngestAgent().run_once())
+
+    assert not audio_path.exists()
+    job = db.execute("SELECT status, error FROM jobs WHERE agent='ingest'").fetchone()
+    assert job["status"] == "failed"
+    assert "empty transcript" in job["error"]
+
+
+def test_capture_audio_sweep_removes_only_stale_orphan_temp_files(
+    vault_tmp, data_tmp, db
+):
+    from mastisk.agents.base import enqueue
+    from mastisk.ingest.pipeline import store_temp_audio_file, sweep_stale_capture_audio_files
+
+    stale_orphan, _ = store_temp_audio_file(b"old", "old.m4a")
+    stale_active, digest = store_temp_audio_file(b"active", "active.m4a")
+    recent_orphan, _ = store_temp_audio_file(b"recent", "recent.m4a")
+    old_time = time.time() - 7200
+    os.utime(stale_orphan, (old_time, old_time))
+    os.utime(stale_active, (old_time, old_time))
+    enqueue(
+        "ingest",
+        "capture_audio",
+        {
+            "audio_path": str(stale_active),
+            "filename": "active.m4a",
+            "sha256": digest,
+        },
+    )
+
+    removed = sweep_stale_capture_audio_files(max_age_seconds=3600)
+
+    assert removed == 1
+    assert not stale_orphan.exists()
+    assert stale_active.exists()
+    assert recent_orphan.exists()
 
 
 def test_capture_audio_duplicate_uploads_get_independent_temp_files(
