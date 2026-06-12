@@ -149,7 +149,7 @@ export function MarkdownEditor({
     try {
       const saved = await api.vaultFile.write(
         path,
-        `${split.frontmatter}${bodyRef.current}`,
+        joinFrontmatterAndBody(split.frontmatter, bodyRef.current),
         currentBaseSha256,
       );
       setCurrentBaseSha256(saved.content_sha256);
@@ -197,7 +197,7 @@ export function MarkdownEditor({
           <section className="markdown-editor-pane preview">
             <div className="dash-mini-h">Preview</div>
             <div className="markdown-preview">
-              <ReactMarkdown components={markdownPreviewComponents}>{body}</ReactMarkdown>
+              <MarkdownBlock source={body}/>
             </div>
           </section>
         </div>
@@ -214,6 +214,10 @@ const markdownPreviewComponents: Components = {
     return <img {...props} src={previewAttachmentUrl(src)} />;
   },
 };
+
+export function MarkdownBlock({ source }: { source: string }) {
+  return <ReactMarkdown components={markdownPreviewComponents}>{source}</ReactMarkdown>;
+}
 
 function previewAttachmentUrl(url: string | undefined): string | undefined {
   if (!url?.startsWith('attachments/')) return url;
@@ -315,15 +319,23 @@ function firstAttachmentFile(files: FileList | null | undefined): File | null {
   return files[0] ?? null;
 }
 
+function joinFrontmatterAndBody(frontmatter: string, body: string): string {
+  if (!frontmatter || !body) return `${frontmatter}${body}`;
+  if (frontmatter.endsWith('\n\n')) return `${frontmatter}${body}`;
+  if (frontmatter.endsWith('\n')) return `${frontmatter}\n${body}`;
+  return `${frontmatter}\n\n${body}`;
+}
+
 function splitFrontmatter(content: string): SplitContent {
   if (!content.startsWith('---\n')) {
     return { frontmatter: '', body: content };
   }
-  const close = content.indexOf('\n---', 4);
-  if (close < 0) {
+  const close = /^---[ \t]*\r?$/m.exec(content.slice(4));
+  if (!close) {
     return { frontmatter: '', body: content };
   }
-  let end = close + '\n---'.length;
+  let end = 4 + close.index + close[0].length;
+  if (content[end] === '\r') end += 1;
   if (content[end] === '\n') end += 1;
   if (content[end] === '\n') end += 1;
   return {

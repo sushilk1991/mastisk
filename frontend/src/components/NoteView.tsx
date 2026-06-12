@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import type { Note, View } from '../types';
-import { VaultMarkdownEditor, type VaultEditorTarget } from './MarkdownEditor';
+import { MarkdownBlock, VaultMarkdownEditor, type VaultEditorTarget } from './MarkdownEditor';
 
 interface Props {
   noteId: number;
@@ -104,13 +104,9 @@ export function NoteView({ noteId, onNavigate }: Props) {
           </ul>
         </section>
       )}
-      <pre
-        style={{
-          whiteSpace: 'pre-wrap', fontFamily: 'var(--mono)', fontSize: 14,
-          background: 'var(--bg-soft, transparent)',
-          border: '1px solid var(--border)', borderRadius: 6, padding: 12,
-        }}
-      >{note.body}</pre>
+      <div className="markdown-preview note-markdown-body">
+        <MarkdownBlock source={note.body}/>
+      </div>
       <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
         <button onClick={() => onNavigate('notes')}>← all notes</button>
         <button onClick={() => setEditorTarget({ path: note.path, title: note.summary ?? note.slug })}>

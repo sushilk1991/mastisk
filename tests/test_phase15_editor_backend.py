@@ -5,6 +5,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 
@@ -67,14 +68,22 @@ def test_attachment_upload_enforces_type_size_and_safe_serving(vault_tmp, data_t
                 "/api/attachments",
                 files={"file": ("note.txt", b"hello", "text/plain")},
             )
-            traversal = client.get("/api/attachments/../secret.png")
     finally:
         (data_tmp / "config.toml").unlink(missing_ok=True)
         reload_settings()
 
+    from mastisk.routes.attachments import get_attachment
+
+    try:
+        asyncio.run(get_attachment("../secret.png"))
+    except HTTPException as exc:
+        traversal_status = exc.status_code
+    else:
+        traversal_status = 200
+
     assert oversized.status_code == 413, oversized.text
     assert bad_type.status_code == 415, bad_type.text
-    assert traversal.status_code in {404, 422}
+    assert traversal_status == 404
 
 
 def test_editing_locks_are_owned_by_session_token_and_refcounted(
@@ -376,6 +385,29 @@ def test_vault_file_write_accepts_frontmatter_close_without_trailing_newline(
 
     assert response.status_code == 200, response.text
     assert path.read_text(encoding="utf-8").endswith("\n\nBody")
+
+
+def test_vault_file_write_rejects_frontmatter_mutation(db, vault_tmp, data_tmp):
+    path = vault_tmp / "journal" / "2026-06-11.md"
+    path.parent.mkdir(parents=True)
+    original = "---\nmood: 4\nenergy: 3\n---\n\n## Log\n"
+    edited_frontmatter = "---\nmood: 5\nenergy: 3\n---\n\n## Log\n- edited body\n"
+    path.write_text(original, encoding="utf-8")
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        loaded = client.get("/api/vault/file?path=journal/2026-06-11.md").json()
+        response = client.put(
+            "/api/vault/file",
+            json={
+                "path": "journal/2026-06-11.md",
+                "content": edited_frontmatter,
+                "base_sha256": loaded["content_sha256"],
+            },
+        )
+
+    assert response.status_code == 422, response.text
+    assert "frontmatter" in response.json()["detail"]
+    assert path.read_text(encoding="utf-8") == original
 
 
 def test_note_editor_save_reclassifies_after_unlock(db, vault_tmp, data_tmp):

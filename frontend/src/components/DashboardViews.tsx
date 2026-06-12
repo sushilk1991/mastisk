@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { api, FocusFullError } from '../api';
-import { VaultMarkdownEditor, type VaultEditorTarget } from './MarkdownEditor';
+import { MarkdownBlock, VaultMarkdownEditor, type VaultEditorTarget } from './MarkdownEditor';
 import type {
   CalendarToday, CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
   ChecklistTemplate, ContentDetail, ContentKind, ContentList, ContentStatus, ContentSummary, InventoryDetail, InventoryStatus, InventorySummary, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
@@ -2086,7 +2086,15 @@ function FactBlock({ facts }: { facts: Record<string, unknown> }) {
 function LogPreview({ body }: { body: string }) {
   const lines = sectionLines(parseMarkdownSections(body).Log).slice(-6).reverse();
   if (lines.length === 0) return <EmptyLine>No project log entries.</EmptyLine>;
-  return <div className="dash-list compact">{lines.map((line, idx) => <div key={`${line}-${idx}`} className="dash-row">{line}</div>)}</div>;
+  return (
+    <div className="dash-list compact">
+      {lines.map((line, idx) => (
+        <div key={`${line}-${idx}`} className="dash-row">
+          <MarkdownBlock source={line}/>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function SectionBlock({ title, body }: { title: string; body?: string }) {
@@ -2095,7 +2103,13 @@ function SectionBlock({ title, body }: { title: string; body?: string }) {
     <section className="dash-section nested">
       <h3 className="dash-mini-h">{title}</h3>
       {lines.length === 0 ? <EmptyLine>No {title.toLowerCase()} yet.</EmptyLine> : (
-        <div className="dash-list compact">{lines.map((line, idx) => <div key={`${line}-${idx}`} className="dash-row">{line}</div>)}</div>
+        <div className="dash-list compact">
+          {lines.map((line, idx) => (
+            <div key={`${line}-${idx}`} className="dash-row">
+              <MarkdownBlock source={line}/>
+            </div>
+          ))}
+        </div>
       )}
     </section>
   );

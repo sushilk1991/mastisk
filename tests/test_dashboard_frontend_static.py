@@ -79,6 +79,10 @@ def test_markdown_editor_uses_codemirror_and_protects_frontmatter():
     assert "baseSha256" in source
     assert "content_sha256" in source
     assert "function splitFrontmatter" in source
+    assert "indexOf('\\n---'" not in source
+    assert "^---[ \\t]*\\r?$" in source
+    assert "function joinFrontmatterAndBody" in source
+    assert "joinFrontmatterAndBody(split.frontmatter, bodyRef.current)" in source
     assert "frontmatter-readonly" in source
     assert "api.attachments.upload" in source
     assert "components={markdownPreviewComponents}" in source
@@ -101,6 +105,16 @@ def test_editor_affordances_cover_journal_notes_projects_and_content():
     assert "setEditorTarget({ path: note.path" in note
     assert "VaultMarkdownEditor" in dashboard
     assert "VaultMarkdownEditor" in note
+
+
+def test_read_views_render_attachments_with_shared_markdown_renderer():
+    dashboard = _dashboard_source()
+    note = Path("frontend/src/components/NoteView.tsx").read_text(encoding="utf-8")
+
+    assert "MarkdownBlock" in dashboard
+    assert "MarkdownBlock" in note
+    assert "<MarkdownBlock source={line}/>" in dashboard
+    assert "<MarkdownBlock source={note.body}/>" in note
 
 
 def test_editor_api_client_exposes_vault_lock_and_attachment_routes():

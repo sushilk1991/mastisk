@@ -89,6 +89,11 @@ def write_vault_file(req: VaultFileIn) -> dict[str, str | bool]:
                 status_code=409,
                 detail="vault file changed since editor opened",
             )
+        try:
+            if _frontmatter_block(req.content) != _frontmatter_block(current):
+                raise ValueError("frontmatter edits are not supported")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         atomic_write(target, req.content)
     content_sha256 = _sha256_text(req.content)
     try:
@@ -124,3 +129,12 @@ def _validate_frontmatter(content: str) -> None:
         raise ValueError("frontmatter is invalid YAML") from exc
     if not isinstance(parsed, dict):
         raise ValueError("frontmatter must be a mapping")
+
+
+def _frontmatter_block(content: str) -> str | None:
+    if not content.startswith("---\n"):
+        return None
+    close = re.search(r"(?m)^---[ \t]*$", content[4:])
+    if close is None:
+        raise ValueError("frontmatter is malformed")
+    return content[: 4 + close.end()]
