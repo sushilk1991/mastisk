@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -84,6 +85,30 @@ def test_scan_content_skips_malformed_yaml_and_triage_stays_available(
 
     assert r.status_code == 200, r.text
     assert [row["id"] for row in r.json()] == [f"content:{item['slug']}"]
+
+
+def test_create_content_atomic_write_failure_leaves_no_partial_file(
+    db, vault_tmp, monkeypatch
+):
+    from mastisk.content import sync as content_sync
+
+    def fail_atomic_write(target, content):
+        raise RuntimeError("simulated write failure")
+
+    monkeypatch.setattr(content_sync, "atomic_write", fail_atomic_write)
+
+    with pytest.raises(RuntimeError, match="simulated write failure"):
+        content_sync.create_content_file(
+            title="Crashy Draft",
+            kind="article",
+            outline="## Outline\n\n- This should never become canonical.",
+        )
+
+    assert list((vault_tmp / "content").glob("crashy-draft*.md")) == []
+    row = db.execute(
+        "SELECT COUNT(*) AS n FROM content_items WHERE slug LIKE 'crashy-draft%'"
+    ).fetchone()
+    assert row["n"] == 0
 
 
 def test_content_routes_create_filter_detail_patch_and_spawn_blog_draft(

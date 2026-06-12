@@ -348,8 +348,17 @@ def _create_content_file_exclusive(title: str, content: str) -> Path:
         if existing is not None:
             continue
         try:
-            with host_file_lock(path), path.open("x", encoding="utf-8") as handle:
-                handle.write(content)
+            with host_file_lock(path):
+                # Reserve the canonical slug with O_EXCL, then replace that
+                # empty reservation via atomic temp+rename so a failed write
+                # never leaves partial markdown as the source of truth.
+                with path.open("x", encoding="utf-8"):
+                    pass
+                try:
+                    atomic_write(path, content)
+                except Exception:
+                    path.unlink(missing_ok=True)
+                    raise
             return path
         except FileExistsError:
             continue
