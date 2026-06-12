@@ -161,6 +161,40 @@ async def test_route_capture_injects_identity_and_empty_phase3_context(data_tmp)
 
 
 @pytest.mark.asyncio
+async def test_route_capture_requests_fenced_json_and_parses_codex_prose(data_tmp):
+    cfg = data_tmp / "config.toml"
+    cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.capture.router import route_capture
+
+    response = (
+        {
+            "text": (
+                "Here is the routed capture.\n"
+                "```json\n"
+                + json.dumps(_llm_capture(type="note", body="codex parsed note"))
+                + "\n```\n"
+                "Done."
+            )
+        },
+        "codex",
+    )
+    with patch(
+        "mastisk.capture.router.intelligence.run_intelligence",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as run_mock:
+        capture = await route_capture("save this", source="pwa", ts=BASE_TS)
+
+    assert capture.type == "note"
+    assert capture.body == "codex parsed note"
+    prompt = run_mock.call_args.args[0]
+    assert "```json" in prompt
+
+
+@pytest.mark.asyncio
 async def test_route_capture_injects_existing_domains_and_projects(data_tmp, db):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "America/Los_Angeles"\n')

@@ -126,7 +126,8 @@ Text:
 {text}
 >>>
 
-Respond with a single JSON object only, matching this schema exactly:
+Respond with a single fenced ```json``` block containing one JSON object,
+matching this schema exactly:
 
 {{
   "type": "task|note|journal|project_update|routine_done|person|quote|inventory|content|inbox",
