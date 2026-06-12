@@ -1,7 +1,7 @@
 """Library API: books, quotes, and Kindle import."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
@@ -190,7 +190,7 @@ async def append_quote_thought_endpoint(quote_id: str, req: ThoughtCreate) -> di
 
 
 @router.post("/api/import/kindle")
-async def import_kindle_endpoint(file: UploadFile = File(...)) -> dict[str, int]:
+async def import_kindle_endpoint(file: Annotated[UploadFile, File(...)]) -> dict[str, int]:
     raw = await file.read()
     try:
         text = raw.decode("utf-8-sig")
