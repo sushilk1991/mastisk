@@ -105,7 +105,7 @@ export function NoteView({ noteId, onNavigate }: Props) {
         </section>
       )}
       <div className="markdown-preview note-markdown-body">
-        <MarkdownBlock source={note.body ?? ''}/>
+        <MarkdownBlock source={note.body}/>
       </div>
       <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
         <button onClick={() => onNavigate('notes')}>← all notes</button>

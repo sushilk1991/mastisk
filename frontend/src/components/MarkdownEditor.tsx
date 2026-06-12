@@ -215,8 +215,8 @@ const markdownPreviewComponents: Components = {
   },
 };
 
-export function MarkdownBlock({ source }: { source: string }) {
-  return <ReactMarkdown components={markdownPreviewComponents}>{source}</ReactMarkdown>;
+export function MarkdownBlock({ source }: { source?: string }) {
+  return <ReactMarkdown components={markdownPreviewComponents}>{source ?? ''}</ReactMarkdown>;
 }
 
 function previewAttachmentUrl(url: string | undefined): string | undefined {
