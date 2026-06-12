@@ -894,6 +894,7 @@ CREATE TABLE IF NOT EXISTS blog_posts (
   title           TEXT,                          -- null until status='done'
   theme           TEXT NOT NULL DEFAULT '',      -- '' when no theme was given
   window_days     INTEGER NOT NULL,              -- 7 | 14 | 30 | 90
+  content_slug    TEXT,                          -- originating content item for spawned drafts
   status          TEXT NOT NULL DEFAULT 'pending',  -- pending | running | done | failed
   model           TEXT,                          -- 'claude' | 'ollama' — populated at done
   tags_json       TEXT DEFAULT '[]',             -- JSON array of tags from Claude's output

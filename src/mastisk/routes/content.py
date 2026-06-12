@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from mastisk.agents.base import enqueue
 from mastisk.content.sync import (
     CONTENT_STATUSES,
+    blog_content_source,
     content_payload,
     create_content_file,
     list_content,
@@ -108,14 +109,16 @@ async def spawn_content_draft_endpoint(slug: str) -> dict[str, Any]:
         return {**existing, "reused": True}
     theme = _blog_theme(item)
     with connect() as conn:
-        blog_post_id = q.create_blog_post(conn, theme=theme, window_days=14)
+        blog_post_id = q.create_blog_post(
+            conn, theme=theme, window_days=14, content_slug=item["slug"],
+        )
     enqueue(
         "blog_writer",
         "draft",
         {
             "blog_post_id": blog_post_id,
             "content_slug": item["slug"],
-            "content_source": _blog_content_source(item),
+            "content_source": blog_content_source(item),
         },
     )
     return {"blog_post_id": blog_post_id, "status": "pending", "reused": False}
@@ -159,15 +162,3 @@ def _blog_theme(item: dict[str, Any]) -> str:
         return f"{item['title']} — {outline}"[:500]
     return str(item["title"])[:500]
 
-
-def _blog_content_source(item: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "slug": item["slug"],
-        "title": item["title"],
-        "kind": item["kind"],
-        "domain": item.get("domain"),
-        "channel": item.get("channel"),
-        "body": item.get("body") or item["title"],
-        "updated_at": item.get("updated_at"),
-        "path": item.get("path"),
-    }

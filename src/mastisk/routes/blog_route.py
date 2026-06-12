@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from mastisk.agents.base import enqueue
 from mastisk.agents.blog_writer import candidate_count
+from mastisk.content.sync import blog_content_source, content_payload
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import vault_dir
@@ -115,15 +116,15 @@ async def regenerate_blog_post_endpoint(bp_id: int) -> dict:
                 detail=f"cannot regenerate from status={bp['status']}",
             )
         # Jobs-queue precondition: refuse if a stale blog_writer job for this
-        # bp_id is still queued/running. Parameterizing on payload_json keeps
-        # us safe from the bp_id-in-substring false positives (spec §11).
-        target_payload = json.dumps({"blog_post_id": bp_id})
+        # bp_id is still queued/running. JSON extraction handles content-spawned
+        # payloads that carry seed fields beyond blog_post_id.
         in_flight = conn.execute(
             """SELECT 1 FROM jobs
                WHERE agent = 'blog_writer'
                  AND status IN ('queued', 'running')
-                 AND payload_json = ?""",
-            (target_payload,),
+                 AND json_valid(payload_json)
+                 AND json_extract(payload_json, '$.blog_post_id') = ?""",
+            (bp_id,),
         ).fetchone()
         if in_flight is not None:
             raise HTTPException(
@@ -137,7 +138,8 @@ async def regenerate_blog_post_endpoint(bp_id: int) -> dict:
             q.delete_blog_post_sources(conn, bp_id)
             q.reset_blog_post_for_regenerate(conn, bp_id)
 
-    enqueue("blog_writer", "draft", {"blog_post_id": bp_id})
+    payload = _regenerate_payload(bp)
+    enqueue("blog_writer", "draft", payload)
     return {"id": bp_id, "status": "pending"}
 
 
@@ -208,6 +210,22 @@ async def delete_blog_post_endpoint(bp_id: int) -> None:
 
 
 # ───── helpers ─────
+
+
+def _regenerate_payload(bp: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {"blog_post_id": bp["id"]}
+    content_slug = (bp.get("content_slug") or "").strip()
+    if not content_slug:
+        return payload
+    item = content_payload(content_slug)
+    if item is None:
+        raise HTTPException(
+            status_code=409,
+            detail="originating content item no longer exists",
+        )
+    payload["content_slug"] = item["slug"]
+    payload["content_source"] = blog_content_source(item)
+    return payload
 
 
 def _summary(row: dict) -> dict:

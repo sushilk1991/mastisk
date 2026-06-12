@@ -227,6 +227,31 @@ def test_regenerate_409_when_in_flight_job(client, db):
     assert r.status_code == 409
 
 
+def test_regenerate_409_when_content_spawned_job_in_flight(client, db):
+    """Content-spawned job payloads carry extra seed fields but still guard by bp_id."""
+    from mastisk.agents.base import enqueue
+    from mastisk.db.queries import create_blog_post, update_blog_post_done
+
+    bp_id = create_blog_post(db, theme="t", window_days=14, content_slug="content-seed")
+    update_blog_post_done(
+        db, bp_id=bp_id, slug="s", path="p", title="T", tags_json="[]",
+        model="claude", word_count=10, body_preview="pre",
+    )
+    enqueue(
+        "blog_writer",
+        "draft",
+        {
+            "blog_post_id": bp_id,
+            "content_slug": "content-seed",
+            "content_source": {"slug": "content-seed", "title": "Seed", "body": "Outline"},
+        },
+    )
+
+    r = client.post(f"/api/blog-posts/{bp_id}/regenerate")
+
+    assert r.status_code == 409
+
+
 def test_regenerate_409_when_pending(client, db):
     from mastisk.db.queries import create_blog_post
 
@@ -272,6 +297,54 @@ def test_regenerate_resets_row_and_clears_sources(client, db):
     assert any(
         _json.loads(j["payload_json"])["blog_post_id"] == bp_id for j in jobs
     )
+
+
+def test_regenerate_content_spawned_post_reenqueues_seed(client, db, vault_tmp):
+    """Regenerating a content-spawned post must not depend on recent sources."""
+    from mastisk.content.sync import create_content_file
+    from mastisk.db.queries import update_blog_post_done
+
+    item = create_content_file(
+        title="Local-first personal OS",
+        kind="article",
+        outline="## Outline\n\n- Files are the API.",
+    )
+
+    drafted = client.post(f"/api/content/{item['slug']}/draft")
+    assert drafted.status_code == 202, drafted.text
+    bp_id = drafted.json()["blog_post_id"]
+
+    row = db.execute("SELECT content_slug FROM blog_posts WHERE id=?", (bp_id,)).fetchone()
+    assert row["content_slug"] == item["slug"]
+
+    update_blog_post_done(
+        db, bp_id=bp_id, slug="s", path="p", title="T", tags_json="[]",
+        model="claude", word_count=10, body_preview="pre",
+    )
+    db.execute(
+        """UPDATE jobs
+           SET status='done', finished_at=CURRENT_TIMESTAMP
+           WHERE agent='blog_writer'
+             AND kind='draft'
+             AND json_extract(payload_json, '$.blog_post_id') = ?""",
+        (bp_id,),
+    )
+
+    regenerated = client.post(f"/api/blog-posts/{bp_id}/regenerate")
+    assert regenerated.status_code == 202, regenerated.text
+
+    jobs = db.execute(
+        """SELECT payload_json FROM jobs
+           WHERE agent='blog_writer' AND kind='draft'
+           ORDER BY id DESC"""
+    ).fetchall()
+    import json as _json
+
+    payload = _json.loads(jobs[0]["payload_json"])
+    assert payload["blog_post_id"] == bp_id
+    assert payload["content_slug"] == item["slug"]
+    assert payload["content_source"]["slug"] == item["slug"]
+    assert "Files are the API" in payload["content_source"]["body"]
 
 
 # ─────────────────────────────── save-as-note ───────────────────────────────

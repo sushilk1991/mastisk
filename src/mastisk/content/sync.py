@@ -248,6 +248,19 @@ def list_tasks_by_host(host_path: str, tasks: list[dict[str, Any]]) -> list[dict
     return [task for task in tasks if task.get("host_path") == host_path]
 
 
+def blog_content_source(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "slug": item["slug"],
+        "title": item["title"],
+        "kind": item["kind"],
+        "domain": item.get("domain"),
+        "channel": item.get("channel"),
+        "body": item.get("body") or item["title"],
+        "updated_at": item.get("updated_at"),
+        "path": item.get("path"),
+    }
+
+
 def dump_content_file(meta: dict[str, Any], body: str) -> str:
     clean = {key: value for key, value in meta.items() if value is not None and value != ""}
     frontmatter = yaml.safe_dump(

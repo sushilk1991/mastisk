@@ -195,6 +195,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     # already in the table are invisible to FTS until we ask it to rebuild.
     _ensure_fts_initialized(conn, "notes_fts", "notes")
     _ensure_fts_initialized(conn, "blog_posts_fts", "blog_posts")
+    _add_column_if_missing(conn, "blog_posts", "content_slug", "TEXT")
 
 
 def _ensure_library_schema(conn: sqlite3.Connection) -> None:
@@ -2012,6 +2013,7 @@ def create_blog_post(
     *,
     theme: str,
     window_days: int,
+    content_slug: str | None = None,
 ) -> int:
     """Insert a blog_posts row in status='pending' and return its id.
 
@@ -2021,9 +2023,9 @@ def create_blog_post(
     body_md; this row is the index.
     """
     cur = conn.execute(
-        """INSERT INTO blog_posts (theme, window_days, status)
-           VALUES (?, ?, 'pending')""",
-        (theme, window_days),
+        """INSERT INTO blog_posts (theme, window_days, content_slug, status)
+           VALUES (?, ?, ?, 'pending')""",
+        (theme, window_days, content_slug),
     )
     return cur.lastrowid or 0
 
