@@ -333,3 +333,9 @@ Each phase = its own TDD plan under `docs/superpowers/plans/`, ~6–15 tasks, sh
 - **Editing-invariant lock** — exact note-edit vs re-classify mechanism (editor phase).
 
 These don't block Phase 1. Flagged so per-phase plans slot them as decision points.
+
+## Implementation Status (2026-06-12)
+
+- Phases 1-16 are implemented in the local-first shape described here: capture ingress/router, typed tasks/projects/domains, reminders and push backends, routines/recurrence, journal, dashboard intelligence, read-only calendar, richer projects, people, library, inventory, content, editor/attachments, and ingestion.
+- Documented deviations: calendar OAuth tokens are stored in the data dir with `0600` permissions, relying on the user's local account and FileVault rather than an extra app-level encrypted-at-rest wrapper; resurfacing is gated to escalated or linked notes until a favorites concept exists; journal-photo OCR is a loud-unavailable seam because the installed non-interactive vision path is not verified, while document ingestion and audio capture use optional `markitdown`/`docling` and `mlx-whisper` extras; milestone toggles use position plus expected text to avoid stale UI writes; task reminder fields (`reminder_lead_minutes`, `no_reminder`, `review_at`) are documented DB-primary exceptions to file-truth.
+- Resolved §18 questions: push backend choice is deferred to `[notify].backend` (`pushover` or `ntfy`, with `none` as the default); tunnel scope is documented as capture-only with the bearer token as the load-bearing control; `tasks.uid` durability is handled by scan reconciliation and UID stamping.

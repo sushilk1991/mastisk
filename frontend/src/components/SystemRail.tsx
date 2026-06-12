@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import type { AgentInfo, CalendarStatus, FeedTick, View } from '../types';
+import type { AgentInfo, CalendarStatus, FeedTick, IntegrationHealth, View } from '../types';
 import { CalendarPicker } from './CalendarPicker';
 
 interface Props {
@@ -31,13 +31,19 @@ const JUMPS: { id: View; l: string; d: string }[] = [
 
 export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
   const [calendar, setCalendar] = useState<CalendarStatus | null>(null);
+  const [integrations, setIntegrations] = useState<IntegrationHealth | null>(null);
   const [calendarBusy, setCalendarBusy] = useState(false);
   const [calendarErr, setCalendarErr] = useState<string | null>(null);
 
   async function loadCalendarStatus(options: { clearError?: boolean } = {}) {
     if (options.clearError !== false) setCalendarErr(null);
     try {
-      setCalendar(await api.calendar.status());
+      const [status, health] = await Promise.all([
+        api.calendar.status(),
+        api.integrations.health(),
+      ]);
+      setIntegrations(health);
+      setCalendar(health.calendar || status);
     } catch (e) {
       setCalendarErr(e instanceof Error ? e.message : 'calendar status failed');
     }
@@ -118,6 +124,30 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
               </button>
             )}
           </div>
+        </div>
+      </div>
+
+      <div className="rail-section">
+        <div className="rail-h">Integrations</div>
+        <div className="rel-row" style={{flexDirection:'column',alignItems:'flex-start',gap:4}}>
+          <div style={{fontSize:13,color:'var(--fg)'}}>
+            push: {integrations ? `${integrations.push.backend}${integrations.push.configured ? '' : ' (off)'}` : 'loading'}
+          </div>
+          {!!integrations?.push.notify_failed_last_24h && (
+            <div style={{fontSize:11,color:'#c53030'}}>
+              {integrations.push.notify_failed_last_24h} push failures in 24h
+            </div>
+          )}
+          {integrations && (
+            <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--fg-faint)'}}>
+              claude {integrations.bridges.claude.available ? 'ok' : 'missing'} · ollama {integrations.bridges.ollama_chat.model}
+            </div>
+          )}
+          {integrations && (
+            <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--fg-faint)'}}>
+              ingest {integrations.ingest.markitdown || integrations.ingest.docling ? 'docs' : 'no-docs'} · whisper {integrations.ingest.mlx_whisper ? 'ok' : 'missing'}
+            </div>
+          )}
         </div>
       </div>
 

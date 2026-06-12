@@ -16,6 +16,15 @@ const KIND_GLYPH: Record<SearchResult['kind'], string> = {
   article: '▲',
   note: '✎',
   blog: '✍',
+  task: '☑',
+  project: '▤',
+  routine: '↻',
+  journal: '◷',
+  person: '◎',
+  book: '▰',
+  quote: '❝',
+  inventory: '□',
+  content: '▣',
 };
 
 const DEBOUNCE_MS = 180;
@@ -146,6 +155,15 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
       case 'article': onNavigate('article', r.id); break;
       case 'note':    onNavigate('note', r.id);    break;
       case 'blog':    onNavigate('blog_post', r.id); break;
+      case 'task':    onNavigate('tasks'); break;
+      case 'project': onNavigate('projects'); break;
+      case 'routine': onNavigate('routines'); break;
+      case 'journal': onNavigate('journal'); break;
+      case 'person':  onNavigate('people'); break;
+      case 'book':    onNavigate('library', `book:${r.id}`); break;
+      case 'quote':   onNavigate('library', `quote:${r.id}`); break;
+      case 'inventory': onNavigate('inventory'); break;
+      case 'content': onNavigate('content'); break;
       default: {
         // Exhaustive-switch sentinel: the unused binding makes TS error if a
         // new SearchResultKind is added without updating this switch. At
@@ -223,7 +241,7 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
-            placeholder="Search articles, notes, blog posts…"
+            placeholder="Search everything in Mastisk…"
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
@@ -235,7 +253,7 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
         <div className="cmd-body" ref={listRef}>
           {!hasQuery && !loading && (
             <div className="cmd-hint">
-              Type to search your wiki, notes, and blog posts.
+              Search everything in Mastisk.
               {' '}Press <kbd>↵</kbd> on a typed query to ask AI instead.
             </div>
           )}

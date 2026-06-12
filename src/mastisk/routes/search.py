@@ -10,15 +10,11 @@ router = APIRouter(tags=["search"])
 
 @router.get("/search")
 def search(q_param: str = "", limit: int = 20):
-    """Unified keyword search across articles, notes, and blog posts.
+    """Unified keyword search across wiki, notes, blog, and personal-OS mirrors.
 
-    Returns ``{results: [{kind, id, title, subtitle, snippet, score}, ...]}``
-    ranked by FTS5 BM25 score with a small per-kind tilt favouring articles
-    (canonical wiki content). Powers the ⌘K command palette.
-
-    Note: ``ask.py`` deliberately calls ``search_articles`` directly — the
-    Ask flow grounds answers in articles only and uses different (OR-join,
-    stopwords-stripped) FTS semantics tuned for retrieval, not narrowing.
+    Returns ``{results: [{kind, id, title, excerpt, link_target, ...}, ...]}``.
+    Existing FTS tables keep their BM25 ranking; typed mirrors use the same
+    LIKE-over-mirror fallback that powers Ask context for non-FTS data.
     """
     # FastAPI doesn't love "q" as a param name in some tooling; accept the
     # ``q_param`` alias used by the existing frontend client.

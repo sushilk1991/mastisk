@@ -7,6 +7,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from slugify import slugify
+
 from mastisk.db.queries import connect
 from mastisk.editing import is_user_editing
 from mastisk.file_locks import host_file_lock
@@ -16,6 +18,7 @@ from mastisk.markdown_sections import append_to_section
 from mastisk.paths import content_dir, journal_dir, projects_dir, vault_dir
 from mastisk.projects.sync import get_project, parse_project_file
 from mastisk.routes.notes import atomic_write
+from mastisk.settings import get_settings
 from mastisk.tasks.parser import (
     ensure_task_uids,
     format_task_line,
@@ -71,7 +74,7 @@ def scan_task_hosts(
                         atomic_write(path, markdown_with_uids)
                         markdown = markdown_with_uids
                         assigned += len(new_uids)
-                project, domain = _task_context_for_host(path, rel_path)
+                project, host_domain = _task_context_for_host(path, rel_path)
                 for task in parse_markdown_tasks(
                     markdown,
                     host_path=rel_path,
@@ -141,7 +144,7 @@ def scan_task_hosts(
                             task.get("due"),
                             task.get("scheduled"),
                             task.get("priority"),
-                            domain,
+                            host_domain or _domain_from_task_tags(task.get("tags", [])),
                             project,
                             task.get("recurrence"),
                             json.dumps(task.get("tags", [])),
@@ -421,6 +424,29 @@ def _content_domain_for_host(path: Path) -> str | None:
         return parse_content_file(path).get("domain")
     except Exception:
         return None
+
+
+def _domain_from_task_tags(tags: list[str]) -> str | None:
+    known = _known_domain_slugs()
+    for tag in tags:
+        candidate = slugify(str(tag))[:80]
+        if candidate in known:
+            return candidate
+    return None
+
+
+def _known_domain_slugs() -> set[str]:
+    slugs: set[str] = set()
+    for name in get_settings().domains.names:
+        clean = str(name).strip()
+        if clean:
+            slugs.add(slugify(clean)[:80] or "domain")
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT slug FROM domains WHERE deleted_at IS NULL"
+        ).fetchall()
+    slugs.update(row["slug"] for row in rows)
+    return slugs
 
 
 def _soft_delete_disappeared(conn, scanned_hosts: list[str], seen: set[str]) -> None:

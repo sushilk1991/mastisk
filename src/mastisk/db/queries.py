@@ -1041,6 +1041,7 @@ _STOPWORDS = frozenset("""
 a an and are as at be but by do does for from how i if in is it its of on
 or that the their them then there they this to was were what when where
 which who why will with you your me my our us me what's that's there's
+about know knows tell show please
 """.split())
 
 
@@ -1078,7 +1079,17 @@ def _fts_palette_query(q: str) -> str | None:
     Returns None when the query has no usable terms — caller should skip
     the SELECT entirely in that case.
     """
+    terms = _palette_terms(q)
+    if not terms:
+        return None
+    # `term*` is FTS5 prefix match. AND is the implicit operator between bare
+    # tokens, so "foo* bar*" means "starts-with-foo AND starts-with-bar".
+    return " ".join(f"{t}*" for t in terms)
+
+
+def _palette_terms(q: str) -> list[str]:
     import re
+
     # Tokenization: keep letters/digits/marks across all scripts (Latin with
     # diacritics, CJK, Cyrillic, etc.) and split on everything else INCLUDING
     # underscore. `[^\W_]+` is "word chars but not underscore" — it gives us
@@ -1096,32 +1107,279 @@ def _fts_palette_query(q: str) -> str | None:
         if len(t) < 2:
             continue
         terms.append(lower)
-    if not terms:
-        return None
-    # `term*` is FTS5 prefix match. AND is the implicit operator between bare
-    # tokens, so "foo* bar*" means "starts-with-foo AND starts-with-bar".
-    return " ".join(f"{t}*" for t in terms)
+    return terms
 
 
 _PALETTE_ARTICLE_CAP = 10
 _PALETTE_NOTE_CAP = 6
 _PALETTE_BLOG_CAP = 4
+_PALETTE_MIRROR_CAP = 3
+
+
+def _search_result(
+    *,
+    kind: str,
+    id: object,
+    title: object,
+    subtitle: str,
+    excerpt: object,
+    link_target: str,
+    score: float,
+    slug: object | None = None,
+) -> dict:
+    text = str(title or "").strip() or "(untitled)"
+    snippet = str(excerpt or "").strip()
+    result = {
+        "kind": kind,
+        "id": str(id),
+        "title": text,
+        "subtitle": subtitle,
+        "snippet": snippet,
+        "excerpt": snippet,
+        "link_target": link_target,
+        "score": score,
+    }
+    if slug is not None:
+        result["slug"] = str(slug)
+    return result
+
+
+def _like_pattern(term: str) -> str:
+    escaped = (
+        term.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return f"%{escaped}%"
+
+
+def _mirror_match_clause(
+    columns: list[str],
+    terms: list[str],
+    *,
+    any_term: bool,
+) -> tuple[str, list[str]]:
+    clauses: list[str] = []
+    params: list[str] = []
+    for term in terms:
+        pattern = _like_pattern(term)
+        column_clauses = [f"COALESCE(CAST({col} AS TEXT), '') LIKE ? ESCAPE '\\'" for col in columns]
+        clauses.append("(" + " OR ".join(column_clauses) + ")")
+        params.extend([pattern] * len(columns))
+    joiner = " OR " if any_term else " AND "
+    return joiner.join(clauses), params
+
+
+def _compact_parts(*values: object) -> str:
+    return " · ".join(str(v).strip() for v in values if str(v or "").strip())
+
+
+def _truncate(value: object, limit: int = 180) -> str:
+    text = str(value or "").strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _search_personal_os_mirrors(
+    conn: sqlite3.Connection,
+    q: str,
+    *,
+    per_kind: int = _PALETTE_MIRROR_CAP,
+    any_term: bool = False,
+) -> list[dict]:
+    terms = _palette_terms(q)
+    if not terms:
+        return []
+
+    rows: list[dict] = []
+
+    def collect(
+        *,
+        table: str,
+        columns: list[str],
+        where: str,
+        order_by: str,
+        build: Any,
+    ) -> None:
+        clause, params = _mirror_match_clause(columns, terms, any_term=any_term)
+        query = (
+            f"SELECT * FROM {table} WHERE {where} AND ({clause}) "
+            f"ORDER BY {order_by} LIMIT ?"
+        )
+        for index, row in enumerate(conn.execute(query, (*params, per_kind))):
+            rows.append(build(dict(row), 100.0 + index))
+
+    collect(
+        table="tasks",
+        columns=["text", "due", "scheduled", "priority", "domain", "project", "tags_json", "links_json"],
+        where="deleted_at IS NULL",
+        order_by="due IS NULL, due ASC, updated_at DESC",
+        build=lambda row, score: _search_result(
+            kind="task",
+            id=row["uid"],
+            title=row["text"],
+            subtitle="Task",
+            excerpt=_compact_parts(row.get("status"), row.get("due"), row.get("domain"), row.get("project")),
+            link_target="/tasks",
+            score=score,
+        ),
+    )
+    collect(
+        table="projects",
+        columns=["slug", "name", "type", "domain", "status", "due"],
+        where="deleted_at IS NULL",
+        order_by="updated_at DESC",
+        build=lambda row, score: _search_result(
+            kind="project",
+            id=row["slug"],
+            slug=row["slug"],
+            title=row["name"],
+            subtitle="Project",
+            excerpt=_compact_parts(row.get("type"), row.get("status"), row.get("domain"), row.get("due")),
+            link_target="/projects",
+            score=score,
+        ),
+    )
+    collect(
+        table="routines",
+        columns=["slug", "name", "description", "domain", "time_of_day", "specific_time"],
+        where="deleted_at IS NULL AND archived = 0",
+        order_by="updated_at DESC",
+        build=lambda row, score: _search_result(
+            kind="routine",
+            id=row["slug"],
+            slug=row["slug"],
+            title=row["name"],
+            subtitle="Routine",
+            excerpt=_compact_parts(row.get("time_of_day"), row.get("domain"), row.get("description")),
+            link_target="/routines",
+            score=score,
+        ),
+    )
+    collect(
+        table="journal_days",
+        columns=["date", "path", "mood", "energy"],
+        where="deleted_at IS NULL",
+        order_by="date DESC",
+        build=lambda row, score: _search_result(
+            kind="journal",
+            id=row["date"],
+            slug=row["date"],
+            title=f"Journal {row['date']}",
+            subtitle="Journal day",
+            excerpt=_compact_parts(row.get("path"), f"{row.get('log_count') or 0} log entries"),
+            link_target="/journal",
+            score=score,
+        ),
+    )
+    collect(
+        table="people",
+        columns=["slug", "name", "facts_json", "birthday", "anniversary", "follow_up_at", "last_interaction_at"],
+        where="deleted_at IS NULL",
+        order_by="updated_at DESC",
+        build=lambda row, score: _search_result(
+            kind="person",
+            id=row["slug"],
+            slug=row["slug"],
+            title=row["name"],
+            subtitle="Person",
+            excerpt=_compact_parts(row.get("last_interaction_at"), _truncate(row.get("facts_json"), 120)),
+            link_target="/people",
+            score=score,
+        ),
+    )
+    collect(
+        table="books",
+        columns=["slug", "title", "author", "status", "format", "isbn", "summary"],
+        where="deleted_at IS NULL",
+        order_by="updated_at DESC",
+        build=lambda row, score: _search_result(
+            kind="book",
+            id=row["slug"],
+            slug=row["slug"],
+            title=row["title"],
+            subtitle="Book",
+            excerpt=_compact_parts(row.get("author"), row.get("status"), _truncate(row.get("summary"), 120)),
+            link_target=f"/library/books/{row['slug']}",
+            score=score,
+        ),
+    )
+    collect(
+        table="quotes",
+        columns=["id", "text", "source_type", "source_ref", "tags_json"],
+        where="deleted_at IS NULL",
+        order_by="updated_at DESC",
+        build=lambda row, score: _search_result(
+            kind="quote",
+            id=row["id"],
+            title=_truncate(row["text"], 90),
+            subtitle="Quote",
+            excerpt=_compact_parts(row.get("source_type"), row.get("source_ref"), row.get("tags_json")),
+            link_target=f"/library/quotes/{row['id']}",
+            score=score,
+        ),
+    )
+    collect(
+        table="inventory",
+        columns=["id", "name", "status", "location", "photo"],
+        where="deleted_at IS NULL",
+        order_by="updated_at DESC",
+        build=lambda row, score: _search_result(
+            kind="inventory",
+            id=row["id"],
+            title=row["name"],
+            subtitle="Inventory item",
+            excerpt=_compact_parts(row.get("status"), row.get("location")),
+            link_target="/inventory",
+            score=score,
+        ),
+    )
+    collect(
+        table="content_items",
+        columns=["slug", "title", "kind", "status", "domain", "channel", "url", "publish_date"],
+        where="deleted_at IS NULL",
+        order_by="updated_at DESC",
+        build=lambda row, score: _search_result(
+            kind="content",
+            id=row["slug"],
+            slug=row["slug"],
+            title=row["title"],
+            subtitle="Content item",
+            excerpt=_compact_parts(row.get("kind"), row.get("status"), row.get("domain"), row.get("channel")),
+            link_target="/content",
+            score=score,
+        ),
+    )
+    return rows
+
+
+def search_personal_os_context(
+    conn: sqlite3.Connection,
+    q: str,
+    *,
+    per_kind: int = 2,
+) -> list[dict]:
+    """Compact Ask/RAG retrieval over personal-OS mirror tables.
+
+    This intentionally reuses the LIKE-over-mirror machinery from palette
+    search, but uses any-term matching because natural-language questions
+    contain extra words beyond the entity names.
+    """
+    return _search_personal_os_mirrors(conn, q, per_kind=per_kind, any_term=True)
 
 
 def search_all(
     conn: sqlite3.Connection, q: str, *, limit: int = 20
 ) -> list[dict]:
-    """Unified palette search across articles, notes, and blog posts.
+    """Unified palette search across wiki, notes, blog, and personal-OS mirrors.
 
     Each result is a dict with a stable shape the frontend can render
     uniformly::
 
-        {kind, id, title, subtitle, snippet, score}
+        {kind, id, title, subtitle, snippet, excerpt, link_target, score}
 
-    ``kind`` is one of ``'article'``, ``'note'``, ``'blog'`` — the frontend
-    routes off it. ``id`` is a string for articles (article_id) and the
-    integer rowid (as a string) for notes/blogs so callers can build a URL
-    without switching on type.
+    ``kind`` includes FTS-backed article/note/blog results and the typed
+    personal-OS mirror kinds. ``id`` is always stringified for frontend
+    routing.
 
     Why per-kind quotas instead of a global BM25 sort: BM25's IDF term
     punishes terms that appear in a high fraction of documents in the
@@ -1133,12 +1391,9 @@ def search_all(
     model. Allotting fixed slots per kind means the user sees notes and
     blog hits even on terms that are common in their own writing.
 
-    Returns rows in fixed order: articles first, then notes, then blogs,
-    each block sorted internally by BM25 (lower = better) with a recency
-    tiebreaker so freshly-edited content surfaces over stale matches at
-    a tied score. Capped at ``limit`` total — note the per-kind quotas
-    above are the real ceiling (10+6+4=20), so passing ``limit > 20``
-    can't widen the result set; the parameter only narrows it.
+    Returns rows in fixed order: FTS-backed articles first, then notes, then
+    blogs, then typed mirrors. Each block is sorted internally by its native
+    query semantics. Capped at ``limit`` total.
 
     Snippet markers: matched terms are wrapped with ASCII STX (``\\x02``)
     and ETX (``\\x03``) instead of HTML ``<mark>`` tags so they can never
@@ -1166,14 +1421,15 @@ def search_all(
            LIMIT ?""",
         (expr, _PALETTE_ARTICLE_CAP),
     ):
-        rows.append({
-            "kind": "article",
-            "id": r["id"],
-            "title": r["title"],
-            "subtitle": r["subkind"],
-            "snippet": r["snippet"] or (r["summary"] or "")[:160],
-            "score": float(r["score"]),
-        })
+        rows.append(_search_result(
+            kind="article",
+            id=r["id"],
+            title=r["title"],
+            subtitle=r["subkind"],
+            excerpt=r["snippet"] or (r["summary"] or "")[:160],
+            link_target=f"/a/{r['id']}",
+            score=float(r["score"]),
+        ))
 
     # Notes. notes_fts schema is (summary, body). Title for the result is
     # always the summary (else first line of body), so we point snippet at
@@ -1198,14 +1454,15 @@ def search_all(
         if len(title) > 80:
             title = title[:77] + "…"
         kind_label = (r["classification"] or "Note").capitalize()
-        rows.append({
-            "kind": "note",
-            "id": str(r["id"]),
-            "title": title,
-            "subtitle": f"Note · {kind_label}",
-            "snippet": r["snippet"] or "",
-            "score": float(r["score"]),
-        })
+        rows.append(_search_result(
+            kind="note",
+            id=r["id"],
+            title=title,
+            subtitle=f"Note · {kind_label}",
+            excerpt=r["snippet"] or "",
+            link_target=f"/notes/{r['id']}",
+            score=float(r["score"]),
+        ))
 
     # Blog posts. Excludes tombstoned rows AND pending/failed drafts (a draft
     # has no body to read yet). bm25 weights: title=10, theme=3, body_preview=1.
@@ -1223,14 +1480,17 @@ def search_all(
         (expr, _PALETTE_BLOG_CAP),
     ):
         title = (r["title"] or r["theme"] or "Untitled draft").strip()
-        rows.append({
-            "kind": "blog",
-            "id": str(r["id"]),
-            "title": title,
-            "subtitle": "Blog post",
-            "snippet": r["snippet"] or (r["body_preview"] or "")[:160],
-            "score": float(r["score"]),
-        })
+        rows.append(_search_result(
+            kind="blog",
+            id=r["id"],
+            title=title,
+            subtitle="Blog post",
+            excerpt=r["snippet"] or (r["body_preview"] or "")[:160],
+            link_target=f"/blog/{r['id']}",
+            score=float(r["score"]),
+        ))
+
+    rows.extend(_search_personal_os_mirrors(conn, q))
 
     return rows[:limit]
 

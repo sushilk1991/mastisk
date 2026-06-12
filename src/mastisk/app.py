@@ -27,6 +27,7 @@ from mastisk.routes import (
     feed_route,
     graph_route,
     ingest,
+    integration_health,
     inventory,
     journal,
     library,
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(vault_route.router, prefix="/api")
     app.include_router(graph_route.router, prefix="/api")
     app.include_router(stats_route.router, prefix="/api")
+    app.include_router(integration_health.router, prefix="/api")
     app.include_router(settings_route.router, prefix="/api")
     app.include_router(synthesis_route.router, prefix="/api")
     app.include_router(listen_route.router, prefix="/api")

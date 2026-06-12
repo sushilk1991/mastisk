@@ -211,7 +211,8 @@ async def route_and_persist_capture(
 def _persist_task_capture(capture: Capture, *, ts: str | None, needs_triage: bool) -> dict:
     project = find_project(capture.project)
     host = (vault_dir() / project["path"]) if project is not None else journal_host_for_today(ts)
-    tags = _with_needs_triage_tag(capture.tags, needs_triage=needs_triage)
+    tags = _with_capture_domain_tag(capture.tags, capture.domain)
+    tags = _with_needs_triage_tag(tags, needs_triage=needs_triage)
     row = append_task_to_host(
         host,
         text=capture.body,
@@ -489,6 +490,12 @@ def _with_needs_triage_tag(tags: list[str], *, needs_triage: bool) -> list[str]:
     if not needs_triage or "needs-triage" in tags:
         return tags
     return [*tags, "needs-triage"]
+
+
+def _with_capture_domain_tag(tags: list[str], domain: str | None) -> list[str]:
+    if not domain or domain in tags:
+        return tags
+    return [*tags, domain]
 
 
 def _persist_inbox_fallback(text: str, source: str, *, ts: str | None = None) -> dict:

@@ -271,7 +271,10 @@ export interface AskResponse {
   hits: { id: string; title: string; snippet?: string }[];
 }
 
-export type SearchResultKind = 'article' | 'note' | 'blog';
+export type SearchResultKind =
+  | 'article' | 'note' | 'blog'
+  | 'task' | 'project' | 'routine' | 'journal' | 'person'
+  | 'book' | 'quote' | 'inventory' | 'content';
 
 export interface SearchResult {
   kind: SearchResultKind;
@@ -284,6 +287,9 @@ export interface SearchResult {
    * marker chars can never collide with literal `<mark>` text the user wrote
    * in a note about HTML. The palette renders these as React `<mark>` nodes. */
   snippet: string;
+  excerpt?: string;
+  link_target?: string;
+  slug?: string;
   /** Lower = better. Frontend doesn't sort (server already did) but exposes for tests. */
   score: number;
 }
@@ -705,6 +711,30 @@ export interface CalendarToday {
   date: string;
   status: CalendarStatus;
   events: CalendarEvent[];
+}
+
+export interface IntegrationHealth {
+  calendar: CalendarStatus;
+  push: {
+    backend: string;
+    configured: boolean;
+    notify_failed_last_24h: number;
+  };
+  bridges: {
+    claude: { configured: boolean; cmd: string; available: boolean };
+    ollama_chat: {
+      local_url: string;
+      local_only: boolean;
+      cloud_configured: boolean;
+      model: string;
+    };
+    ollama_embed: { local_url: string; model: string };
+  };
+  ingest: {
+    markitdown: boolean;
+    docling: boolean;
+    mlx_whisper: boolean;
+  };
 }
 
 export interface JournalDaySummary {

@@ -12,6 +12,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from mastisk.db.queries import (
     _ensure_fts_initialized,
@@ -135,11 +136,96 @@ def _seed_minimal(conn: sqlite3.Connection) -> None:
     )
 
 
+def _seed_personal_os_search_rows(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """INSERT INTO tasks
+             (uid, host_path, line_number, text, checked, status, due, domain,
+              tags_json, links_json)
+           VALUES ('task-water', 'journal/2026-06-13.md', 1,
+                   'Change water filter', 0, 'open', '2026-06-13T14:00:00',
+                   'home', '["home"]', '[]')"""
+    )
+    conn.execute(
+        """INSERT INTO projects (slug, path, name, type, domain, status)
+           VALUES ('garage-refresh', 'projects/garage-refresh.md',
+                   'Garage Refresh', 'project', 'home', 'active')"""
+    )
+    conn.execute(
+        """INSERT INTO routines (slug, path, name, description, domain, time_of_day)
+           VALUES ('morning-vitamins', 'routines/morning-vitamins.md',
+                   'Morning Vitamins', 'Vitamin habit', 'health', 'morning')"""
+    )
+    conn.execute(
+        """INSERT INTO journal_days (date, path, mood, energy, log_count)
+           VALUES ('2026-06-13', 'journal/2026-06-13.md', 4, 3, 2)"""
+    )
+    conn.execute(
+        """INSERT INTO people (slug, name, facts_json, path)
+           VALUES ('anjali-rao', 'Anjali Rao', '{"topic":"water filter"}',
+                   'people/anjali-rao.md')"""
+    )
+    conn.execute(
+        """INSERT INTO books (slug, path, title, author, status, summary)
+           VALUES ('designing-data-intensive-applications',
+                   'library/books/designing-data-intensive-applications.md',
+                   'Designing Data-Intensive Applications',
+                   'Martin Kleppmann', 'reading', 'Distributed systems book')"""
+    )
+    conn.execute(
+        """INSERT INTO quotes
+             (id, path, text, content_hash, source_type, source_ref, tags_json)
+           VALUES ('quote-water',
+                   'library/quotes/quote-water.md',
+                   'A system compounds when every capture becomes reusable.',
+                   'quote-water-hash', 'book',
+                   'designing-data-intensive-applications', '["systems"]')"""
+    )
+    conn.execute(
+        """INSERT INTO inventory (id, path, name, status, location)
+           VALUES ('monitor-1', 'inventory/monitor-1.md',
+                   'Studio Monitor', 'owned', 'desk')"""
+    )
+    conn.execute(
+        """INSERT INTO content_items (slug, path, title, kind, status, domain)
+           VALUES ('local-first-video', 'content/local-first-video.md',
+                   'Local-first personal OS video', 'video', 'idea', 'mastisk')"""
+    )
+
+
 def test_search_all_returns_all_three_kinds(db: sqlite3.Connection) -> None:
     _seed_minimal(db)
     results = search_all(db, "compute")
     kinds = [r["kind"] for r in results]
     assert kinds == ["article", "note", "blog"]
+
+
+def test_search_api_returns_personal_os_mirror_kinds(db: sqlite3.Connection) -> None:
+    """Global search is the cross-cutting entrypoint, so each typed mirror must
+    produce a navigable result without adding a new search engine."""
+    _seed_personal_os_search_rows(db)
+
+    from mastisk.app import create_app
+
+    client = TestClient(create_app())
+    cases = [
+        ("water filter", "task", "task-water", "/tasks"),
+        ("garage refresh", "project", "garage-refresh", "/projects"),
+        ("vitamins", "routine", "morning-vitamins", "/routines"),
+        ("2026-06-13", "journal", "2026-06-13", "/journal"),
+        ("anjali", "person", "anjali-rao", "/people"),
+        ("kleppmann", "book", "designing-data-intensive-applications", "/library/books/designing-data-intensive-applications"),
+        ("compounds", "quote", "quote-water", "/library/quotes/quote-water"),
+        ("studio monitor", "inventory", "monitor-1", "/inventory"),
+        ("personal os video", "content", "local-first-video", "/content"),
+    ]
+    for query, kind, expected_id, link_target in cases:
+        response = client.get("/api/search", params={"q_param": query})
+        assert response.status_code == 200, response.text
+        hit = next((r for r in response.json()["results"] if r["kind"] == kind), None)
+        assert hit is not None, f"{kind} missing for query {query!r}"
+        assert hit["id"] == expected_id
+        assert hit["excerpt"]
+        assert hit["link_target"] == link_target
 
 
 def test_search_all_empty_query_returns_empty(db: sqlite3.Connection) -> None:

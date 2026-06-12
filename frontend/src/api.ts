@@ -1,7 +1,7 @@
 import type {
   Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
   BlogPostSummary, BookDetail, BookHighlight, BookStatus, BookSummary, CaptureTriageItem, CaptureTriageTarget, ContentDetail, ContentKind, ContentList, ContentStatus, Digest, DigestAudit, Domain, Feed,
-  FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, InventoryDetail, InventoryList, InventoryStatus, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
+  FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, IntegrationHealth, InventoryDetail, InventoryList, InventoryStatus, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
   KindleImportResult, KindleReviewItem, PersonDetail, PersonSummary, PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, QuoteDetail, QuoteSourceType, QuoteSummary, ReminderRow,
   RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
@@ -212,7 +212,7 @@ export const api = {
       body: JSON.stringify({ question, ...opts }),
     }),
 
-  /** Unified keyword search across articles, notes, and blog posts. */
+  /** Unified keyword search across Mastisk mirrors. */
   search: (q: string, opts?: { limit?: number; signal?: AbortSignal }) =>
     fetch(
       `${BASE}/search?q_param=${encodeURIComponent(q)}` +
@@ -778,6 +778,10 @@ export const api = {
       ),
     disconnect: (): Promise<{ ok: boolean }> =>
       j<{ ok: boolean }>(`${BASE}/calendar/connection`, { method: 'DELETE' }),
+  },
+
+  integrations: {
+    health: (): Promise<IntegrationHealth> => j<IntegrationHealth>(`${BASE}/health/integrations`),
   },
 
   captureTriage: {
