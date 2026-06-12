@@ -92,6 +92,9 @@ class IntelligenceSettings(BaseSettings):
 class ServerSettings(BaseSettings):
     """HTTP server trust-boundary config."""
     allowed_origins: list[str] = Field(default_factory=list)
+    local_hostnames: list[str] = Field(
+        default_factory=lambda: ["localhost", "127.0.0.1", "::1", "[::1]", "testserver"]
+    )
 
 
 class RemindersSettings(BaseSettings):

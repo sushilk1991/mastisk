@@ -55,6 +55,7 @@ from mastisk.routes import (
     vault_route,
 )
 from mastisk.settings import get_settings
+from mastisk.tunnel_scope import TunnelScopeMiddleware
 
 log = logging.getLogger("mastisk.app")
 
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
     app.add_middleware(ingest.CaptureBearerAuthMiddleware)
+    app.add_middleware(TunnelScopeMiddleware)
 
     app.include_router(articles.router, prefix="/api")
     app.include_router(agents_route.router, prefix="/api")

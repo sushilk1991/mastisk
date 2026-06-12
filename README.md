@@ -375,8 +375,14 @@ tail -f ~/Library/Application\ Support/Mastisk/logs/mastisk.log
 
 1. Install the **Tailscale** app on your phone, sign in to the same tailnet as your Mac.
 2. On your Mac: `mastisk url` — copy the Tailnet line (`http://<hostname>.tailXXXXX.ts.net:5555`).
-3. Open that URL in Safari on your phone.
-4. Tap the Share icon → **Add to Home Screen**.
+3. Add that hostname to `~/Library/Application Support/Mastisk/config.toml` if it is not one of the default local hosts:
+   ```toml
+   [server]
+   local_hostnames = ["<hostname>.tailXXXXX.ts.net"]
+   ```
+   Mastisk treats unlisted `Host` headers as tunnel/proxy traffic and hides the PWA/API except for bearer-gated capture ingress.
+4. Open that URL in Safari on your phone.
+5. Tap the Share icon → **Add to Home Screen**.
 
 You now have a Mastisk icon that launches full-screen. It's a PWA — works offline for cached articles, syncs when you're back online.
 
@@ -563,6 +569,15 @@ backstop, not the only control):
 
 Warning: only `/api/capture` (the ingress `POST`) is safe to expose; nothing else under `/api` may be tunneled.
 Agent Studio routes (`/api/agents*`, `/api/agent-skills*`) are prompt-control surfaces and must never be exposed through a tunnel.
+
+Mastisk also enforces this boundary in the FastAPI app. If a request has tunnel
+provenance - a non-local `Host` header or Cloudflare/forwarded proxy headers -
+the app returns 404 for everything except `/api/capture` and
+`/api/capture/audio`. This is defense in depth for cases where cloudflared runs
+on the same Mac and forwards from `127.0.0.1`; it is not a replacement for the
+bearer token. Direct phone PWA access over Tailscale still works when you add
+the tailnet MagicDNS hostname (or your `.local` name) under
+`[server].local_hostnames`.
 
 ```bash
 brew install cloudflared
