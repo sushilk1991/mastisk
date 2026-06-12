@@ -282,6 +282,31 @@ def test_agent_profile_rejects_attribute_and_index_placeholders(db, vault_tmp, d
     assert "body[0]" in index.text
 
 
+def test_agent_profile_disable_succeeds_with_existing_invalid_override(db, vault_tmp, data_tmp) -> None:
+    profile = vault_tmp / "_agents" / "notetaker.md"
+    profile.parent.mkdir(parents=True)
+    profile.write_text(
+        "---\n"
+        "enabled: true\n"
+        "skills: []\n"
+        "---\n\n"
+        "BROKEN {identity} {article_ids}\n",
+        encoding="utf-8",
+    )
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        listed = client.get("/api/agents")
+        assert listed.status_code == 200, listed.text
+        disabled = client.put("/api/agents/notetaker/profile", json={"enabled": False})
+
+    assert disabled.status_code == 200, disabled.text
+    payload = disabled.json()["profile"]
+    assert payload["enabled"] is False
+    assert payload["invalid"] is True
+    assert "missing {body}" in payload["invalid_reason"]
+    assert "BROKEN {identity} {article_ids}" in profile.read_text(encoding="utf-8")
+
+
 def test_agent_skill_crud_routes_are_file_first(db, vault_tmp, data_tmp) -> None:
     with _client(vault_tmp, data_tmp, db) as client:
         created = client.post(
@@ -438,6 +463,8 @@ def test_frontend_agent_studio_static_contract() -> None:
     assert "letters, numbers, spaces" in source
     assert "invalidPlaceholderFields" in source
     assert "attribute/index placeholders" in source
+    assert "dirtyProfilePatch" in source
+    assert "prompt_override" in source
     assert "agent_detail" in router
     assert "/agents/" in router
     assert ".agent-studio-layout" in css

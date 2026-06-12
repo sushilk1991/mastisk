@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../api';
-import type { AgentDetail, AgentInfo, AgentPromptSlot, AgentSkill, FeedTick, View } from '../types';
+import type { AgentDetail, AgentInfo, AgentProfileUpdate, AgentPromptSlot, AgentSkill, FeedTick, View } from '../types';
 import { CodeMirrorMarkdown } from './MarkdownEditor';
 
 interface Props {
@@ -179,6 +179,12 @@ function AgentDetailView({
     const promptOverride = primaryDraft.trim() && primaryDraft !== primarySlot.default
       ? primaryDraft
       : null;
+    const patch = dirtyProfilePatch(detail, {
+      enabled,
+      skills,
+      prompt_override: promptOverride ?? '',
+      slot_overrides: slotOverrides,
+    });
     const optimistic: AgentDetail = {
       ...detail,
       profile: {
@@ -193,12 +199,9 @@ function AgentDetailView({
     setSaveState('saving');
     setSaveError(null);
     try {
-      await api.updateAgentProfile(agentId, {
-        enabled,
-        skills,
-        prompt_override: promptOverride,
-        slot_overrides: slotOverrides,
-      });
+      if (Object.keys(patch).length > 0) {
+        await api.updateAgentProfile(agentId, patch);
+      }
       const fresh = await api.agentDetail(agentId);
       setDetail(fresh);
       await onAgentsChanged?.();
@@ -550,4 +553,39 @@ function invalidPlaceholderFields(text: string): string[] {
     }
   }
   return Array.from(invalid).sort();
+}
+
+function dirtyProfilePatch(
+  current: AgentDetail,
+  next: {
+    enabled: boolean;
+    skills: string[];
+    prompt_override: string;
+    slot_overrides: Record<string, string>;
+  },
+): AgentProfileUpdate {
+  const patch: AgentProfileUpdate = {};
+  if (next.enabled !== current.profile.enabled) {
+    patch.enabled = next.enabled;
+  }
+  if (!sameStringList(next.skills, current.profile.skills)) {
+    patch.skills = next.skills;
+  }
+  if (next.prompt_override !== (current.profile.prompt_override || '')) {
+    patch.prompt_override = next.prompt_override || null;
+  }
+  if (!sameStringRecord(next.slot_overrides, current.profile.slot_overrides)) {
+    patch.slot_overrides = next.slot_overrides;
+  }
+  return patch;
+}
+
+function sameStringList(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function sameStringRecord(left: Record<string, string>, right: Record<string, string>): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return sameStringList(leftKeys, rightKeys) && leftKeys.every((key) => left[key] === right[key]);
 }

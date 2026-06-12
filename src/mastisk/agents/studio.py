@@ -201,7 +201,11 @@ def write_agent_profile(agent_id: str, updates: dict[str, Any]) -> dict[str, Any
                 if value is not None and str(value).strip()
             }
 
-        validate_profile_slots(agent_id, prompt_override=body, slot_overrides=slot_overrides)
+        validate_profile_slots(
+            agent_id,
+            prompt_override=body if "prompt_override" in updates else "",
+            slot_overrides=slot_overrides if "slot_overrides" in updates else {},
+        )
         if slot_overrides:
             meta["slot_overrides"] = slot_overrides
         else:
