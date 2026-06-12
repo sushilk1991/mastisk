@@ -322,18 +322,21 @@ def _persist_quote_capture(
 
 
 def _infer_quote_source(raw_text: str, capture: Capture) -> tuple[str, str | None]:
-    text = raw_text.casefold()
-    if "book" in text:
+    if _has_source_word(raw_text, "book"):
         book = match_book_in_text(raw_text) or find_book(capture.title)
-        return "book", book["slug"] if book is not None else capture.title
-    if "podcast" in text:
+        return "book", book["slug"] if book is not None else None
+    if _has_source_word(raw_text, "podcast"):
         return "podcast", capture.title
-    if "article" in text:
+    if _has_source_word(raw_text, "article"):
         return "article", capture.title
     if find_book(capture.title) is not None:
         book = find_book(capture.title)
-        return "book", book["slug"] if book is not None else capture.title
+        return "book", book["slug"] if book is not None else None
     return "conversation", capture.title
+
+
+def _has_source_word(text: str, word: str) -> bool:
+    return re.search(rf"\b{re.escape(word)}\b", text, flags=re.IGNORECASE) is not None
 
 
 def _date_marker(value: str | None) -> str | None:

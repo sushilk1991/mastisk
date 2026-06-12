@@ -493,6 +493,43 @@ def test_capture_quote_command_creates_quote_with_inferred_source_and_book_match
     assert quote["source_ref"] == "thinking-in-systems"
 
 
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "save quote from facebook: The map is not the territory.",
+        "save quote from my notebook: The map is not the territory.",
+        "save quote from the audiobook: The map is not the territory.",
+    ],
+)
+def test_infer_quote_source_does_not_match_book_substrings(db, vault_tmp, raw_text):
+    from mastisk.routes.capture import _infer_quote_source
+
+    source_type, source_ref = _infer_quote_source(
+        raw_text,
+        _capture(title="Free text title"),
+    )
+
+    assert source_type == "conversation"
+    assert source_ref == "Free text title"
+
+
+def test_infer_quote_source_uses_only_existing_book_slug_for_book_ref(db, vault_tmp):
+    from mastisk.library.sync import create_book_file
+    from mastisk.routes.capture import _infer_quote_source
+
+    assert _infer_quote_source(
+        "save quote from the book Unknown Book: x",
+        _capture(title="Unknown Book"),
+    ) == ("book", None)
+
+    create_book_file(title="Thinking in Systems", author="Donella Meadows")
+
+    assert _infer_quote_source(
+        "save quote from the book Thinking in Systems: x",
+        _capture(title="Thinking in Systems"),
+    ) == ("book", "thinking-in-systems")
+
+
 @pytest.mark.asyncio
 async def test_router_prompt_includes_book_context(data_tmp, db, vault_tmp):
     from mastisk.library.sync import create_book_file
