@@ -27,6 +27,7 @@ from mastisk.settings import get_settings, read_capture_bearer_token
 from mastisk.tasks.sync import append_task_to_host, journal_host_for_today
 
 router = APIRouter(prefix="/api/capture", tags=["capture"])
+quick_router = APIRouter(prefix="/api", tags=["capture"])
 log = logging.getLogger("mastisk.capture")
 
 
@@ -58,6 +59,19 @@ class CaptureRequest(BaseModel):
         return v
 
 
+class QuickCaptureRequest(BaseModel):
+    text: str = Field(min_length=1)
+    # Request timestamp used by the router for relative-date resolution.
+    ts: str | None = None
+
+    @field_validator("text")
+    @classmethod
+    def _non_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must be non-blank")
+        return v
+
+
 @router.post("", status_code=201)
 async def capture(
     req: CaptureRequest,
@@ -72,6 +86,17 @@ async def capture(
     """
     require_capture_token(authorization)
     return await route_and_persist_capture(req.text, source=req.source, ts=req.ts)
+
+
+@quick_router.post("/quick-capture", status_code=201)
+async def quick_capture(req: QuickCaptureRequest) -> dict:
+    """Same-origin PWA capture entrypoint.
+
+    This intentionally lives outside the bearer-gated `/api/capture*` prefix.
+    The PWA is served by the local daemon, and the watch/phone tunnel ingress
+    remains protected by CaptureBearerAuthMiddleware.
+    """
+    return await route_and_persist_capture(req.text, source="pwa", ts=req.ts)
 
 
 async def route_and_persist_capture(

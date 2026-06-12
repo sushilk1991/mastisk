@@ -107,6 +107,78 @@ def test_capture_503_when_unconfigured(client_no_token):
     assert r.status_code == 503
 
 
+def test_quick_capture_does_not_require_capture_bearer(
+    client_no_token, db, fake_capture_router
+):
+    r = client_no_token.post(
+        "/api/quick-capture",
+        json={"text": "remember the good idea"},
+    )
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "note"
+    assert body["needs_triage"] is False
+    fake_capture_router.assert_awaited_with(
+        "remember the good idea",
+        source="pwa",
+        ts=None,
+    )
+    note = db.execute("SELECT source FROM notes WHERE id = ?", (body["id"],)).fetchone()
+    assert note["source"] == "pwa"
+
+
+def test_quick_capture_rejects_blank_text(client_no_token):
+    r = client_no_token.post("/api/quick-capture", json={"text": "   "})
+
+    assert r.status_code == 422
+
+
+def test_quick_capture_routes_like_pwa_capture_ingress(
+    client_with_token, fake_capture_router
+):
+    fake_capture_router.side_effect = None
+    fake_capture_router.return_value = _capture(
+        type="task",
+        confidence=0.93,
+        body="call Sam",
+        due="2026-06-10T14:00:00-07:00",
+        priority="high",
+    )
+
+    capture = client_with_token.post(
+        "/api/capture",
+        json={
+            "text": "remind me to call Sam",
+            "source": "pwa",
+            "ts": "2026-06-11T09:00:00-07:00",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+    quick = client_with_token.post(
+        "/api/quick-capture",
+        json={
+            "text": "remind me to call Sam",
+            "ts": "2026-06-11T09:00:00-07:00",
+        },
+    )
+
+    assert capture.status_code == 201, capture.text
+    assert quick.status_code == 201, quick.text
+    assert {
+        "type": capture.json()["type"],
+        "destination": capture.json()["destination"],
+        "needs_triage": capture.json()["needs_triage"],
+    } == {
+        "type": quick.json()["type"],
+        "destination": quick.json()["destination"],
+        "needs_triage": quick.json()["needs_triage"],
+    }
+    assert [
+        call.kwargs["source"] for call in fake_capture_router.await_args_list[-2:]
+    ] == ["pwa", "pwa"]
+
+
 def test_capture_reads_token_file_changes_after_startup(client_no_token, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\nbearer_token = "runtime-token"\n')
