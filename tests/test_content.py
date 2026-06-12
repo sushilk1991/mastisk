@@ -242,6 +242,40 @@ def test_content_delete_archives_file_and_hides_by_default(db, vault_tmp, data_t
     assert row["deleted_at"] is not None
 
 
+def test_get_content_detail_does_not_assign_task_uids(
+    db, vault_tmp, data_tmp, monkeypatch
+):
+    from mastisk.content.sync import scan_content
+
+    async def no_scheduler():
+        return None
+
+    monkeypatch.setattr("mastisk.scheduler.start_scheduler", no_scheduler)
+
+    path = vault_tmp / "content" / "uidless-outline.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\n"
+        "title: UIDless Outline\n"
+        "kind: article\n"
+        "status: idea\n"
+        "---\n\n"
+        "## Checklist\n\n"
+        "- [ ] Draft the outline #content\n",
+        encoding="utf-8",
+    )
+    assert scan_content([path]) == {"upserted": 1}
+    before_text = path.read_text(encoding="utf-8")
+    before_mtime = path.stat().st_mtime_ns
+
+    with _client(vault_tmp, data_tmp, db) as client:
+        detail = client.get("/api/content/uidless-outline")
+
+    assert detail.status_code == 200, detail.text
+    assert path.read_text(encoding="utf-8") == before_text
+    assert path.stat().st_mtime_ns == before_mtime
+
+
 def test_content_triage_accept_clears_file_marker(db, vault_tmp, data_tmp):
     from mastisk.content.sync import create_content_file
 

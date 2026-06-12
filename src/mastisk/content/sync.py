@@ -272,9 +272,8 @@ def content_payload(slug: str, *, include_archived: bool = False) -> dict[str, A
     if parsed.get("archived") and not include_archived:
         _soft_delete_content(slug)
         return None
-    from mastisk.tasks.sync import list_tasks, scan_task_hosts
+    from mastisk.tasks.sync import list_tasks
 
-    scan_task_hosts([path])
     return {
         **payload,
         "title": parsed["title"],
