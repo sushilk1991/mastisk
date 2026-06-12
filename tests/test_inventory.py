@@ -317,6 +317,44 @@ def test_inventory_export_escapes_formula_cells(db, vault_tmp, data_tmp):
     assert rows[1][4] == "'+Office"
 
 
+def test_inventory_full_scan_skips_soft_delete_when_file_appears_after_glob(
+    db, vault_tmp, monkeypatch
+):
+    import mastisk.inventory.sync as inventory_sync
+
+    path = vault_tmp / "inventory" / "concurrent-create-2026-06-10.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\n"
+        "name: Concurrent create\n"
+        "acquired: 2026-06-10\n"
+        "status: owned\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    db.execute(
+        """INSERT INTO inventory
+           (id, path, name, acquired, status, deleted_at)
+           VALUES (?, ?, ?, ?, ?, NULL)""",
+        (
+            "concurrent-create-2026-06-10",
+            "inventory/concurrent-create-2026-06-10.md",
+            "Concurrent create",
+            "2026-06-10",
+            "owned",
+        ),
+    )
+    monkeypatch.setattr(inventory_sync, "_inventory_paths", lambda: [])
+
+    inventory_sync.scan_inventory()
+
+    row = db.execute(
+        "SELECT deleted_at FROM inventory WHERE id = 'concurrent-create-2026-06-10'"
+    ).fetchone()
+    assert row["deleted_at"] is None
+    assert inventory_sync.inventory_payload("concurrent-create-2026-06-10") is not None
+
+
 def test_capture_inventory_command_creates_item_and_medium_confidence_triages(
     db, vault_tmp, data_tmp
 ):

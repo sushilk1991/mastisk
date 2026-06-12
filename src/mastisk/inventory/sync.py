@@ -345,15 +345,25 @@ def _soft_delete_missing_path(conn, path: Path) -> None:
 
 
 def _soft_delete_disappeared(conn, seen: set[str]) -> None:
+    clauses = ["deleted_at IS NULL"]
+    params: list[Any] = []
     if seen:
         placeholders = ",".join("?" for _ in seen)
+        clauses.append(f"id NOT IN ({placeholders})")
+        params.extend(seen)
+    rows = conn.execute(
+        f"SELECT id, path FROM inventory WHERE {' AND '.join(clauses)}",
+        tuple(params),
+    ).fetchall()
+    for row in rows:
+        path = vault_dir() / row["path"]
+        if path.exists():
+            continue
         conn.execute(
-            f"""UPDATE inventory SET deleted_at = CURRENT_TIMESTAMP
-                WHERE deleted_at IS NULL AND id NOT IN ({placeholders})""",
-            tuple(seen),
+            """UPDATE inventory SET deleted_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND deleted_at IS NULL""",
+            (row["id"],),
         )
-    else:
-        conn.execute("UPDATE inventory SET deleted_at = CURRENT_TIMESTAMP WHERE deleted_at IS NULL")
 
 
 def _soft_delete_inventory(item_id: str) -> None:
