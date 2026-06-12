@@ -40,7 +40,9 @@ export function QuickCaptureSheet({ open, onClose, onNavigate, initialHint }: Pr
     setBusy(true);
     setError(null);
     try {
-      const captured = await api.quickCapture(trimmed, new Date().toISOString());
+      const captured = initialHint === 'note'
+        ? noteCaptureResult(await api.notes.create(trimmed))
+        : await api.quickCapture(trimmed, new Date().toISOString());
       setResult(captured);
       setText('');
     } catch (e) {
@@ -48,7 +50,7 @@ export function QuickCaptureSheet({ open, onClose, onNavigate, initialHint }: Pr
     } finally {
       setBusy(false);
     }
-  }, [busy, text]);
+  }, [busy, initialHint, text]);
 
   if (!open) return null;
 
@@ -153,6 +155,15 @@ export function QuickCaptureSheet({ open, onClose, onNavigate, initialHint }: Pr
       </div>
     </div>
   );
+}
+
+function noteCaptureResult(note: { id: number; path: string }): QuickCaptureResponse {
+  return {
+    id: note.id,
+    type: 'note',
+    destination: note.path,
+    needs_triage: false,
+  };
 }
 
 function labelForType(type: string): string {

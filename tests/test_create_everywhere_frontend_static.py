@@ -21,6 +21,7 @@ def test_global_quick_capture_is_wired_to_titlebar_and_shortcut() -> None:
     assert "Quick capture (⌘⇧A)" in titlebar
     assert "Enter saves. Shift+Enter adds a line. Esc closes." in sheet
     assert "api.quickCapture(trimmed" in sheet
+    assert "api.notes.create(trimmed)" in sheet
     assert "destinationTarget(result)" in sheet
     assert "`${BASE}/quick-capture`" in api
 
