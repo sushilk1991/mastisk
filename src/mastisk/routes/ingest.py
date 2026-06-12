@@ -8,6 +8,9 @@ from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile, status
+from starlette.datastructures import Headers
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mastisk.agents.base import enqueue
 from mastisk.db import queries as q
@@ -35,6 +38,36 @@ capture_router = APIRouter(prefix="/api/capture", tags=["capture"])
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DOCUMENT_INSTALL_HINT = "Document ingest needs MarkItDown. Install with: mastisk[ingest]"
 _WHISPER_INSTALL_HINT = "Audio transcription needs mlx-whisper. Install with: mastisk[audio]"
+
+
+class CaptureBearerAuthMiddleware:
+    """Reject tunnel-exposed capture requests before request body parsing."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] == "http"
+            and _is_capture_scope(str(scope.get("path") or ""))
+            and scope.get("method") == "POST"
+        ):
+            authorization = Headers(scope=scope).get("authorization")
+            try:
+                require_capture_token(authorization)
+            except HTTPException as exc:
+                response = JSONResponse(
+                    {"detail": exc.detail},
+                    status_code=exc.status_code,
+                    headers=exc.headers,
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+def _is_capture_scope(path: str) -> bool:
+    return path == "/api/capture" or path.startswith("/api/capture/")
 
 
 @router.post("/document", status_code=status.HTTP_202_ACCEPTED)

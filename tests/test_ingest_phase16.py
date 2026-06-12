@@ -15,6 +15,60 @@ def _client(vault_tmp, data_tmp, db):
     return TestClient(create_app())
 
 
+@pytest.mark.asyncio
+async def test_capture_audio_rejects_bad_token_before_reading_body(
+    vault_tmp, data_tmp, db
+):
+    from mastisk.app import create_app
+    from mastisk.settings import reload_settings
+
+    (data_tmp / "config.toml").write_text("[capture]\nbearer_token = \"tok\"\n", encoding="utf-8")
+    reload_settings()
+    messages: list[dict] = []
+    receive_called = False
+    try:
+        app = create_app()
+
+        async def receive() -> dict:
+            nonlocal receive_called
+            receive_called = True
+            raise AssertionError("unauthenticated capture request consumed body")
+
+        async def send(message: dict) -> None:
+            messages.append(message)
+
+        await app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/api/capture/audio",
+                "raw_path": b"/api/capture/audio",
+                "query_string": b"",
+                "headers": [
+                    (b"host", b"testserver"),
+                    (b"authorization", b"Bearer wrong"),
+                    (b"content-type", b"multipart/form-data; boundary=x"),
+                    (b"content-length", str(50 * 1024 * 1024).encode()),
+                ],
+                "client": ("127.0.0.1", 1),
+                "server": ("testserver", 80),
+                "root_path": "",
+            },
+            receive,
+            send,
+        )
+    finally:
+        (data_tmp / "config.toml").unlink(missing_ok=True)
+        reload_settings()
+
+    starts = [message for message in messages if message["type"] == "http.response.start"]
+    assert starts[0]["status"] == 401
+    assert receive_called is False
+
+
 def test_document_converter_prefers_docling_when_importable(tmp_path, monkeypatch):
     from mastisk.ingest import converters
 

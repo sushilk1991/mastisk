@@ -641,6 +641,10 @@ ingress:
   - service: http_status:404
 ```
 
+Cloudflare's request-body limits are useful defense-in-depth for the audio
+endpoint, but Mastisk still rejects missing or invalid bearer tokens before it
+reads multipart bodies.
+
 Shortcut:
 
 1. **Record Audio** -> Audio Quality: your choice; Finish Recording: On Tap

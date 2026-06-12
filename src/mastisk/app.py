@@ -96,6 +96,7 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+    app.add_middleware(ingest.CaptureBearerAuthMiddleware)
 
     app.include_router(articles.router, prefix="/api")
     app.include_router(attachments.router)
