@@ -33,6 +33,12 @@ type DashboardAction = {
   label: string;
   onClick: () => void;
 };
+type MetricItem = {
+  label: string;
+  value: string | number;
+  detail?: string;
+  tone?: 'good' | 'warn' | 'hot';
+};
 
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : 'failed';
@@ -117,6 +123,20 @@ function DashSkeleton({ rows = 5 }: { rows?: number }) {
     <div className="dash-skeleton" aria-label="Loading">
       {Array.from({ length: rows }).map((_, index) => (
         <span key={index} style={{ animationDelay: `${index * 35}ms` }} />
+      ))}
+    </div>
+  );
+}
+
+function MetricStrip({ items }: { items: MetricItem[] }) {
+  return (
+    <div className="dash-metrics" aria-label="Personal OS summary">
+      {items.map((item) => (
+        <div key={item.label} className={`dash-metric ${item.tone ?? ''}`.trim()}>
+          <span>{item.label}</span>
+          <b>{item.value}</b>
+          {item.detail && <em>{item.detail}</em>}
+        </div>
       ))}
     </div>
   );
@@ -222,6 +242,8 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const firedToday = reminders.filter((r) => ['sent', 'late', 'notify_failed'].includes(r.status) && localDatePart(r.fired_at || r.fire_at) === today);
   const logLines = sectionLines(journal?.sections?.Log).slice(-4);
   const focusedUids = new Set(focus.map((task) => task.uid).filter(Boolean));
+  const routineRows = routines ? allRoutines(routines) : [];
+  const completedRoutines = routineRows.filter((routine) => routine.completed_today).length;
 
   return (
     <div className="view dash-view">
@@ -230,6 +252,12 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
         subtitle={formatLongDate(today)}
         primary={{ label: 'Open today', onClick: () => onNavigate('journal') }}
       />
+      <MetricStrip items={[
+        { label: 'focus', value: `${focus.length}/3`, detail: 'top tasks', tone: focus.length === 3 ? 'good' : undefined },
+        { label: 'due now', value: dueTasks.length, detail: 'tasks', tone: dueTasks.length > 0 ? 'warn' : 'good' },
+        { label: 'routines', value: `${completedRoutines}/${routineRows.length}`, detail: 'complete', tone: routineRows.length > 0 && completedRoutines === routineRows.length ? 'good' : undefined },
+        { label: 'calendar', value: calendar ? eventsCountLabel(calendar.events.length) : '-', detail: calendar?.status.status ?? 'loading' },
+      ]}/>
 
       {err && <p className="dash-error">{err}</p>}
       {loading ? (
@@ -350,6 +378,7 @@ export function TasksView({ liveKey }: LiveProps) {
   const [newText, setNewText] = useState('');
   const [newDue, setNewDue] = useState('');
   const [newPriority, setNewPriority] = useState<Priority>(null);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   async function load() {
@@ -367,6 +396,8 @@ export function TasksView({ liveKey }: LiveProps) {
       setProjects(projectRows);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -405,6 +436,12 @@ export function TasksView({ liveKey }: LiveProps) {
         subtitle="Capture the next action, date it when useful, and let today's journal be the default host."
         primary={{ label: showCreate ? 'Close' : '+ New', onClick: () => setShowCreate((value) => !value) }}
       />
+      <MetricStrip items={[
+        { label: 'visible', value: filtered.length, detail: status },
+        { label: 'focus', value: `${focus.length}/3`, detail: 'today', tone: focus.length === 3 ? 'good' : undefined },
+        { label: 'overdue', value: grouped.overdue.length, detail: 'needs action', tone: grouped.overdue.length > 0 ? 'warn' : 'good' },
+        { label: 'today', value: grouped.today.length, detail: 'dated' },
+      ]}/>
       <CreatePanel open={showCreate} title="New task">
         <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createTask(event), setErr)}>
           <input value={newText} onChange={(event) => setNewText(event.target.value)} placeholder="Task text"/>
@@ -430,7 +467,9 @@ export function TasksView({ liveKey }: LiveProps) {
         ]}/>
       </div>
       {err && <p className="dash-error">{err}</p>}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <DashSkeleton rows={6}/>
+      ) : filtered.length === 0 ? (
         <EmptyState action={{ label: '+ New task', onClick: () => setShowCreate(true) }}>
           No tasks match these filters. Create a task or clear the filters.
         </EmptyState>
@@ -460,6 +499,7 @@ export function ProjectsView({ liveKey }: LiveProps) {
   const [newType, setNewType] = useState<'project' | 'area' | 'retainer'>('project');
   const [newTemplate, setNewTemplate] = useState('');
   const [newRecurringItems, setNewRecurringItems] = useState('');
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [projectEditor, setProjectEditor] = useState<VaultEditorTarget | null>(null);
   const selectedRef = useRef<string | null>(null);
@@ -481,6 +521,8 @@ export function ProjectsView({ liveKey }: LiveProps) {
       setSelected((current) => current || rows[0]?.slug || null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -568,6 +610,10 @@ export function ProjectsView({ liveKey }: LiveProps) {
     await loadList();
   }
 
+  const activeProjects = projects.filter((project) => project.status === 'active').length;
+  const openProjectTasks = projects.reduce((sum, project) => sum + project.open_task_count, 0);
+  const retainers = projects.filter((project) => project.type === 'retainer').length;
+
   return (
     <div className="view dash-view">
       <DashboardHeader
@@ -575,6 +621,12 @@ export function ProjectsView({ liveKey }: LiveProps) {
         subtitle="Areas, projects, and retainers with file-backed logs and tasks."
         primary={{ label: showCreate ? 'Close' : '+ New', onClick: () => setShowCreate((value) => !value) }}
       />
+      <MetricStrip items={[
+        { label: 'active', value: activeProjects, detail: 'projects', tone: activeProjects > 0 ? 'hot' : undefined },
+        { label: 'open tasks', value: openProjectTasks, detail: 'attached' },
+        { label: 'retainers', value: retainers, detail: 'monthly loops' },
+        { label: 'selected', value: detail ? detail.status : '-', detail: detail?.type ?? 'none' },
+      ]}/>
       {err && <p className="dash-error">{err}</p>}
       <CreatePanel open={showCreate} title="New project">
         <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createProject(event), setErr)}>
@@ -602,7 +654,9 @@ export function ProjectsView({ liveKey }: LiveProps) {
           <button type="submit">Create project</button>
         </form>
       </CreatePanel>
-      {projects.length === 0 ? (
+      {loading ? (
+        <DashSkeleton rows={5}/>
+      ) : projects.length === 0 ? (
         <EmptyState action={{ label: '+ New project', onClick: () => setShowCreate(true) }}>
           No projects yet. Create your first project to give tasks a home.
         </EmptyState>
@@ -684,6 +738,7 @@ export function RoutinesView({ liveKey }: LiveProps) {
   const [newTime, setNewTime] = useState<TimeOfDay>('anytime');
   const [newStreak, setNewStreak] = useState<'ongoing' | 'fixed'>('ongoing');
   const [newTargetDays, setNewTargetDays] = useState('');
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   async function load() {
@@ -697,12 +752,16 @@ export function RoutinesView({ liveKey }: LiveProps) {
       setArchived(archivedRows);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
+    } finally {
+      setLoading(false);
     }
   }
 
   useEffect(() => { void load(); }, [liveKey]);
 
   const archivedOnly = archived ? allRoutines(archived).filter((r) => r.archived) : [];
+  const activeRows = active ? allRoutines(active) : [];
+  const completeToday = activeRows.filter((routine) => routine.completed_today).length;
 
   async function createRoutine(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -757,6 +816,12 @@ export function RoutinesView({ liveKey }: LiveProps) {
         subtitle="Repeatable loops grouped by the time of day they belong to."
         primary={{ label: showCreate ? 'Close' : '+ New', onClick: () => setShowCreate((value) => !value) }}
       />
+      <MetricStrip items={[
+        { label: 'active', value: activeRows.length, detail: 'routines' },
+        { label: 'done today', value: completeToday, detail: 'checked', tone: activeRows.length > 0 && completeToday === activeRows.length ? 'good' : undefined },
+        { label: 'archived', value: archivedOnly.length, detail: 'hidden' },
+        { label: 'fixed', value: activeRows.filter((routine) => routine.streak.fixed).length, detail: 'challenges' },
+      ]}/>
       {err && <p className="dash-error">{err}</p>}
       <CreatePanel open={showCreate} title="New routine">
         <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createRoutine(event), setErr)}>
@@ -780,21 +845,30 @@ export function RoutinesView({ liveKey }: LiveProps) {
           <button type="submit">Create routine</button>
         </form>
       </CreatePanel>
-      {!active || allRoutines(active).length === 0 ? (
+      {loading ? (
+        <DashSkeleton rows={5}/>
+      ) : !active || allRoutines(active).length === 0 ? (
         <EmptyState action={{ label: '+ New routine', onClick: () => setShowCreate(true) }}>
           No routines yet. Create your first routine to start tracking a streak.
         </EmptyState>
-      ) : TIME_GROUPS.map((group) => active[group]?.length ? (
+      ) : (
+        <>
+        {TIME_GROUPS.map((group) => active[group]?.length ? (
         <section className="dash-section" key={group}>
           <h2>{labelTime(group)}</h2>
           <div className="routine-grid">
             {active[group].map((routine) => <RoutineCard key={routine.slug} routine={routine} liveKey={liveKey} onChanged={load}/>)}
           </div>
         </section>
-      ) : null)}
+        ) : null)}
 
       <section className="dash-section">
-        <button className="dash-collapse" onClick={() => setShowArchived((v) => !v)}>
+        <button
+          className="dash-collapse"
+          type="button"
+          aria-expanded={showArchived}
+          onClick={() => setShowArchived((v) => !v)}
+        >
           Archived routines ({archivedOnly.length})
         </button>
         {showArchived && (
@@ -808,6 +882,8 @@ export function RoutinesView({ liveKey }: LiveProps) {
           </div>
         )}
       </section>
+        </>
+      )}
     </div>
   );
 }
@@ -819,6 +895,8 @@ export function JournalView({ liveKey }: LiveProps) {
   const [detail, setDetail] = useState<JournalDay | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [entry, setEntry] = useState('');
+  const [todayEntry, setTodayEntry] = useState('');
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [journalEditor, setJournalEditor] = useState<VaultEditorTarget | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -833,6 +911,8 @@ export function JournalView({ liveKey }: LiveProps) {
       if (!selected && rows[0]) setSelected(rows[0].date);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -864,12 +944,12 @@ export function JournalView({ liveKey }: LiveProps) {
 
   async function appendTodayLog(e: FormEvent) {
     e.preventDefault();
-    const text = entry.trim();
+    const text = todayEntry.trim();
     if (!text) return;
     setErr(null);
     try {
       await api.journalApi.appendLog(today, text);
-      setEntry('');
+      setTodayEntry('');
       setSelected(today);
       setShowCreate(false);
       await loadDays();
@@ -904,6 +984,8 @@ export function JournalView({ liveKey }: LiveProps) {
     await loadDays();
   }
 
+  const selectedSummary = days.find((day) => day.date === selected);
+
   return (
     <div className="view dash-view">
       <DashboardHeader
@@ -913,13 +995,23 @@ export function JournalView({ liveKey }: LiveProps) {
       >
         <button className="chip" type="button" onClick={() => setSelected(today)}>Open today</button>
       </DashboardHeader>
+      <MetricStrip items={[
+        { label: 'days', value: days.length, detail: 'loaded' },
+        { label: 'selected log', value: selectedSummary?.log_count ?? detail?.log_count ?? 0, detail: selected },
+        { label: 'mood', value: detail?.mood ?? '-', detail: '1-5' },
+        { label: 'energy', value: detail?.energy ?? '-', detail: '1-5' },
+      ]}/>
       {err && <p className="dash-error">{err}</p>}
       <CreatePanel open={showCreate} title="New journal log">
         <form className="dash-inline-form project-create" onSubmit={appendTodayLog}>
-          <input value={entry} onChange={(e) => setEntry(e.target.value)} placeholder="Append to today's log"/>
+          <input value={todayEntry} onChange={(e) => setTodayEntry(e.target.value)} placeholder="Append to today's log"/>
           <button type="submit">Add to today</button>
         </form>
       </CreatePanel>
+      {loading ? (
+        <DashSkeleton rows={6}/>
+      ) : (
+      <>
       <div className="dash-split journal-split">
         <div className="dash-list">
           {days.length === 0 ? (
@@ -1013,6 +1105,8 @@ export function JournalView({ liveKey }: LiveProps) {
           }}
         />
       )}
+      </>
+      )}
     </div>
   );
 }
@@ -1025,6 +1119,7 @@ export function PeopleView({ liveKey }: LiveProps) {
   const [newName, setNewName] = useState('');
   const [interaction, setInteraction] = useState('');
   const [followUpAt, setFollowUpAt] = useState('');
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   async function loadList() {
@@ -1035,6 +1130,8 @@ export function PeopleView({ liveKey }: LiveProps) {
       setSelected((current) => current || rows[0]?.slug || null);
     } catch (e) {
       setErr(errorMessage(e));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1100,6 +1197,12 @@ export function PeopleView({ liveKey }: LiveProps) {
     await loadList();
   }
 
+  const followUps = people.filter((person) => person.follow_up_at).length;
+  const dueFollowUps = people.filter((person) => (
+    person.follow_up_at ? Date.parse(person.follow_up_at) <= Date.now() : false
+  )).length;
+  const birthdaysSoon = people.filter((person) => person.birthday_soon).length;
+
   return (
     <div className="view dash-view">
       <DashboardHeader
@@ -1107,6 +1210,12 @@ export function PeopleView({ liveKey }: LiveProps) {
         subtitle="A lightweight personal CRM for people, facts, interactions, and follow-ups."
         primary={{ label: showCreate ? 'Close' : '+ New', onClick: () => setShowCreate((value) => !value) }}
       />
+      <MetricStrip items={[
+        { label: 'people', value: people.length, detail: 'active' },
+        { label: 'follow-ups', value: followUps, detail: 'scheduled' },
+        { label: 'due now', value: dueFollowUps, detail: 'follow-ups', tone: dueFollowUps > 0 ? 'warn' : 'good' },
+        { label: 'birthdays', value: birthdaysSoon, detail: 'soon', tone: birthdaysSoon > 0 ? 'hot' : undefined },
+      ]}/>
       {err && <p className="dash-error">{err}</p>}
       <CreatePanel open={showCreate} title="New person">
         <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createPerson(event), setErr)}>
@@ -1114,7 +1223,9 @@ export function PeopleView({ liveKey }: LiveProps) {
           <button type="submit">Create person</button>
         </form>
       </CreatePanel>
-      {people.length === 0 ? (
+      {loading ? (
+        <DashSkeleton rows={5}/>
+      ) : people.length === 0 ? (
         <EmptyState action={{ label: '+ New person', onClick: () => setShowCreate(true) }}>
           No people yet. Create your first person to track context and follow-ups.
         </EmptyState>
@@ -1228,6 +1339,7 @@ export function InventoryView({ liveKey }: LiveProps) {
   const [editLocation, setEditLocation] = useState('');
   const [editPhoto, setEditPhoto] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   async function loadList() {
@@ -1246,6 +1358,8 @@ export function InventoryView({ liveKey }: LiveProps) {
       ));
     } catch (e) {
       setErr(errorMessage(e));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1335,6 +1449,9 @@ export function InventoryView({ liveKey }: LiveProps) {
     await loadList();
   }
 
+  const ownedItems = items.filter((item) => item.status === 'owned').length;
+  const locationCount = new Set(items.map((item) => item.location).filter(Boolean)).size;
+
   return (
     <div className="view dash-view">
       <DashboardHeader
@@ -1344,10 +1461,12 @@ export function InventoryView({ liveKey }: LiveProps) {
       >
         <a className="chip" href={api.inventoryApi.exportUrl}>export CSV</a>
       </DashboardHeader>
-      <div className="dash-tags">
-        <span>total value <b className="tabular-num">{formatInventoryValue(totalValue)}</b></span>
-        <span><b className="tabular-num">{items.length}</b> items</span>
-      </div>
+      <MetricStrip items={[
+        { label: 'total value', value: formatInventoryValue(totalValue), detail: 'visible' },
+        { label: 'items', value: items.length, detail: statusFilter || 'all' },
+        { label: 'owned', value: ownedItems, detail: 'current' },
+        { label: 'locations', value: locationCount, detail: 'visible' },
+      ]}/>
       {err && <p className="dash-error">{err}</p>}
 
       <CreatePanel open={showCreate} title="New inventory item">
@@ -1370,7 +1489,9 @@ export function InventoryView({ liveKey }: LiveProps) {
         </label>
       </div>
 
-      {items.length === 0 ? (
+      {loading ? (
+        <DashSkeleton rows={5}/>
+      ) : items.length === 0 ? (
         <EmptyState action={{ label: '+ New item', onClick: () => setShowCreate(true) }}>
           No inventory items match these filters. Create an item or clear the filters.
         </EmptyState>
@@ -1449,6 +1570,7 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const [editPublishDate, setEditPublishDate] = useState('');
   const [draftingSlug, setDraftingSlug] = useState<string | null>(null);
   const [archivingSlug, setArchivingSlug] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [contentEditor, setContentEditor] = useState<VaultEditorTarget | null>(null);
 
@@ -1468,6 +1590,8 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
       ));
     } catch (e) {
       setErr(errorMessage(e));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1579,6 +1703,11 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
 
   const items = data?.items ?? [];
   const kanban = data?.kanban ?? {};
+  const activeProduction = ['outline', 'editing', 'waiting'].reduce(
+    (sum, status) => sum + (kanban[status]?.length ?? 0),
+    0,
+  );
+  const triageCount = items.filter((item) => item.needs_triage).length;
 
   return (
     <div className="view dash-view">
@@ -1587,6 +1716,12 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
         subtitle="Ideas and production stages for articles, newsletters, podcasts, and video."
         primary={{ label: showCreate ? 'Close' : '+ New', onClick: () => setShowCreate((value) => !value) }}
       />
+      <MetricStrip items={[
+        { label: 'items', value: items.length, detail: kindFilter || 'all kinds' },
+        { label: 'in production', value: activeProduction, detail: 'outline/edit/wait' },
+        { label: 'published', value: kanban.published?.length ?? 0, detail: 'shipped', tone: (kanban.published?.length ?? 0) > 0 ? 'good' : undefined },
+        { label: 'triage', value: triageCount, detail: 'needs review', tone: triageCount > 0 ? 'warn' : 'good' },
+      ]}/>
       {err && <p className="dash-error">{err}</p>}
 
       <CreatePanel open={showCreate} title="New content idea">
@@ -1616,6 +1751,10 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
         </label>
       </div>
 
+      {loading ? (
+        <DashSkeleton rows={6}/>
+      ) : (
+      <>
       <section className="dash-section content-kanban">
         <div className="dash-section-head">
           <h2>Kanban</h2>
@@ -1623,7 +1762,7 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
         </div>
         <div className="content-kanban-grid">
           {CONTENT_STATUSES.map((status) => (
-            <div className="dash-card content-column" key={status}>
+            <section className="content-column" key={status}>
               <div className="dash-section-head">
                 <h3>{status}</h3>
                 <span className="dash-muted">{(kanban[status] ?? []).length}</span>
@@ -1643,7 +1782,7 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
                   ))}
                 </div>
               )}
-            </div>
+            </section>
           ))}
         </div>
       </section>
@@ -1748,6 +1887,8 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
           }}
         />
       )}
+      </>
+      )}
     </div>
   );
 }
@@ -1757,6 +1898,7 @@ export function InboxTriageView({ liveKey }: LiveProps) {
   const [needsReview, setNeedsReview] = useState<NeedsReviewItem[]>([]);
   const [tab, setTab] = useState<'triage' | 'review'>('triage');
   const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   async function load() {
@@ -1770,6 +1912,8 @@ export function InboxTriageView({ liveKey }: LiveProps) {
       setNeedsReview(reviewRows);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1807,16 +1951,34 @@ export function InboxTriageView({ liveKey }: LiveProps) {
         title="Inbox triage"
         subtitle="Low-confidence captures and generated updates that need a human decision."
       />
-      <div className="dash-tabs">
-        <button className={tab === 'triage' ? 'active' : ''} onClick={() => setTab('triage')}>
+      <MetricStrip items={[
+        { label: 'triage', value: items.length, detail: 'captures', tone: items.length > 0 ? 'warn' : 'good' },
+        { label: 'review', value: needsReview.length, detail: 'generated updates', tone: needsReview.length > 0 ? 'warn' : 'good' },
+      ]}/>
+      <div className="dash-tabs" role="tablist" aria-label="Inbox triage queue">
+        <button
+          className={tab === 'triage' ? 'active' : ''}
+          type="button"
+          role="tab"
+          aria-selected={tab === 'triage'}
+          onClick={() => setTab('triage')}
+        >
           Triage {items.length}
         </button>
-        <button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}>
+        <button
+          className={tab === 'review' ? 'active' : ''}
+          type="button"
+          role="tab"
+          aria-selected={tab === 'review'}
+          onClick={() => setTab('review')}
+        >
           Needs review {needsReview.length}
         </button>
       </div>
       {err && <p className="dash-error">{err}</p>}
-      {tab === 'review' ? (
+      {loading ? (
+        <DashSkeleton rows={5}/>
+      ) : tab === 'review' ? (
         needsReview.length === 0 ? (
           <EmptyState>No items need review.</EmptyState>
         ) : (
@@ -1913,11 +2075,13 @@ function FocusTaskRow({ task, today, onChanged }: { task: TaskRow; today: string
   const [err, setErr] = useState<string | null>(null);
   return (
     <div className={`focus-task-row ${task.checked ? 'done' : ''}`}>
-      <button
-        className="focus-star on"
-        onClick={() => runMutation(async () => {
-          await api.focus.remove(today, task.uid);
-          await onChanged();
+        <button
+          className="focus-star on"
+          type="button"
+          aria-pressed="true"
+          onClick={() => runMutation(async () => {
+            await api.focus.remove(today, task.uid);
+            await onChanged();
         }, setErr)}
         aria-label="Remove from daily focus"
         title="Remove from daily focus"
@@ -2122,11 +2286,14 @@ function TaskLine({
     <div className={`dash-card task-line ${task.checked ? 'done' : ''}`}>
       <button
         className="task-check"
+        type="button"
+        role="checkbox"
+        aria-checked={task.checked}
         onClick={() => runMutation(async () => {
           await api.tasks.toggle(task.uid);
           await onChanged();
         }, setErr)}
-        aria-label="Toggle task"
+        aria-label={task.checked ? 'Mark task incomplete' : 'Mark task complete'}
       >
         {task.checked ? 'x' : ''}
       </button>
@@ -2135,6 +2302,8 @@ function TaskLine({
           {focusDate && (
             <button
               className={`focus-star ${focused ? 'on' : ''}`}
+              type="button"
+              aria-pressed={focused}
               onClick={() => void toggleFocus()}
               aria-label={focused ? 'Remove from daily focus' : 'Add to daily focus'}
               title={focused ? 'Remove from daily focus' : 'Add to daily focus'}
@@ -2171,6 +2340,7 @@ function TaskLine({
         <input
           value={due}
           placeholder="due"
+          aria-label={`Due date for ${task.text}`}
           onChange={(e) => setDue(e.target.value)}
           onBlur={() => {
             if ((task.due ?? '') !== due) runMutation(() => savePatch({ due: due.trim() || null }), setErr);
@@ -2178,6 +2348,7 @@ function TaskLine({
         />
         <select
           value={priority ?? ''}
+          aria-label={`Priority for ${task.text}`}
           onChange={(e) => {
             const next = (e.target.value || null) as Priority;
             setPriority(next);
@@ -2202,6 +2373,8 @@ function RoutineGroup({ label, routines, onChanged }: { label: TimeOfDay; routin
           <div key={routine.slug} className="dash-row">
             <button
               className={`mini-toggle ${routine.completed_today ? 'on' : ''}`}
+              type="button"
+              aria-pressed={routine.completed_today}
               onClick={() => runMutation(async () => {
                 await api.routinesApi.toggle(routine.slug);
                 await onChanged();
@@ -2231,6 +2404,8 @@ function RoutineCard({ routine, liveKey, onChanged }: { routine: RoutineRow; liv
         <h3>{routine.name}</h3>
         <button
           className={`mini-toggle ${routine.completed_today ? 'on' : ''}`}
+          type="button"
+          aria-pressed={routine.completed_today}
           onClick={() => runMutation(async () => {
             await api.routinesApi.toggle(routine.slug);
             await onChanged();
@@ -2255,6 +2430,7 @@ function RoutineCard({ routine, liveKey, onChanged }: { routine: RoutineRow; liv
       )}
       <button
         className="chip muted"
+        type="button"
         onClick={() => runMutation(async () => {
           await api.routinesApi.archive(routine.slug);
           await onChanged();
@@ -2489,10 +2665,19 @@ function ContentCard({
 
 function ScaleSetter({ label, value, onSet }: { label: string; value: number | null; onSet: (value: number | null) => void }) {
   return (
-    <div className="scale-setter">
+    <div className="scale-setter" role="group" aria-label={label}>
       <span>{label}</span>
       {[1, 2, 3, 4, 5].map((n) => (
-        <button key={n} className={value === n ? 'active' : ''} onClick={() => onSet(value === n ? null : n)}>{n}</button>
+        <button
+          key={n}
+          type="button"
+          className={value === n ? 'active' : ''}
+          aria-pressed={value === n}
+          aria-label={`${label} ${n}`}
+          onClick={() => onSet(value === n ? null : n)}
+        >
+          {n}
+        </button>
       ))}
     </div>
   );
@@ -2514,6 +2699,10 @@ function nextContentStatus(status: string): ContentStatus {
 function formatInventoryValue(value: number | null | undefined): string {
   if (value == null) return '-';
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+}
+
+function eventsCountLabel(count: number): string {
+  return count === 1 ? '1 event' : `${count} events`;
 }
 
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: [string, string][] }) {

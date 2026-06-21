@@ -268,10 +268,34 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
         </div>
       </header>
 
-      <div className="dash-tabs">
-        <button className={tab === 'books' ? 'active' : ''} onClick={() => { setTab('books'); setShowCreate(false); }}>Books {books.length}</button>
-        <button className={tab === 'quotes' ? 'active' : ''} onClick={() => { setTab('quotes'); setShowCreate(false); }}>Quotes {quotes.length}</button>
-        <button className={tab === 'kindle' ? 'active' : ''} onClick={() => { setTab('kindle'); setShowCreate(false); }}>Kindle {reviewItems.length}</button>
+      <div className="dash-tabs" role="tablist" aria-label="Library sections">
+        <button
+          className={tab === 'books' ? 'active' : ''}
+          type="button"
+          role="tab"
+          aria-selected={tab === 'books'}
+          onClick={() => { setTab('books'); setShowCreate(false); }}
+        >
+          Books {books.length}
+        </button>
+        <button
+          className={tab === 'quotes' ? 'active' : ''}
+          type="button"
+          role="tab"
+          aria-selected={tab === 'quotes'}
+          onClick={() => { setTab('quotes'); setShowCreate(false); }}
+        >
+          Quotes {quotes.length}
+        </button>
+        <button
+          className={tab === 'kindle' ? 'active' : ''}
+          type="button"
+          role="tab"
+          aria-selected={tab === 'kindle'}
+          onClick={() => { setTab('kindle'); setShowCreate(false); }}
+        >
+          Kindle {reviewItems.length}
+        </button>
       </div>
 
       {err && <p className="dash-error">{err}</p>}
