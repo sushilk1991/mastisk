@@ -135,6 +135,7 @@ summary:focus-visible {
 }
 .app[data-rail="closed"] { grid-template-columns: 260px 1fr 0; }
 .app[data-side="closed"] { grid-template-columns: 0 1fr 320px; }
+.app[data-side="closed"][data-rail="closed"] { grid-template-columns: 0 1fr 0; }
 
 .titlebar {
   grid-column: 1 / -1;
@@ -336,6 +337,8 @@ summary:focus-visible {
 
 /* ---------- left sidebar ---------- */
 .sidebar {
+  grid-column: 1;
+  grid-row: 2;
   position: relative;
   border-right: 1px solid var(--line);
   background: var(--bg-elev);
@@ -434,6 +437,9 @@ summary:focus-visible {
 
 /* ---------- main reader ---------- */
 .main {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
   overflow-y: auto;
   background: var(--bg);
   position: relative;
@@ -712,6 +718,9 @@ summary:focus-visible {
 
 /* ---------- right rail ---------- */
 .rail {
+  grid-column: 3;
+  grid-row: 2;
+  min-width: 0;
   border-left: 1px solid var(--line);
   background: var(--bg-elev);
   overflow-y: auto;
@@ -2735,21 +2744,29 @@ button.dash-card:active,
   #root { height: auto; min-height: 100vh; }
 
   .app {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 44px auto;
     height: auto;
     min-height: 100vh;
   }
   .app[data-side="closed"],
   .app[data-rail="closed"] {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app[data-side="closed"][data-rail="closed"] {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .titlebar { padding: 0 10px; gap: 8px; position: sticky; top: 0; z-index: 50; }
-  .tb-crumb { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+  .titlebar { min-width: 0; padding: 0 8px; gap: 6px; position: sticky; top: 0; z-index: 50; overflow: hidden; }
+  .tb-crumb { min-width: 0; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(34vw, 132px); }
   .tb-search { display: none; }
   /* Show the icon-only search button when the wide bar is hidden. */
   .tb-search-btn { display: flex; }
+
+  .main {
+    grid-column: 1;
+    grid-row: 2;
+  }
 
   /* Sidebar becomes a drawer */
   .sidebar {
@@ -2764,6 +2781,8 @@ button.dash-card:active,
 
   /* Right rail stacks UNDER main instead of next to it */
   .rail {
+    grid-column: 1;
+    grid-row: auto;
     border-left: none;
     border-top: 1px solid var(--line);
     max-width: 100%;
