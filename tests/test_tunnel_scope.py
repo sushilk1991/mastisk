@@ -106,3 +106,28 @@ def test_configured_extra_local_hostname_keeps_tailnet_pwa_flow(vault_tmp, data_
 
     assert response.status_code == 201, response.text
     assert response.json()["type"] == "note"
+
+
+def test_current_tailscale_hostname_keeps_tailnet_pwa_flow_without_config(
+    vault_tmp, data_tmp, db, monkeypatch
+):
+    from mastisk import tunnel_scope
+
+    monkeypatch.setattr(
+        tunnel_scope,
+        "_discover_tailscale_local_hosts",
+        lambda: {"sushils-macbook-pro.tailec4b87.ts.net", "100.116.174.114"},
+        raising=False,
+    )
+    mocked_router = _mock_capture_router()
+
+    with patch("mastisk.routes.capture.route_capture", mocked_router):
+        with _client(vault_tmp, data_tmp, db) as client:
+            response = client.post(
+                "/api/quick-capture",
+                json={"text": "phone pwa note"},
+                headers={"Host": "sushils-macbook-pro.tailec4b87.ts.net:5555"},
+            )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["type"] == "note"
