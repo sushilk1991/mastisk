@@ -1,11 +1,7 @@
 """Defense-in-depth scoping for cloud/tunnel traffic."""
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
-from functools import lru_cache
-from pathlib import Path
+import ipaddress
 
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
@@ -14,6 +10,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from mastisk.settings import get_settings
 
 _TUNNELED_INGRESS_PATHS = frozenset({"/api/capture", "/api/capture/audio"})
+_TAILNET_HOST_SUFFIX = ".ts.net"
+_TAILSCALE_NETWORKS = (
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("fd7a:115c:a1e0::/48"),
+)
 _PROXY_MARKER_HEADERS = frozenset(
     {
         "forwarded",
@@ -60,68 +61,43 @@ class TunnelScopeMiddleware:
 
 def _has_tunnel_provenance(scope: Scope, allowed_local_hosts: set[str]) -> bool:
     headers = Headers(scope=scope)
-    host = headers.get("host") or ""
-    if _normalize_host(host) not in allowed_local_hosts:
-        return True
-    return _has_proxy_marker_headers(scope)
+    host = _normalize_host(headers.get("host") or "")
+    if host in allowed_local_hosts or _is_direct_tailnet_request(scope, host):
+        return _has_proxy_marker_headers(scope)
+    return True
 
 
 def _allowed_local_hosts() -> set[str]:
     configured = get_settings().server.local_hostnames
-    hosts = {
+    return {
         normalized
         for raw in configured
         if (normalized := _normalize_host(str(raw)))
     }
-    hosts.update(_discover_tailscale_local_hosts())
-    return hosts
 
 
-@lru_cache(maxsize=1)
-def _discover_tailscale_local_hosts() -> set[str]:
-    binary = _tailscale_binary()
-    if not binary:
-        return set()
+def _is_direct_tailnet_request(scope: Scope, host: str) -> bool:
+    return _is_tailnet_host(host) and _client_is_tailscale(scope)
 
+
+def _is_tailnet_host(host: str) -> bool:
+    return host.endswith(_TAILNET_HOST_SUFFIX) or _is_tailscale_ip(host)
+
+
+def _client_is_tailscale(scope: Scope) -> bool:
+    client = scope.get("client")
+    if not client:
+        return False
+    host = str(client[0])
+    return _is_tailscale_ip(host)
+
+
+def _is_tailscale_ip(value: str) -> bool:
     try:
-        raw = subprocess.check_output(
-            [binary, "status", "--json"],
-            stderr=subprocess.DEVNULL,
-            timeout=1,
-        )
-        data = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
-    except Exception:
-        return set()
-
-    self_node = data.get("Self") if isinstance(data, dict) else None
-    if not isinstance(self_node, dict):
-        return set()
-
-    hosts: list[str] = []
-    dns_name = self_node.get("DNSName")
-    if isinstance(dns_name, str) and dns_name.strip():
-        hosts.append(dns_name.rstrip("."))
-
-    tailscale_ips = self_node.get("TailscaleIPs")
-    if isinstance(tailscale_ips, list):
-        hosts.extend(ip for ip in tailscale_ips if isinstance(ip, str))
-
-    return {
-        normalized
-        for raw_host in hosts
-        if (normalized := _normalize_host(raw_host))
-    }
-
-
-def _tailscale_binary() -> str | None:
-    for candidate in [
-        shutil.which("tailscale"),
-        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-        "/usr/local/bin/tailscale",
-    ]:
-        if candidate and Path(candidate).exists():
-            return str(candidate)
-    return None
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return any(ip in network for network in _TAILSCALE_NETWORKS)
 
 
 def _normalize_host(value: str) -> str:

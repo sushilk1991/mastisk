@@ -14,6 +14,15 @@ def _client(vault_tmp, data_tmp, db):
     return TestClient(create_app())
 
 
+def _client_from(vault_tmp, data_tmp, db, host: str):
+    from mastisk.settings import reload_settings
+
+    reload_settings()
+    from mastisk.app import create_app
+
+    return TestClient(create_app(), client=(host, 50000))
+
+
 def _mock_capture_router():
     from mastisk.capture.router import Capture
 
@@ -108,21 +117,26 @@ def test_configured_extra_local_hostname_keeps_tailnet_pwa_flow(vault_tmp, data_
     assert response.json()["type"] == "note"
 
 
-def test_current_tailscale_hostname_keeps_tailnet_pwa_flow_without_config(
-    vault_tmp, data_tmp, db, monkeypatch
+def test_tailnet_hostname_from_loopback_without_config_is_hidden(
+    vault_tmp, data_tmp, db
 ):
-    from mastisk import tunnel_scope
+    with _client_from(vault_tmp, data_tmp, db, "127.0.0.1") as client:
+        response = client.post(
+            "/api/quick-capture",
+            json={"text": "local spoof"},
+            headers={"Host": "sushils-macbook-pro.tailec4b87.ts.net:5555"},
+        )
 
-    monkeypatch.setattr(
-        tunnel_scope,
-        "_discover_tailscale_local_hosts",
-        lambda: {"sushils-macbook-pro.tailec4b87.ts.net", "100.116.174.114"},
-        raising=False,
-    )
+    assert response.status_code == 404
+
+
+def test_direct_tailnet_client_hostname_keeps_tailnet_pwa_flow_without_config(
+    vault_tmp, data_tmp, db
+):
     mocked_router = _mock_capture_router()
 
     with patch("mastisk.routes.capture.route_capture", mocked_router):
-        with _client(vault_tmp, data_tmp, db) as client:
+        with _client_from(vault_tmp, data_tmp, db, "100.95.63.121") as client:
             response = client.post(
                 "/api/quick-capture",
                 json={"text": "phone pwa note"},
