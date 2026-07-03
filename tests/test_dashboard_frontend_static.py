@@ -143,6 +143,14 @@ def test_phase16_ingest_frontend_surfaces_document_and_journal_photo_uploads():
     assert "/ingest/jobs/" in api_source
     assert "/ingest/journal-photo" in api_source
     assert "api.ingest.uploadDocument" in ingest
+    assert "api.notes.escalate(note.id)" in ingest
+    assert "Import anything into Mastisk." in ingest
+    assert "text -> note + research" in ingest
+    assert "link -> source article" in ingest
+    assert "file -> source article" in ingest
+    assert "compilerJobStatus" in ingest
+    assert "article compile already queued" in ingest
+    assert "article compile done" in ingest
     assert "api.ingest.job(docJobId)" in ingest
     assert "api.ingest.uploadJournalPhoto(file, selected)" in dashboard
     assert "ocr_status === 'done'" in dashboard

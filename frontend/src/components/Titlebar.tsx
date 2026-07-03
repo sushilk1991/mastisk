@@ -11,7 +11,7 @@ const CRUMB: Record<string, readonly string[]> = {
   mobile:  ['System', 'Mobile companion'],
   queue:   ['Today',  'Reading queue'],
   open_questions: ['Today', 'Open questions'],
-  ingest:  ['System', 'Sources & ingest'],
+  ingest:  ['System', 'Import'],
   lint:    ['System', 'Health check'],
   settings:['System', 'Settings'],
   library: ['Personal OS', 'Library'],

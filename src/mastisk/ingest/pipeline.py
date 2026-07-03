@@ -24,7 +24,7 @@ from mastisk.bridges.claude_bridge import extract_json_block
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.ingest.converters import convert_document
-from mastisk.paths import tmp_dir, vault_dir
+from mastisk.paths import raw_dir, tmp_dir, vault_dir
 from mastisk.routes.notes import persist_note_capture
 
 ALLOWED_DOCUMENT_EXTS = {"pdf", "docx", "pptx", "xlsx", "html", "txt", "md", "epub"}
@@ -91,11 +91,22 @@ async def process_document_job(job_id: int, payload: dict[str, Any]) -> dict[str
         original_rel_path=str(payload["source_rel_path"]),
         filename=str(payload.get("filename") or source_path.name),
     )
+    source = persist_converted_source(
+        converted_markdown=conversion.markdown,
+        metadata=metadata,
+        original_rel_path=str(payload["source_rel_path"]),
+        filename=str(payload.get("filename") or source_path.name),
+        sha256=str(payload.get("sha256") or ""),
+    )
     result = {
         "note_id": row["id"],
         "note_path": row["path"],
         "source_path": payload["source_rel_path"],
         "provider": conversion.provider,
+        "source_id": source["source_id"],
+        "compiler_job_id": source["compiler_job_id"],
+        "compiler_job_status": source["compiler_job_status"],
+        "compiler_job_created": source["compiler_job_created"],
     }
     merge_job_payload(job_id, {"result": result})
     emit_ingest_feed("ingested", str(payload.get("filename") or source_path.name), "document", result)
@@ -177,6 +188,80 @@ def persist_converted_source_note(
         )
         updated = q.get_note(conn, int(row["id"]))
     return dict(updated or row)
+
+
+def persist_converted_source(
+    *,
+    converted_markdown: str,
+    metadata: SourceMetadata,
+    original_rel_path: str,
+    filename: str,
+    sha256: str,
+) -> dict[str, Any]:
+    digest = sha256 if len(sha256) >= 16 else hashlib.sha256(
+        f"{filename}\n{converted_markdown}".encode("utf-8")
+    ).hexdigest()
+    source_id = f"document-{digest[:32]}"
+    raw_path = raw_dir() / f"{source_id}.md"
+    raw_body = (
+        f"# {filename}\n\n"
+        f"Original file: vault/{original_rel_path}\n"
+        f"Source type: {metadata.source_type}\n\n"
+        f"{metadata.summary}\n\n"
+        "## Converted text\n\n"
+        f"{converted_markdown.strip() or '(no extractable text)'}"
+    )
+    atomic_write_bytes(raw_path, raw_body.encode("utf-8"))
+
+    with connect() as conn, q.txn(conn):
+        conn.execute(
+            """INSERT OR IGNORE INTO sources
+                 (id, kind, url, title, raw_path)
+               VALUES (?, ?, NULL, ?, ?)""",
+            (
+                source_id,
+                metadata.source_type,
+                filename,
+                str(raw_path),
+            ),
+        )
+        row = conn.execute(
+            """SELECT id, status
+               FROM jobs
+               WHERE agent = 'compiler'
+                 AND kind = 'compile'
+                 AND status IN ('queued', 'running', 'done')
+                 AND json_valid(payload_json)
+                 AND json_extract(payload_json, '$.source_id') = ?
+               ORDER BY CASE status
+                          WHEN 'queued' THEN 0
+                          WHEN 'running' THEN 1
+                          ELSE 2
+                        END,
+                        id DESC
+               LIMIT 1""",
+            (source_id,),
+        ).fetchone()
+        if row is not None:
+            compiler_job_id = int(row["id"])
+            compiler_job_status = str(row["status"])
+            compiler_job_created = False
+        else:
+            cur = conn.execute(
+                "INSERT INTO jobs (agent, kind, payload_json) VALUES (?, ?, ?)",
+                ("compiler", "compile", json.dumps({"source_id": source_id})),
+            )
+            compiler_job_id = int(cur.lastrowid)
+            compiler_job_status = "queued"
+            compiler_job_created = True
+
+    return {
+        "source_id": source_id,
+        "compiler_job_id": compiler_job_id,
+        "compiler_job_status": compiler_job_status,
+        "compiler_job_created": compiler_job_created,
+        "raw_path": str(raw_path),
+    }
 
 
 def companion_note_body(

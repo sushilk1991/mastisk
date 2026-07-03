@@ -3416,6 +3416,241 @@ button.dash-card:active,
   color: #c53030;
 }
 
+/* ---------- ingest ---------- */
+.ingest-view {
+  max-width: 980px;
+}
+.import-console {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--rad);
+  box-shadow: var(--shadow-sm);
+  padding: 18px;
+  margin: 26px 0 42px;
+}
+.import-console-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+.import-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 4px;
+}
+.import-console h2,
+.import-section h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 24px;
+  line-height: 1.18;
+  font-weight: 500;
+  color: var(--fg);
+}
+.import-route {
+  flex: 0 0 auto;
+  min-width: 78px;
+  text-align: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.import-route.route-url {
+  color: var(--kind-source);
+  border-color: color-mix(in oklch, var(--kind-source) 35%, var(--line));
+  background: color-mix(in oklch, var(--kind-source) 12%, transparent);
+}
+.import-route.route-document {
+  color: var(--kind-entity);
+  border-color: color-mix(in oklch, var(--kind-entity) 35%, var(--line));
+  background: color-mix(in oklch, var(--kind-entity) 12%, transparent);
+}
+.import-form {
+  display: grid;
+  gap: 12px;
+}
+.import-form textarea {
+  width: 100%;
+  min-height: 168px;
+  resize: vertical;
+  padding: 14px;
+  border-radius: var(--rad);
+  border: 1px solid var(--line);
+  background: var(--bg-sunk);
+  color: var(--fg);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.52;
+  outline: none;
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    background var(--dur-fast) var(--ease-standard);
+}
+.import-form textarea:focus {
+  border-color: var(--accent);
+  background: var(--bg-elev);
+}
+.import-form textarea:disabled {
+  opacity: 0.55;
+}
+.import-file-drop {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px;
+  border: 1px dashed var(--line);
+  border-radius: var(--rad);
+  background: var(--bg-elev);
+}
+.import-file-drop.has-file {
+  border-style: solid;
+  border-color: color-mix(in oklch, var(--kind-entity) 35%, var(--line));
+  background: color-mix(in oklch, var(--kind-entity) 8%, var(--bg-elev));
+}
+.import-file-input {
+  display: none;
+}
+.import-file-button,
+.import-file-clear,
+.import-secondary,
+.import-primary {
+  min-height: 36px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
+}
+.import-file-button,
+.import-secondary {
+  background: var(--bg-card);
+  color: var(--fg);
+}
+.import-file-button:hover,
+.import-secondary:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.import-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+.import-file-clear {
+  background: transparent;
+  color: var(--fg-mute);
+}
+.import-file-clear:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.import-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.import-route-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.import-route-list span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--bg-sunk);
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.import-route-list span.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.import-primary {
+  min-width: 112px;
+  background: var(--fg);
+  color: var(--fg-inv);
+  border-color: var(--fg);
+}
+.import-primary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--fg) 84%, var(--accent));
+  border-color: color-mix(in oklch, var(--fg) 84%, var(--accent));
+}
+.import-primary:disabled,
+.import-secondary:disabled {
+  opacity: 0.45;
+}
+.import-file-button:active,
+.import-file-clear:active,
+.import-primary:active:not(:disabled),
+.import-secondary:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.import-section {
+  margin-top: 12px;
+}
+.import-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+.import-section-head > span {
+  max-width: 320px;
+  color: var(--fg-mute);
+  font-family: var(--serif);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: right;
+}
+.feed-subscribe-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(140px, 220px) auto;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+.feed-list {
+  border: 1px solid var(--line);
+  border-radius: var(--rad);
+  overflow: hidden;
+  background: var(--bg-card);
+}
+.import-empty {
+  padding: 20px;
+  border: 1px dashed var(--line);
+  border-radius: var(--rad);
+  color: var(--fg-mute);
+  font-family: var(--serif);
+}
+.import-loading {
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 /* ---------- listen input ---------- */
 .listen-hint {
   font-family: var(--serif); font-size: 14px; line-height: 1.5;
@@ -3474,6 +3709,27 @@ button.dash-card:active,
 }
 
 @media (max-width: 700px) {
+  .import-console { padding: 14px; }
+  .import-console-head,
+  .import-section-head {
+    display: grid;
+    gap: 10px;
+  }
+  .import-section-head > span {
+    max-width: none;
+    text-align: left;
+  }
+  .import-file-drop,
+  .import-actions,
+  .feed-subscribe-row {
+    grid-template-columns: 1fr;
+  }
+  .import-file-button,
+  .import-file-clear,
+  .import-primary,
+  .import-secondary {
+    width: 100%;
+  }
   .listen-row { flex-wrap: wrap; }
   .listen-input { flex: 1 1 100%; }
   .listen-row > button { width: 100%; }

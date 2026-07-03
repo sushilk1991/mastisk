@@ -334,12 +334,12 @@ export const api = {
   },
 
   ingest: {
-    uploadDocument: async (file: File): Promise<{ queued: boolean; job_id: number; status: string; source_path: string }> => {
+    uploadDocument: async (file: File): Promise<{ queued: boolean; job_id: number; status: string; source_path: string; result?: unknown }> => {
       const form = new FormData();
       form.append('file', file);
       const r = await fetch(`${BASE}/ingest/document`, { method: 'POST', body: form });
       if (!r.ok) await throwApiError(r);
-      return r.json() as Promise<{ queued: boolean; job_id: number; status: string; source_path: string }>;
+      return r.json() as Promise<{ queued: boolean; job_id: number; status: string; source_path: string; result?: unknown }>;
     },
     job: (id: number): Promise<{ job: {
       id: number;

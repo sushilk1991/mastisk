@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type FormEvent } from 'react';
 import { api } from '../api';
 import type { Feed } from '../types';
 
@@ -6,25 +6,43 @@ interface Toast { text: string; tone: 'ok' | 'err' | 'info' }
 
 interface ListenResult { jobId: number; kind: string; message: string }
 type JobStatus = 'queued' | 'running' | 'done' | 'failed';
+type ImportMode = 'text' | 'url' | 'document';
+
+type ImportResult =
+  | { kind: 'text'; noteId: number; path: string }
+  | { kind: 'url'; jobId: number; message: string }
+  | {
+      kind: 'document';
+      jobId: number;
+      status: JobStatus;
+      sourcePath?: string | null;
+      noteId?: number | null;
+      notePath?: string | null;
+      sourceId?: string | null;
+      compilerJobId?: number | null;
+      compilerJobStatus?: JobStatus | null;
+      compilerJobCreated?: boolean | null;
+      provider?: string | null;
+    };
+
+const DOCUMENT_ACCEPT = '.pdf,.docx,.pptx,.xlsx,.html,.txt,.md,.epub';
 
 export function IngestView() {
   const [feeds, setFeeds] = useState<Feed[] | null>(null);
-  const [url, setUrl] = useState('');
-  const [title, setTitle] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [feedUrl, setFeedUrl] = useState('');
+  const [feedTitle, setFeedTitle] = useState('');
+  const [feedBusy, setFeedBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
-  const [listenUrl, setListenUrl] = useState('');
-  const [listenBusy, setListenBusy] = useState(false);
-  const [listenOk, setListenOk] = useState<ListenResult | null>(null);
-  const [listenErr, setListenErr] = useState<string | null>(null);
-
-  const [docFile, setDocFile] = useState<File | null>(null);
-  const [docBusy, setDocBusy] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importErr, setImportErr] = useState<string | null>(null);
   const [docJobId, setDocJobId] = useState<number | null>(null);
   const [docStatus, setDocStatus] = useState<JobStatus | null>(null);
-  const [docErr, setDocErr] = useState<string | null>(null);
   const docInputRef = useRef<HTMLInputElement | null>(null);
+  const mode = routeMode(importFile, importText);
 
   const reload = async () => {
     try {
@@ -45,12 +63,16 @@ export function IngestView() {
         const res = await api.ingest.job(docJobId);
         if (!cancelled) {
           setDocStatus(res.job.status);
+          const parsed = parseDocumentResult(res.job.result);
+          setImportResult((current) => current?.kind === 'document' && current.jobId === docJobId
+            ? { ...current, status: res.job.status, ...parsed }
+            : current);
           if (res.job.status === 'failed') {
-            setDocErr(res.job.error || 'document ingest failed');
+            setImportErr(res.job.error || 'document ingest failed');
           }
         }
       } catch (err) {
-        if (!cancelled) setDocErr(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setImportErr(err instanceof Error ? err.message : String(err));
       }
     };
     const timer = window.setInterval(() => { void poll(); }, 1800);
@@ -66,20 +88,20 @@ export function IngestView() {
     setTimeout(() => setToast(null), 2400);
   };
 
-  const onAdd = async (e: React.FormEvent) => {
+  const onAdd = async (e: FormEvent) => {
     e.preventDefault();
-    const u = url.trim();
+    const u = feedUrl.trim();
     if (!u) return;
-    setBusy(true);
+    setFeedBusy(true);
     try {
-      await api.addFeed(u, title.trim() || undefined);
-      setUrl(''); setTitle('');
+      await api.addFeed(u, feedTitle.trim() || undefined);
+      setFeedUrl(''); setFeedTitle('');
       await reload();
       flash({ text: 'subscribed', tone: 'ok' });
     } catch (err) {
       flash({ text: String(err), tone: 'err' });
     } finally {
-      setBusy(false);
+      setFeedBusy(false);
     }
   };
 
@@ -96,159 +118,191 @@ export function IngestView() {
     setTimeout(() => reload(), 4000);
   };
 
-  const onListen = async (e: React.FormEvent) => {
+  const onImport = async (e: FormEvent) => {
     e.preventDefault();
-    const u = listenUrl.trim();
-    if (!u) return;
-    setListenBusy(true);
-    setListenErr(null);
-    setListenOk(null);
+    setImportBusy(true);
+    setImportErr(null);
+    setImportResult(null);
     try {
-      const res = await api.listen(u);
-      setListenUrl('');
-      setListenOk({ jobId: res.job_id, kind: res.kind, message: res.message });
+      if (importFile) {
+        const res = await api.ingest.uploadDocument(importFile);
+        const status = normalizeJobStatus(res.status);
+        setDocJobId(res.job_id);
+        setDocStatus(status);
+        setImportResult({
+          kind: 'document',
+          jobId: res.job_id,
+          status,
+          sourcePath: res.source_path,
+          ...parseDocumentResult(res.result),
+        });
+        setImportFile(null);
+        if (docInputRef.current) docInputRef.current.value = '';
+        return;
+      }
+
+      const trimmed = importText.trim();
+      const singleUrl = parseSingleUrl(trimmed);
+      if (singleUrl) {
+        const res = await api.listen(singleUrl);
+        const queued: ListenResult = { jobId: res.job_id, kind: res.kind, message: res.message };
+        setImportText('');
+        setImportResult({ kind: 'url', jobId: queued.jobId, message: queued.message });
+        return;
+      }
+
+      if (!trimmed) return;
+      const note = await api.notes.create(trimmed);
+      await api.notes.escalate(note.id);
+      setImportText('');
+      setImportResult({ kind: 'text', noteId: note.id, path: note.path });
     } catch (err) {
-      setListenErr(err instanceof Error ? err.message : String(err));
+      setImportErr(err instanceof Error ? err.message : String(err));
     } finally {
-      setListenBusy(false);
+      setImportBusy(false);
     }
   };
 
-  const onDocumentUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!docFile) return;
-    setDocBusy(true);
-    setDocErr(null);
-    setDocStatus(null);
-    try {
-      const res = await api.ingest.uploadDocument(docFile);
-      setDocJobId(res.job_id);
-      setDocStatus('queued');
-      setDocFile(null);
-      if (docInputRef.current) {
-        docInputRef.current.value = '';
-      }
-    } catch (err) {
-      setDocErr(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDocBusy(false);
-    }
+  const onFileChange = (file: File | null) => {
+    setImportFile(file);
+    setImportErr(null);
+    setImportResult(null);
   };
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0] ?? null;
+    if (file) onFileChange(file);
+  };
+
+  const disabled = importBusy || (!importFile && !importText.trim());
 
   return (
-    <div className="view">
-      <div className="view-h">System · Sources & ingest</div>
-      <h1 className="view-title">Feeds your agents watch.</h1>
-      <p className="view-sub">
-        Scout polls each enabled feed every 10 minutes and sends matching items to Compiler.
-        Add one here, or via <code style={{fontFamily:'var(--mono)',fontSize:12,background:'var(--bg-sunk)',padding:'1px 6px',borderRadius:4}}>mastisk add-feed &lt;url&gt;</code>.
-      </p>
+    <div className="view ingest-view">
+      <div className="view-h">System · Import</div>
+      <h1 className="view-title">Import anything into Mastisk.</h1>
 
-      <div className="view-h" style={{marginTop:24}}>Document upload</div>
-      <form onSubmit={onDocumentUpload} className="listen-row" style={{margin:'12px 0 28px'}}>
-        <input
-          ref={docInputRef}
-          type="file"
-          accept=".pdf,.docx,.pptx,.xlsx,.html,.txt,.md,.epub"
-          onChange={(e) => {
-            setDocFile(e.target.files?.[0] ?? null);
-            setDocErr(null);
-          }}
-          className="listen-input"
-        />
-        <button
-          type="submit"
-          disabled={docBusy || !docFile}
-          style={btnPrimary(docBusy || !docFile)}
-        >
-          {docBusy ? 'queuing…' : 'Upload'}
-        </button>
-      </form>
-      {docJobId && (
-        <div className="listen-ok">
-          <span className="listen-ok-id">#{docJobId}</span>
-          <span className="listen-ok-copy">document ingest <em>{docStatus || 'queued'}</em></span>
-        </div>
-      )}
-      {docErr && <div className="listen-err">{docErr}</div>}
-
-      <form onSubmit={onAdd} style={{display:'flex',gap:8,margin:'24px 0 32px',flexWrap:'wrap'}}>
-        <input
-          type="url"
-          required
-          placeholder="https://simonwillison.net/atom/everything/"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          style={inputStyle(true)}
-        />
-        <input
-          type="text"
-          placeholder="title (optional)"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          style={inputStyle(false)}
-        />
-        <button type="submit" disabled={busy || !url.trim()} style={btnPrimary(busy || !url.trim())}>
-          {busy ? 'adding…' : 'Subscribe'}
-        </button>
-      </form>
-
-      <div className="view-h" style={{marginTop:16}}>Subscribed feeds {feeds && `· ${feeds.length}`}</div>
-
-      {!feeds && <p style={{color:'var(--fg-faint)',fontFamily:'var(--mono)',fontSize:12}}>loading…</p>}
-
-      {feeds && feeds.length === 0 && (
-        <div style={{padding:'24px',border:'1px dashed var(--line)',borderRadius:8,fontFamily:'var(--serif)',color:'var(--fg-mute)'}}>
-          No feeds yet. Paste an RSS/Atom URL above to subscribe.
-          <div style={{marginTop:10,fontSize:13}}>
-            Try: Simon Willison, Karpathy, Dwarkesh, Latent Space, Lilian Weng, Every, Lenny's Newsletter.
+      <section className="import-console" aria-label="Import into Mastisk">
+        <div className="import-console-head">
+          <div>
+            <div className="import-eyebrow">New import</div>
+            <h2>Paste text, paste a link, or choose a document.</h2>
           </div>
+          <span className={`import-route route-${mode}`}>{routeLabel(mode)}</span>
         </div>
-      )}
 
-      {feeds && feeds.length > 0 && (
-        <div style={{border:'1px solid var(--line)',borderRadius:8,overflow:'hidden'}}>
-          {feeds.map((f) => (
-            <FeedRow key={f.url} feed={f} onRemove={onRemove} onFetchNow={onFetchNow}/>
-          ))}
+        <form onSubmit={onImport} className="import-form">
+          <textarea
+            value={importText}
+            onChange={(e) => {
+              setImportText(e.target.value);
+              setImportErr(null);
+              setImportResult(null);
+            }}
+            disabled={Boolean(importFile)}
+            placeholder="https://example.com/post or paste a tweet thread, excerpt, transcript, article draft..."
+            aria-label="Text or URL to import"
+          />
+
+          <div
+            className={`import-file-drop ${importFile ? 'has-file' : ''}`}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={onDrop}
+          >
+            <input
+              ref={docInputRef}
+              type="file"
+              accept={DOCUMENT_ACCEPT}
+              onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
+              className="import-file-input"
+              aria-label="Document to import"
+            />
+            <button
+              className="import-file-button"
+              type="button"
+              onClick={() => docInputRef.current?.click()}
+            >
+              Choose document
+            </button>
+            <span className="import-file-name">
+              {importFile ? fileLabel(importFile) : 'PDF, DOCX, EPUB, HTML, TXT, MD, PPTX, XLSX'}
+            </span>
+            {importFile && (
+              <button
+                className="import-file-clear"
+                type="button"
+                onClick={() => {
+                  onFileChange(null);
+                  if (docInputRef.current) docInputRef.current.value = '';
+                }}
+              >
+                clear
+              </button>
+            )}
+          </div>
+
+          <div className="import-actions">
+            <div className="import-route-list" aria-label="Import routing">
+              <span className={mode === 'text' ? 'active' : ''}>{'text -> note + research'}</span>
+              <span className={mode === 'url' ? 'active' : ''}>{'link -> source article'}</span>
+              <span className={mode === 'document' ? 'active' : ''}>{'file -> source article'}</span>
+            </div>
+            <button className="import-primary" type="submit" disabled={disabled}>
+              {importBusy ? 'Importing' : 'Import'}
+            </button>
+          </div>
+        </form>
+
+        {importResult && <ImportStatus result={importResult}/>}
+        {importErr && <div className="listen-err">{importErr}</div>}
+      </section>
+
+      <section className="import-section">
+        <div className="import-section-head">
+          <div>
+            <div className="view-h">Recurring feeds {feeds && `· ${feeds.length}`}</div>
+            <h2>Feeds your agents watch.</h2>
+          </div>
+          <span>Scout polls enabled feeds and sends matching items to Compiler.</span>
         </div>
-      )}
 
-      <div className="view-h" style={{marginTop:48}}>Paste a link</div>
-      <p className="listen-hint">
-        YouTube, podcast RSS feeds, or direct audio URLs. Spotify episodes aren't supported (DRM).
-      </p>
+        <form onSubmit={onAdd} className="feed-subscribe-row">
+          <input
+            type="url"
+            required
+            placeholder="https://simonwillison.net/atom/everything/"
+            value={feedUrl}
+            onChange={(e) => setFeedUrl(e.target.value)}
+            className="listen-input"
+          />
+          <input
+            type="text"
+            placeholder="title"
+            value={feedTitle}
+            onChange={(e) => setFeedTitle(e.target.value)}
+            className="listen-input feed-title-input"
+          />
+          <button type="submit" disabled={feedBusy || !feedUrl.trim()} className="import-secondary">
+            {feedBusy ? 'Adding' : 'Subscribe'}
+          </button>
+        </form>
 
-      <form onSubmit={onListen} className="listen-row">
-        <input
-          type="url"
-          required
-          placeholder="https://www.youtube.com/watch?v=…"
-          value={listenUrl}
-          onChange={(e) => { setListenUrl(e.target.value); if (listenErr) setListenErr(null); }}
-          className="listen-input"
-        />
-        <button
-          type="submit"
-          disabled={listenBusy || !listenUrl.trim()}
-          style={btnPrimary(listenBusy || !listenUrl.trim())}
-        >
-          {listenBusy ? 'queuing…' : 'Queue'}
-        </button>
-      </form>
+        {!feeds && <p className="import-loading">loading...</p>}
 
-      {listenOk && (
-        <div className="listen-ok">
-          <span className="listen-ok-id">#{listenOk.jobId}</span>
-          <span className="listen-ok-copy">
-            queued as <em>{listenOk.kind}</em>. {listenOk.message || 'Listener will pick it up shortly.'}
-          </span>
-        </div>
-      )}
+        {feeds && feeds.length === 0 && (
+          <div className="import-empty">
+            No feeds yet. Add one above or import a single link in the console.
+          </div>
+        )}
 
-      {listenErr && (
-        <div className="listen-err">{listenErr}</div>
-      )}
+        {feeds && feeds.length > 0 && (
+          <div className="feed-list">
+            {feeds.map((f) => (
+              <FeedRow key={f.url} feed={f} onRemove={onRemove} onFetchNow={onFetchNow}/>
+            ))}
+          </div>
+        )}
+      </section>
 
       {toast && (
         <div className="toast" style={{
@@ -259,6 +313,100 @@ export function IngestView() {
       )}
     </div>
   );
+}
+
+function ImportStatus({ result }: { result: ImportResult }) {
+  if (result.kind === 'text') {
+    return (
+      <div className="listen-ok">
+        <span className="listen-ok-id">#{result.noteId}</span>
+        <span className="listen-ok-copy">
+          note saved and research queued. <em>{result.path}</em>
+        </span>
+      </div>
+    );
+  }
+  if (result.kind === 'url') {
+    return (
+      <div className="listen-ok">
+        <span className="listen-ok-id">#{result.jobId}</span>
+        <span className="listen-ok-copy">{result.message || 'link queued for Listener'}</span>
+      </div>
+    );
+  }
+  const done = result.status === 'done';
+  const compilerText = done ? documentCompilerText(result) : null;
+  return (
+    <div className="listen-ok">
+      <span className="listen-ok-id">#{result.jobId}</span>
+      <span className="listen-ok-copy">
+        document ingest <em>{result.status}</em>
+        {compilerText ? `; ${compilerText}` : ''}
+        {done && result.sourceId ? `; source ${result.sourceId}` : ''}
+      </span>
+    </div>
+  );
+}
+
+function documentCompilerText(result: Extract<ImportResult, { kind: 'document' }>): string | null {
+  if (!result.compilerJobId) return null;
+  if (!result.compilerJobStatus) return `article compile job #${result.compilerJobId}`;
+  if (result.compilerJobStatus === 'done') return `article compile done #${result.compilerJobId}`;
+  if (result.compilerJobStatus === 'running') return `article compile running #${result.compilerJobId}`;
+  if (result.compilerJobStatus === 'failed') return `article compile failed #${result.compilerJobId}`;
+  return result.compilerJobCreated === false
+    ? `article compile already queued #${result.compilerJobId}`
+    : `article compile queued #${result.compilerJobId}`;
+}
+
+function routeMode(file: File | null, text: string): ImportMode {
+  if (file) return 'document';
+  return parseSingleUrl(text.trim()) ? 'url' : 'text';
+}
+
+function routeLabel(mode: ImportMode): string {
+  if (mode === 'document') return 'document';
+  if (mode === 'url') return 'link';
+  return 'text';
+}
+
+function parseSingleUrl(value: string): string | null {
+  if (!value || /\s/.test(value)) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseDocumentResult(result: unknown): Partial<Extract<ImportResult, { kind: 'document' }>> {
+  if (!result || typeof result !== 'object') return {};
+  const record = result as Record<string, unknown>;
+  return {
+    noteId: typeof record.note_id === 'number' ? record.note_id : null,
+    notePath: typeof record.note_path === 'string' ? record.note_path : null,
+    sourcePath: typeof record.source_path === 'string' ? record.source_path : null,
+    sourceId: typeof record.source_id === 'string' ? record.source_id : null,
+    compilerJobId: typeof record.compiler_job_id === 'number' ? record.compiler_job_id : null,
+    compilerJobStatus: typeof record.compiler_job_status === 'string'
+      ? normalizeJobStatus(record.compiler_job_status)
+      : null,
+    compilerJobCreated: typeof record.compiler_job_created === 'boolean'
+      ? record.compiler_job_created
+      : null,
+    provider: typeof record.provider === 'string' ? record.provider : null,
+  };
+}
+
+function normalizeJobStatus(status: string): JobStatus {
+  return status === 'running' || status === 'done' || status === 'failed' ? status : 'queued';
+}
+
+function fileLabel(file: File): string {
+  const mb = file.size / (1024 * 1024);
+  const size = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`;
+  return `${file.name} · ${size}`;
 }
 
 function FeedRow({ feed, onRemove, onFetchNow }: {
@@ -303,33 +451,7 @@ function timeAgo(iso: string): string {
   return `${d}d ago`;
 }
 
-function inputStyle(grow: boolean): React.CSSProperties {
-  return {
-    flex: grow ? 1 : '0 0 auto',
-    minWidth: grow ? 260 : 160,
-    padding: '10px 12px',
-    borderRadius: 6,
-    background: 'var(--bg-card)',
-    color: 'var(--fg)',
-    border: '1px solid var(--line)',
-    fontSize: 13,
-    fontFamily: 'var(--sans)',
-  };
-}
-
-function btnPrimary(disabled: boolean): React.CSSProperties {
-  return {
-    padding: '10px 18px',
-    borderRadius: 6,
-    background: disabled ? 'var(--bg-sunk)' : 'var(--accent)',
-    color: disabled ? 'var(--fg-faint)' : 'var(--fg-inv)',
-    fontSize: 13,
-    fontWeight: 500,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-  };
-}
-
-function btnGhost(tone: 'normal' | 'danger' = 'normal'): React.CSSProperties {
+function btnGhost(tone: 'normal' | 'danger' = 'normal'): CSSProperties {
   return {
     padding: '7px 12px',
     borderRadius: 5,

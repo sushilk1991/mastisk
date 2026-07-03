@@ -5,6 +5,7 @@ import json
 import os
 import time
 import types
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -173,7 +174,8 @@ def test_document_ingest_queues_job_and_job_writes_inbox_note(
 
     assert job.status_code == 200, job.text
     assert job.json()["job"]["status"] == "done"
-    assert job.json()["job"]["result"]["provider"] == "markitdown"
+    result = job.json()["job"]["result"]
+    assert result["provider"] == "markitdown"
     source_path = queued.json()["source_path"]
     assert source_path.startswith("sources/")
     assert (vault_tmp / source_path).read_bytes() == b"fake-pdf"
@@ -195,6 +197,94 @@ def test_document_ingest_queues_job_and_job_writes_inbox_note(
     assert note["summary"] == "A useful report."
     assert json.loads(note["tags_json"]) == ["reports"]
     assert note["escalation_state"] == "none"
+
+    src = db.execute(
+        "SELECT id, kind, title, raw_path FROM sources WHERE id = ?",
+        (result["source_id"],),
+    ).fetchone()
+    assert src is not None
+    assert src["kind"] == "report"
+    assert src["title"] == "report.pdf"
+    raw_text = Path(src["raw_path"]).read_text(encoding="utf-8")
+    assert "Original file: vault/" in raw_text
+    assert "# Converted" in raw_text
+
+    compile_job = db.execute(
+        "SELECT id, payload_json FROM jobs WHERE agent='compiler' AND kind='compile'",
+    ).fetchone()
+    assert compile_job is not None
+    assert result["compiler_job_id"] == compile_job["id"]
+    assert result["compiler_job_status"] == "queued"
+    assert result["compiler_job_created"] is True
+    assert json.loads(compile_job["payload_json"])["source_id"] == result["source_id"]
+
+
+def test_document_source_reuses_completed_compiler_job(vault_tmp, data_tmp, db):
+    from mastisk.ingest.pipeline import SourceMetadata, persist_converted_source
+
+    metadata = SourceMetadata(
+        summary="A useful report.",
+        tags=["reports"],
+        entities=[],
+        source_type="report",
+    )
+    first = persist_converted_source(
+        converted_markdown="# Converted\n\nBody",
+        metadata=metadata,
+        original_rel_path="sources/report.pdf",
+        filename="report.pdf",
+        sha256="a" * 64,
+    )
+    db.execute("UPDATE jobs SET status='done' WHERE id = ?", (first["compiler_job_id"],))
+
+    second = persist_converted_source(
+        converted_markdown="# Converted\n\nBody",
+        metadata=metadata,
+        original_rel_path="sources/report.pdf",
+        filename="report.pdf",
+        sha256="a" * 64,
+    )
+
+    assert second["compiler_job_id"] == first["compiler_job_id"]
+    assert second["compiler_job_status"] == "done"
+    assert second["compiler_job_created"] is False
+    assert db.execute(
+        "SELECT COUNT(*) AS n FROM jobs WHERE agent='compiler' AND kind='compile'"
+    ).fetchone()["n"] == 1
+
+
+def test_document_source_retries_failed_compiler_job(vault_tmp, data_tmp, db):
+    from mastisk.ingest.pipeline import SourceMetadata, persist_converted_source
+
+    metadata = SourceMetadata(
+        summary="A useful report.",
+        tags=["reports"],
+        entities=[],
+        source_type="report",
+    )
+    first = persist_converted_source(
+        converted_markdown="# Converted\n\nBody",
+        metadata=metadata,
+        original_rel_path="sources/report.pdf",
+        filename="report.pdf",
+        sha256="b" * 64,
+    )
+    db.execute("UPDATE jobs SET status='failed' WHERE id = ?", (first["compiler_job_id"],))
+
+    second = persist_converted_source(
+        converted_markdown="# Converted\n\nBody",
+        metadata=metadata,
+        original_rel_path="sources/report.pdf",
+        filename="report.pdf",
+        sha256="b" * 64,
+    )
+
+    assert second["compiler_job_id"] != first["compiler_job_id"]
+    assert second["compiler_job_status"] == "queued"
+    assert second["compiler_job_created"] is True
+    assert db.execute(
+        "SELECT COUNT(*) AS n FROM jobs WHERE agent='compiler' AND kind='compile'"
+    ).fetchone()["n"] == 2
 
 
 def test_document_requeue_after_result_does_not_duplicate_companion_note(

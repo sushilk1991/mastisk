@@ -159,7 +159,7 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
         <span className="label">Tweet Threads</span>
       </div>
       {user && (
-        <div className="user-pill" onClick={() => onNavigate('ingest')} role="button" title="Sources & ingest">
+        <div className="user-pill" onClick={() => onNavigate('ingest')} role="button" title="Import">
           <div className="user-avatar">{user.initials}</div>
           <div className="user-meta">
             <div className="user-name">{user.name}</div>
