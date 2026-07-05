@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -50,19 +51,27 @@ def _stub_article_data(*, url="https://example.com/post", title="A Post"):
     )
 
 
-def _patch_classify(kind: str = "article"):
+def _patch_classify(kind: str = "article", url: str = "https://example.com/post"):
     """classify_and_resolve is called by the Listener. Stub it to return
     a fixed kind so the test stays focused on the article-ingestion path."""
     return patch(
         "mastisk.agents.listener.podcasts.classify_and_resolve",
         new_callable=AsyncMock,
-        return_value=(kind, "https://example.com/post"),
+        return_value=(kind, url),
     )
 
 
 def _patch_fetch(article_data):
     return patch(
         "mastisk.agents.listener.article_extractor.fetch_and_extract",
+        new_callable=AsyncMock,
+        return_value=article_data,
+    )
+
+
+def _patch_twitter_fetch(article_data):
+    return patch(
+        "mastisk.agents.listener.twitter_extractor.fetch_and_extract",
         new_callable=AsyncMock,
         return_value=article_data,
     )
@@ -105,21 +114,76 @@ def test_ingest_article_creates_source_and_compile_job(listener, db, vault_tmp):
 
 
 def test_ingest_twitter_url_persists_with_twitter_kind(listener, db, vault_tmp):
-    """X / Twitter URLs route through the same article extractor but the
-    source kind is 'twitter' so the UI can label them differently."""
-    _enqueue(db, "transcribe", {"url": "https://x.com/jack/status/123"})
-    data = _stub_article_data(url="https://x.com/jack/status/123", title="a tweet")
+    """X / Twitter URLs route through the Twitter extractor so the source
+    kind stays distinct and the raw file preserves tweet/card structure."""
+    url = "https://x.com/jack/status/123"
+    _enqueue(db, "transcribe", {"url": url})
+    data = _stub_article_data(url=url, title="a tweet")
 
-    with _patch_classify("twitter"), _patch_fetch(data):
+    with _patch_classify("twitter", url), _patch_twitter_fetch(data) as fetch:
         asyncio.run(listener.run_once())
+    fetch.assert_awaited_once_with(url)
 
     src = db.execute(
-        "SELECT kind, title FROM sources WHERE url = ?",
-        ("https://x.com/jack/status/123",),
+        "SELECT kind, title, raw_path FROM sources WHERE url = ?",
+        (url,),
     ).fetchone()
     assert src is not None
     assert src["kind"] == "twitter"
     assert src["title"] == "a tweet"
+    assert "This is the extracted main text" in Path(src["raw_path"]).read_text(encoding="utf-8")
+
+
+def test_ingest_twitter_refreshes_existing_weak_source(listener, db, vault_tmp, data_tmp):
+    from mastisk.agents.listener import _hash16
+
+    url = "https://x.com/trq212/status/2073100352921215386"
+    src_id = _hash16(url)
+    raw_path = data_tmp / "raw" / f"{src_id}.txt"
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text(
+        "# Thariq on X\n\n"
+        f"{url}\n\n"
+        "https://t.co/hPiZr1kG7r\n"
+        "Thariq@trq212ArticleA Field Guide to Fable: Finding Your UnknownsWorking with Claude...",
+        encoding="utf-8",
+    )
+    db.execute(
+        """INSERT INTO sources (id, kind, url, title, raw_path)
+           VALUES (?, 'twitter', ?, 'Thariq on X: old', ?)""",
+        (src_id, url, str(raw_path)),
+    )
+    _enqueue(db, "transcribe", {"url": url})
+    data = _stub_article_data(
+        url=url,
+        title="Thariq on X: A Field Guide to Fable: Finding Your Unknowns",
+    )
+    data.text = (
+        "X post by Thariq (@trq212)\n"
+        f"URL: {url}\n\n"
+        "Tweet:\nhttps://t.co/hPiZr1kG7r\n\n"
+        "Shared link:\n"
+        "Title: A Field Guide to Fable: Finding Your Unknowns\n"
+        "Summary: Working with Claude Fable 5 keeps re-teaching me an old lesson."
+    )
+
+    with _patch_classify("twitter", url), _patch_twitter_fetch(data) as fetch:
+        asyncio.run(listener.run_once())
+    fetch.assert_awaited_once_with(url)
+
+    rows = db.execute("SELECT id, title, raw_path FROM sources WHERE url = ?", (url,)).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Thariq on X: A Field Guide to Fable: Finding Your Unknowns"
+    assert "Shared link:" in Path(rows[0]["raw_path"]).read_text(encoding="utf-8")
+    job_count = db.execute(
+        "SELECT COUNT(*) AS n FROM jobs WHERE agent='compiler' AND kind='compile'",
+    ).fetchone()["n"]
+    assert job_count == 1
+    feed = db.execute(
+        "SELECT verb, kind FROM feed WHERE agent='listener' ORDER BY id DESC LIMIT 1",
+    ).fetchone()
+    assert feed["verb"] == "refreshed"
+    assert feed["kind"] == "twitter"
 
 
 def test_ingest_article_dedupes_on_canonical_url(listener, db, vault_tmp):

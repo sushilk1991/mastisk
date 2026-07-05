@@ -7,6 +7,34 @@ from datetime import datetime
 import pytest
 
 
+def test_connect_context_manager_closes_connection(data_tmp):
+    """The DB helper's context-manager form must release its file descriptors."""
+    from mastisk.db.queries import connect
+    from mastisk.paths import db_path
+
+    with connect(db_path()) as conn:
+        conn.execute("SELECT 1").fetchone()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1").fetchone()
+
+
+def test_connect_without_context_remains_caller_owned(data_tmp):
+    """Callers that keep an explicit connection still own its lifetime."""
+    from mastisk.db.queries import connect, txn
+    from mastisk.paths import db_path
+
+    conn = connect(db_path())
+    try:
+        conn.execute("CREATE TABLE probe (value TEXT NOT NULL)")
+        with txn(conn):
+            conn.execute("INSERT INTO probe (value) VALUES ('ok')")
+        row = conn.execute("SELECT value FROM probe").fetchone()
+        assert row["value"] == "ok"
+    finally:
+        conn.close()
+
+
 def test_schema_has_note_tables(db):
     """After init_schema, notes/note_links/note_escalations tables exist."""
     tables = {
@@ -55,7 +83,7 @@ def test_notes_column_defaults(db):
 
 
 def test_notes_dir_helpers(vault_tmp):
-    from mastisk.paths import notes_dir, notes_inbox_dir, notes_daily_dir, ensure_dirs
+    from mastisk.paths import ensure_dirs, notes_daily_dir, notes_dir, notes_inbox_dir
     ensure_dirs()
     assert notes_dir().exists()
     assert notes_inbox_dir().exists()
@@ -96,7 +124,7 @@ def test_insert_note_slug_collision_appends_suffix(db):
 
 
 def test_get_note_returns_row(db):
-    from mastisk.db.queries import insert_note, get_note
+    from mastisk.db.queries import get_note, insert_note
     ts = datetime(2026, 4, 21, 14, 35, 22)
     note_id = insert_note(db, slug="a", path="_notes/inbox/a.md",
                           body="x", source="pwa", created_at=ts)
@@ -119,10 +147,10 @@ def test_list_notes_ordering_and_limit(db):
 
 
 def test_list_notes_excludes_deleted(db):
-    from mastisk.db.queries import insert_note, soft_delete_note, list_notes
+    from mastisk.db.queries import insert_note, list_notes, soft_delete_note
     ts = datetime(2026, 4, 21, 14, 35, 22)
-    id1 = insert_note(db, slug="keep", path="_notes/inbox/keep.md",
-                      body="k", source="cli", created_at=ts)
+    insert_note(db, slug="keep", path="_notes/inbox/keep.md",
+                body="k", source="cli", created_at=ts)
     id2 = insert_note(db, slug="drop", path="_notes/inbox/drop.md",
                       body="d", source="cli", created_at=ts)
     soft_delete_note(db, id2)
@@ -132,7 +160,7 @@ def test_list_notes_excludes_deleted(db):
 
 
 def test_soft_delete_sets_tombstone(db):
-    from mastisk.db.queries import insert_note, soft_delete_note, get_note
+    from mastisk.db.queries import get_note, insert_note, soft_delete_note
     ts = datetime(2026, 4, 21, 14, 35, 22)
     note_id = insert_note(db, slug="x", path="_notes/inbox/x.md",
                           body="x", source="cli", created_at=ts)

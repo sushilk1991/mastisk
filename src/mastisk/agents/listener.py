@@ -27,8 +27,19 @@ from slugify import slugify
 from mastisk.agents.base import Agent, enqueue
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
-from mastisk.integrations import article as article_extractor
-from mastisk.integrations import extract, openlibrary, podcasts, whisper, youtube
+from mastisk.integrations import (
+    article as article_extractor,
+)
+from mastisk.integrations import (
+    extract,
+    openlibrary,
+    podcasts,
+    whisper,
+    youtube,
+)
+from mastisk.integrations import (
+    twitter as twitter_extractor,
+)
 from mastisk.integrations.podcasts import UnsupportedPlatformError
 from mastisk.paths import raw_dir, tmp_dir, vault_dir
 
@@ -253,33 +264,72 @@ class Listener(Agent):
     async def _ingest_article(self, url: str, *, source_kind: str = "blog") -> None:
         """Universal HTML page → wiki-article path.
 
-        Uses trafilatura to pull main text + hero/inline images; persists a
-        ``sources`` row with ``kind=source_kind`` (defaults to 'blog' for
-        generic web pages, 'twitter' for x.com URLs); enqueues the Compiler
-        which turns the source into a structured wiki article in the same way
-        it handles RSS clippings from Scout.
-
-        Twitter/X caveat: x.com renders tweets via JavaScript, so trafilatura
-        will only see the meta-tag preview text on most tweets. For text-only
-        tweets we capture title + description from OpenGraph metadata; for
-        video tweets the user is better off pasting the underlying YouTube/
-        direct-media URL if available. We don't fail loudly — partial
-        extraction still produces a usable wiki stub the user can edit.
+        Uses a source-specific extractor to pull main text + hero/inline
+        images; persists a ``sources`` row with ``kind=source_kind`` (defaults
+        to 'blog' for generic web pages, 'twitter' for x.com URLs); enqueues
+        the Compiler which turns the source into a structured wiki article in
+        the same way it handles RSS clippings from Scout.
         """
         # Dedup by canonical URL hash. The article extractor follows redirects
         # and returns the canonical URL, so the hash lines up across paste
         # variants (with/without query string, http/https, www/no-www only when
         # the server actually canonicalises).
         try:
-            data = await article_extractor.fetch_and_extract(url)
+            if source_kind == "twitter":
+                data = await twitter_extractor.fetch_and_extract(url)
+            else:
+                data = await article_extractor.fetch_and_extract(url)
         except Exception as e:
-            log.info("listener: article fetch failed for %s: %s", url, e)
-            raise RuntimeError(f"article fetch failed: {e}") from e
+            log.info("listener: %s fetch failed for %s: %s", source_kind, url, e)
+            raise RuntimeError(f"{source_kind} fetch failed: {e}") from e
 
         canonical_url = data.url
         src_id = _hash16(canonical_url)
-        if self._source_exists(src_id):
-            log.info("listener: article %s already ingested, skipping", canonical_url)
+        existing = self._source_row(src_id)
+        if existing:
+            if source_kind == "twitter":
+                existing_raw = _read_existing_raw(existing["raw_path"])
+                if twitter_extractor.needs_refresh(existing_raw, data):
+                    raw_path = Path(existing["raw_path"] or (raw_dir() / f"{src_id}.txt"))
+                    _write_article_raw(raw_path, title=data.title, url=canonical_url, text=data.text)
+                    with connect() as conn, q.txn(conn):
+                        conn.execute(
+                            """UPDATE sources
+                                  SET kind = ?, url = ?, title = ?, published_at = ?,
+                                      fetched_at = CURRENT_TIMESTAMP, raw_path = ?,
+                                      author = ?, hero_image_url = ?, media_json = ?
+                                WHERE id = ?""",
+                            (
+                                source_kind,
+                                canonical_url,
+                                data.title,
+                                data.published_at,
+                                str(raw_path),
+                                data.author,
+                                data.hero_image_url,
+                                json.dumps(data.inline_media) if data.inline_media else None,
+                                src_id,
+                            ),
+                        )
+                        conn.execute(
+                            "INSERT INTO jobs (agent, kind, payload_json) VALUES (?, ?, ?)",
+                            ("compiler", "compile", json.dumps({"source_id": src_id})),
+                        )
+                    log.info("listener: refreshed twitter source %s", canonical_url)
+                    self.emit_feed(
+                        verb="refreshed",
+                        obj=(data.title or canonical_url)[:80],
+                        kind=source_kind,
+                        payload={
+                            "source_id": src_id,
+                            "url": canonical_url,
+                            "chars": len(data.text),
+                            "via": "listener",
+                        },
+                    )
+                    return
+
+            log.info("listener: %s %s already ingested, skipping", source_kind, canonical_url)
             self.emit_feed(
                 verb="duplicate",
                 obj=(data.title or canonical_url)[:80],
@@ -295,10 +345,7 @@ class Listener(Agent):
         # Compiler doesn't depend on this exact format, but consistency makes
         # debugging easier when comparing Scout-clipped vs Listener-pasted
         # sources side-by-side.
-        raw_path.write_text(
-            f"# {data.title}\n\n{canonical_url}\n\n{data.text}",
-            encoding="utf-8",
-        )
+        _write_article_raw(raw_path, title=data.title, url=canonical_url, text=data.text)
 
         with connect() as conn, q.txn(conn):
             cur = conn.execute(
@@ -477,11 +524,13 @@ class Listener(Agent):
     # ───── dedup helper ─────
 
     def _source_exists(self, src_id: str) -> bool:
+        return self._source_row(src_id) is not None
+
+    def _source_row(self, src_id: str):
         with connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM sources WHERE id = ? LIMIT 1", (src_id,)
+            return conn.execute(
+                "SELECT * FROM sources WHERE id = ? LIMIT 1", (src_id,)
             ).fetchone()
-        return row is not None
 
     # ───── book Entity articles (pre-stub) ─────
 
@@ -583,6 +632,20 @@ class Listener(Agent):
 
 def _hash16(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
+
+
+def _write_article_raw(path: Path, *, title: str, url: str, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# {title}\n\n{url}\n\n{text}", encoding="utf-8")
+
+
+def _read_existing_raw(raw_path: str | None) -> str:
+    if not raw_path:
+        return ""
+    try:
+        return Path(raw_path).read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 async def _download_to(url: str, out_dir: Path) -> Path:
