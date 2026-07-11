@@ -484,29 +484,22 @@ function isRestrictedUrl(url) {
     || url.startsWith('https://chromewebstore.google.com');
 }
 
-// Inject Defuddle (MAIN world, UMD-unwrapped) then run chat-content.js.
+// Inject Defuddle then run chat-content.js. Uses the extension's ISOLATED
+// world: it shares the page's DOM but runs under the extension's CSP, so
+// sites that enforce Trusted Types (YouTube) can't break Defuddle's
+// innerHTML writes — and we don't leak a Defuddle global into the page.
 async function extractFromTab(tabId) {
   try {
     const check = await chrome.scripting.executeScript({
       target: { tabId },
-      world: 'MAIN',
+      world: 'ISOLATED',
       func: () => typeof Defuddle === 'function',
     });
     if (!check?.[0]?.result) {
       await chrome.scripting.executeScript({
         target: { tabId },
-        world: 'MAIN',
+        world: 'ISOLATED',
         files: ['lib/defuddle.js'],
-      });
-      // UMD bundle assigns an exports object to window.Defuddle — unwrap the class.
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        world: 'MAIN',
-        func: () => {
-          if (typeof Defuddle !== 'undefined' && typeof Defuddle !== 'function' && Defuddle.Defuddle) {
-            window.Defuddle = Defuddle.Defuddle;
-          }
-        },
       });
     }
   } catch (err) {
@@ -516,7 +509,7 @@ async function extractFromTab(tabId) {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      world: 'MAIN',
+      world: 'ISOLATED',
       files: ['chat-content.js'],
     });
     return results?.[0]?.result || null;
