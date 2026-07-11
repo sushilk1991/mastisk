@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mastisk Chat</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="header">
+    <div class="header-top">
+      <span class="brand">Mastisk</span>
+      <span id="conn-dot" class="conn-dot" title="Checking connection…"></span>
+    </div>
+    <div id="page-title" class="page-title">Loading page…</div>
+    <label class="include-chip">
+      <input type="checkbox" id="include-page" checked>
+      <span>Include this page</span>
+    </label>
+  </header>
+
+  <main id="messages" class="messages">
+    <div id="welcome" class="welcome">
+      <p>Ask anything about your wiki. Mastisk draws parallels across everything you've saved — and connects it to the page you're on.</p>
+      <div class="suggestions">
+        <button class="suggestion" data-q="What does my wiki say that relates to this page?">Relate this page to my wiki</button>
+        <button class="suggestion" data-q="Draw parallels between this page and my notes.">Draw parallels</button>
+        <button class="suggestion" data-q="What open questions do I have related to this topic?">Open questions</button>
+      </div>
+    </div>
+  </main>
+
+  <div class="input-area">
+    <textarea id="input" class="input" rows="1" placeholder="Ask your wiki…"></textarea>
+    <button id="send" class="send-btn" disabled aria-label="Send">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="22" y1="2" x2="11" y2="13"></line>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+      </svg>
+    </button>
+  </div>
+
+  <script src="lib/markdown.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

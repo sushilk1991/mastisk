@@ -1,0 +1,279 @@
+/* ============================================================
+   Mastisk Clipper — Side Panel styles
+   ============================================================ */
+
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f5f5f7;
+  --bg-input: #ffffff;
+  --border: #e4e4e7;
+  --text: #18181b;
+  --text-soft: #71717a;
+  --accent: #6366f1;
+  --accent-soft: #eef2ff;
+  --user-bubble: #6366f1;
+  --user-text: #ffffff;
+  --ok: #059669;
+  --err: #dc2626;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18181b;
+    --bg-soft: #232326;
+    --bg-input: #232326;
+    --border: #333338;
+    --text: #f4f4f5;
+    --text-soft: #a1a1aa;
+    --accent: #818cf8;
+    --accent-soft: #2a2a55;
+    --user-bubble: #6366f1;
+    --user-text: #ffffff;
+    --ok: #34d399;
+    --err: #f87171;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Header */
+.header {
+  flex: 0 0 auto;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a1a1aa;
+  transition: background 0.2s;
+}
+.conn-dot.online { background: var(--ok); }
+.conn-dot.offline { background: var(--err); }
+
+.page-title {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.include-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-soft);
+  cursor: pointer;
+  user-select: none;
+}
+.include-chip input { accent-color: var(--accent); margin: 0; }
+
+/* Messages */
+.messages {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.welcome {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+.welcome p { margin: 0 0 12px; }
+
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.suggestion {
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.suggestion:hover { border-color: var(--accent); }
+
+.message {
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.message.user {
+  align-self: flex-end;
+  background: var(--user-bubble);
+  color: var(--user-text);
+  padding: 8px 12px;
+  border-radius: 14px 14px 4px 14px;
+  max-width: 85%;
+  white-space: pre-wrap;
+}
+.message.assistant {
+  align-self: flex-start;
+  max-width: 100%;
+}
+.message.assistant p:first-child { margin-top: 0; }
+.message.assistant p:last-child { margin-bottom: 0; }
+
+.message.error {
+  align-self: stretch;
+  color: var(--err);
+  font-size: 12.5px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* Markdown bits */
+.message.assistant pre {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  overflow-x: auto;
+  font-size: 12.5px;
+}
+.message.assistant code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+}
+.message.assistant :not(pre) > code {
+  background: var(--bg-soft);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.message.assistant a { color: var(--accent); }
+.message.assistant table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+}
+.message.assistant th, .message.assistant td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+/* Wiki citation links */
+.cite-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+  border-bottom: 1px dotted var(--accent);
+}
+.cite-link:hover { border-bottom-style: solid; }
+
+/* Non-article citation (task/person/book) — shown as plain emphasis, no link */
+.cite-plain {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cites {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-soft);
+}
+.cites-label { font-weight: 600; margin-right: 4px; }
+.cites a {
+  display: inline-block;
+  margin: 2px 6px 2px 0;
+  color: var(--accent);
+  text-decoration: none;
+}
+.cites a:hover { text-decoration: underline; }
+
+/* Loading dots */
+.loading-dots { display: inline-flex; gap: 4px; padding: 4px 0; }
+.loading-dots span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-soft);
+  animation: blink 1.2s infinite both;
+}
+.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+
+/* Input */
+.input-area {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.input {
+  flex: 1 1 auto;
+  resize: none;
+  max-height: 120px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  outline: none;
+}
+.input:focus { border-color: var(--accent); }
+
+.send-btn {
+  flex: 0 0 auto;
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.send-btn:disabled { opacity: 0.4; cursor: default; }
+.send-btn svg { width: 18px; height: 18px; }
