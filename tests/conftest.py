@@ -8,6 +8,21 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_intelligence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the intelligence chain deterministic regardless of the host shell.
+
+    A developer's ANTHROPIC_API_KEY would auto-prepend the anthropic tier and
+    change provider ordering under test; the circuit breaker holds
+    module-level state that would leak trip-status between tests.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from mastisk import settings
+    settings.get_settings.cache_clear()
+    from mastisk.bridges import intelligence
+    intelligence.reset_breakers()
+
+
 @pytest.fixture
 def vault_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point MASTISK_VAULT at a tmp dir; clear the lru_cache so it takes effect."""

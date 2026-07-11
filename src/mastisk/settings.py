@@ -12,7 +12,7 @@ import tempfile
 import tomllib
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import tomli_w
 from dotenv import load_dotenv
@@ -61,15 +61,32 @@ class CaptureSettings(BaseSettings):
 
 
 class IntelligenceSettings(BaseSettings):
-    """Shared LLM fallback order for intelligence-heavy agents."""
+    """Shared LLM fallback order for intelligence-heavy agents.
+
+    "anthropic" is the direct Anthropic Messages API (fast, no CLI subprocess).
+    It is auto-prepended at call time when an API key is configured and the
+    user hasn't listed it explicitly — see intelligence.effective_order().
+    """
     provider_order: list[str] = Field(
         default_factory=lambda: ["codex", "claude", "ollama"]
     )
+    # Anthropic API tier. Key comes from top-level anthropic_api_key
+    # (config.toml) or the ANTHROPIC_API_KEY env var. anthropic_auto=false
+    # stops the tier from being auto-prepended when a key is present —
+    # explicit listing in provider_order still works.
+    anthropic_auto: bool = True
+    anthropic_model: str = "claude-haiku-4-5-20251001"
+    anthropic_max_tokens: int = 8192
+    # Circuit breaker: after this many CONSECUTIVE failures a provider is
+    # skipped for cooldown_s seconds. Prevents a dead CLI tier (e.g. codex
+    # hanging to its 180s timeout on every call) from taxing every request.
+    breaker_failure_threshold: int = 3
+    breaker_cooldown_s: int = 900
 
     @field_validator("provider_order")
     @classmethod
     def _validate_provider_order(cls, value: list[str]) -> list[str]:
-        allowed = {"codex", "claude", "ollama"}
+        allowed = {"anthropic", "codex", "claude", "ollama"}
         if not value:
             raise ValueError("provider_order must include at least one provider")
         seen: set[str] = set()
@@ -78,7 +95,7 @@ class IntelligenceSettings(BaseSettings):
             provider = raw.strip().lower() if isinstance(raw, str) else ""
             if provider not in allowed:
                 raise ValueError(
-                    "provider_order entries must be one of: codex, claude, ollama"
+                    "provider_order entries must be one of: anthropic, codex, claude, ollama"
                 )
             if provider in seen:
                 raise ValueError(
@@ -87,6 +104,20 @@ class IntelligenceSettings(BaseSettings):
             seen.add(provider)
             order.append(provider)
         return order
+
+
+class CompilerSettings(BaseSettings):
+    """Config for the Compiler agent (raw source → wiki article)."""
+    # How much of the raw source reaches the model. The old hardcoded 8k cut
+    # threw away ~85% of a typical Defuddle extraction; cloud-tier models
+    # handle far more context, and depth is the whole point of the wiki.
+    max_source_chars: int = 60000
+    # Generated hero images via the yoyo CLI (`yoyo imagegen`). "auto" enables
+    # generation when the yoyo binary is on PATH; "off" disables. Only fires
+    # for articles that have no hero from their source, capped per day.
+    hero_images: Literal["auto", "off"] = "auto"
+    hero_images_daily_cap: int = 10
+    hero_image_timeout_s: int = 180
 
 
 class ServerSettings(BaseSettings):
@@ -279,6 +310,10 @@ class Settings(BaseSettings):
     # Claude
     claude_cmd: str = Field(default="claude", alias="CLAUDE_CMD")
 
+    # Anthropic API (direct Messages API tier — see bridges/anthropic_bridge.py).
+    # Secret: keep in config.toml or the environment, never in the vault.
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+
     # Ollama
     ollama_cloud_url: str = Field(default="https://ollama.com", alias="OLLAMA_CLOUD_URL")
     ollama_cloud_key: str | None = Field(default=None, alias="OLLAMA_CLOUD_KEY")
@@ -299,6 +334,8 @@ class Settings(BaseSettings):
     capture: CaptureSettings = Field(default_factory=CaptureSettings)
 
     intelligence: IntelligenceSettings = Field(default_factory=IntelligenceSettings)
+
+    compiler: CompilerSettings = Field(default_factory=CompilerSettings)
 
     reminders: RemindersSettings = Field(default_factory=RemindersSettings)
 

@@ -4,6 +4,7 @@ import { Icon } from './icons';
 import { api } from '../api';
 import { SynthesisFeedback } from './SynthesisFeedback';
 import { NoteCaptureModal, type CaptureContext } from './NoteCaptureModal';
+import { MermaidBlock } from './MermaidBlock';
 
 interface Props {
   article: Article;
@@ -155,16 +156,24 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
 
       <div className="art-body" ref={bodyRef}>
         {article.sections.map((s, i) => {
+          // sec-body is a div, not <p>: section bodies may contain multiple
+          // <p> elements and nesting p-in-p is invalid HTML.
           if (s.kind === 'callout') return (
             <div key={i} className="callout">
               <h2>{s.h}</h2>
-              <p dangerouslySetInnerHTML={{ __html: s.body }}/>
+              <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body }}/>
+            </div>
+          );
+          if (s.kind === 'diagram') return (
+            <div key={i} className="art-diagram">
+              <h2>{s.h}</h2>
+              <MermaidBlock source={s.body} />
             </div>
           );
           if (s.kind === 'open') return (
             <div key={i} className="open">
               <h2>{s.h}</h2>
-              <p dangerouslySetInnerHTML={{ __html: s.body }}/>
+              <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body }}/>
               <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
                 <button
                   type="button"
@@ -188,7 +197,7 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
           return (
             <div key={i}>
               <h2>{s.h}</h2>
-              <p dangerouslySetInnerHTML={{ __html: s.body }}/>
+              <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body }}/>
             </div>
           );
         })}

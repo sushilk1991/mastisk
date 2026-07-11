@@ -91,6 +91,89 @@ def test_schema_guidance_requires_short_single_clause_titles():
     assert "no em-dash appendages" in SCHEMA_MD
 
 
+def test_schema_guidance_covers_depth_and_diagrams():
+    """The rewritten schema must ask for depth and Mermaid diagram sections."""
+    from mastisk.agents.compiler import SCHEMA_MD
+
+    assert '"kind": "diagram"' in SCHEMA_MD
+    assert "Mermaid" in SCHEMA_MD
+    assert "700" in SCHEMA_MD  # depth target present
+
+
+def test_sections_to_md_fences_diagrams():
+    from mastisk.agents.compiler import _sections_to_md
+
+    md = _sections_to_md([
+        {"h": "Intro", "body": "<p>Hello <em>world</em></p>"},
+        {"h": "Flow", "kind": "diagram", "body": "flowchart TD\n  A --> B"},
+    ])
+    assert "```mermaid\nflowchart TD\n  A --> B\n```" in md
+    assert "Hello *world*" in md
+
+
+def test_strip_html_preserves_paragraph_boundaries():
+    from mastisk.agents.compiler import _strip_html
+
+    md = _strip_html("<p>One ends here.</p><p>Two starts here.</p>")
+    assert md == "One ends here.\n\nTwo starts here."
+
+
+def test_maybe_generate_hero_skips_when_article_already_has_hero(compiler, db, vault_tmp):
+    from unittest.mock import patch as _patch
+
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, hero_image_url, updated_by)
+           VALUES ('has-hero', 'Concept', 'Has Hero', 'has-hero',
+                   '/api/attachments/old.png', 'Compiler')""",
+    )
+    gen = AsyncMock(return_value="/api/attachments/new.png")
+    with (
+        _patch("mastisk.agents.compiler.imagegen_bridge.available", return_value=True),
+        _patch("mastisk.agents.compiler.imagegen_bridge.generate_hero", new=gen),
+    ):
+        url = asyncio.run(compiler._maybe_generate_hero(
+            {"id": "has-hero", "title": "Has Hero", "summary": "s"},
+        ))
+    assert url is None  # recompile must not regenerate or spend a cap slot
+    assert gen.call_count == 0
+
+
+def test_maybe_generate_hero_off_when_yoyo_missing(compiler, db, vault_tmp, data_tmp):
+    from unittest.mock import patch as _patch
+
+    with _patch(
+        "mastisk.agents.compiler.imagegen_bridge.available", return_value=False,
+    ):
+        url = asyncio.run(compiler._maybe_generate_hero({"id": "x", "title": "X"}))
+    assert url is None
+
+
+def test_maybe_generate_hero_respects_daily_cap(compiler, db, vault_tmp, data_tmp):
+    from unittest.mock import patch as _patch
+
+    from mastisk.settings import reload_settings
+
+    (data_tmp / "config.toml").write_text(
+        "[compiler]\nhero_images_daily_cap = 1\n", encoding="utf-8",
+    )
+    reload_settings()
+
+    gen = AsyncMock(return_value="/api/attachments/abc123.png")
+    with (
+        _patch("mastisk.agents.compiler.imagegen_bridge.available", return_value=True),
+        _patch("mastisk.agents.compiler.imagegen_bridge.generate_hero", new=gen),
+    ):
+        first = asyncio.run(compiler._maybe_generate_hero(
+            {"id": "a", "title": "A", "summary": "s"},
+        ))
+        second = asyncio.run(compiler._maybe_generate_hero(
+            {"id": "b", "title": "B", "summary": "s"},
+        ))
+    assert first == "/api/attachments/abc123.png"
+    assert second is None  # cap of 1 reached via the 'illustrated' feed row
+    assert gen.call_count == 1
+
+
 def test_enrich_stub_overwrites_placeholder_in_place(compiler, db, vault_tmp):
     stub_id = "note-000044-compounding"
     note_id = 44

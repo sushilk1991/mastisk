@@ -4,7 +4,7 @@ export interface ArticleSection {
   idx: number;
   h: string;
   body: string;
-  kind: 'section' | 'callout' | 'open';
+  kind: 'section' | 'callout' | 'open' | 'diagram';
 }
 
 export interface RelatedLink {

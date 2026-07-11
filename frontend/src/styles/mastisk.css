@@ -634,6 +634,8 @@ summary:focus-visible {
   padding-bottom: 8px; border-bottom: 1px solid var(--line-soft);
 }
 .art-body p { margin: 0 0 18px; text-wrap: pretty; }
+.art-body .sec-body { margin: 0 0 18px; text-wrap: pretty; }
+.art-body .sec-body p:last-child { margin-bottom: 0; }
 .art-body .link {
   color: var(--fg);
   border-bottom: 1px dashed var(--accent);

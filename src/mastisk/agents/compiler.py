@@ -14,10 +14,11 @@ from slugify import slugify
 
 from mastisk.agents.base import Agent
 from mastisk.agents.registry import resolve_prompt
-from mastisk.bridges import claude_bridge, intelligence
+from mastisk.bridges import claude_bridge, imagegen_bridge, intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import vault_dir
+from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.compiler")
 
@@ -41,7 +42,8 @@ Return a single JSON object in a ```json``` fenced block, matching this shape:
   "reading_minutes": 5,
   "sections": [
     {"h": "TL;DR", "kind": "callout", "body": "HTML-safe paragraph."},
-    {"h": "Mechanism", "body": "HTML-safe paragraph. Use <span class=\\"link\\" data-target=\\"slug\\">wiki link</span> for cross-references."},
+    {"h": "Mechanism", "body": "HTML-safe paragraphs. Use <span class=\\"link\\" data-target=\\"slug\\">wiki link</span> for cross-references."},
+    {"h": "How it works", "kind": "diagram", "body": "flowchart TD\\n  A[Input] --> B{Decision}\\n  B -->|yes| C[Outcome]"},
     {"h": "Open questions", "kind": "open", "body": "HTML-safe paragraph."}
   ],
   "related": [
@@ -58,8 +60,65 @@ Rules:
 - Never invent sources you didn't see. Never hallucinate URLs.
 - Write body text in HTML. Use <em> for emphasis, <span class="link" data-target="slug"> for cross-references.
 - Match the user's writing style from their profile.
+
+Depth — this is a reference wiki, not a feed of summaries:
+- Aim for 700–1400 words across 4–8 sections for a substantive source; fewer only when the source is genuinely thin.
+- A section body may contain MULTIPLE <p> paragraphs. Develop the ideas: the mechanism behind the claim, concrete numbers and examples from the source, what the author gets right or misses, and how it connects to concepts already in the wiki.
+- Prefer analytical headings ("Why the bottleneck is memory bandwidth") over generic ones ("Details", "More").
+- Include one section that situates the topic in the wider wiki: how it relates to, extends, or contradicts existing articles (use wiki links).
+
+Diagrams — visualize structure whenever the source has it:
+- Sections with "kind": "diagram" have a body that is PURE Mermaid source (no ``` fences, no HTML). Escape newlines as \\n inside the JSON string.
+- Use one when the content describes a process, architecture, pipeline, hierarchy, timeline, or comparison: `flowchart TD/LR` for processes and architectures, `sequenceDiagram` for interactions, `timeline` for chronology, `mindmap` for concept maps.
+- Keep node labels under ~6 words; quote labels containing special characters, e.g. A["label (detail)"]. 5–15 nodes is the sweet spot.
+- Most substantive articles deserve exactly one diagram; use two only if the source covers two genuinely distinct structures. Skip diagrams for thin or purely narrative sources.
+
 - "open" sections are ANALYTICAL threads the article leaves unresolved — genuine conceptual loose ends a reader would still be thinking about. NEVER use "open" to flag missing metadata ("what's the publish date?", "who is the author?", "what's his role?", "when was this written?"). If you lacked a fact, leave the field empty; do not convert metadata gaps into open questions. If the source has no genuine analytical loose ends, omit the "Open questions" section entirely.
 """.replace("__TITLE_MAX_CHARS__", str(q.MAX_GENERATED_ARTICLE_TITLE_CHARS))
+
+
+# Machine schema for the anthropic tier's tool-forced JSON (json_object=True).
+# Mirrors SCHEMA_MD; keeps long HTML-in-JSON bodies syntactically valid where
+# free-text JSON routinely arrives with unescaped inner quotes.
+ARTICLE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "skip": {"type": "boolean"},
+        "skip_reason": {"type": "string"},
+        "id": {"type": "string"},
+        "kind": {"type": "string", "enum": ["Concept", "Entity", "Source", "Synthesis"]},
+        "title": {"type": "string"},
+        "aka": {"type": "array", "items": {"type": "string"}},
+        "summary": {"type": "string"},
+        "confidence": {"type": "number"},
+        "reading_minutes": {"type": "integer"},
+        "sections": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "h": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["section", "callout", "open", "diagram"]},
+                    "body": {"type": "string"},
+                },
+                "required": ["h", "body"],
+            },
+        },
+        "related": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "label": {"type": "string"},
+                    "weight": {"type": "number"},
+                },
+                "required": ["id"],
+            },
+        },
+    },
+    "required": ["skip", "id", "kind", "title", "summary", "sections"],
+}
 
 
 class Compiler(Agent):
@@ -111,19 +170,23 @@ class Compiler(Agent):
         identity = self.load_identity()
         registry = self._known_articles_block()
         schema = resolve_prompt("compiler", "schema", SCHEMA_MD)
+        max_chars = get_settings().compiler.max_source_chars
 
         prompt = (
             f"You are Mastisk's Compiler. Transform the raw source below into a wiki article.\n\n"
             f"{identity}\n\n"
             f"{registry}\n\n"
             f"# Raw source\nTitle: {src['title']}\nURL: {src['url']}\nKind: {src['kind']}\n\n"
-            f"{raw_text[:8000]}\n\n"
+            f"{raw_text[:max_chars]}\n\n"
             f"{schema}"
         )
 
-        resp, provider = await intelligence.run_intelligence(prompt)
+        resp, provider = await intelligence.run_intelligence(
+            prompt, json_object=True, json_schema=ARTICLE_JSON_SCHEMA,
+        )
         # extract_json_block tolerates both fenced and naked-braces JSON,
-        # so this works whether Claude / Codex / Ollama served.
+        # so this works whether Claude / Codex / Ollama served. The anthropic
+        # tier guarantees valid JSON via tool-forcing (json_object=True).
         data = claude_bridge.extract_json_block(resp.get("text") or "")
         if not data:
             log.warning(
@@ -137,6 +200,14 @@ class Compiler(Agent):
                            payload={"source_id": source_id, "reason": data.get("skip_reason")})
             return
 
+        missing = [k for k in ("id", "kind", "title", "sections") if not data.get(k)]
+        if missing:
+            log.warning(
+                "compiler: %s response for source %s missing required keys %s",
+                provider, source_id, missing,
+            )
+            return
+
         # Guard against mis-classification: a single-source article is almost
         # never a genuine Synthesis — that kind is reserved for cross-source
         # weaving. Demote to Concept so the UI counts stay meaningful.
@@ -147,6 +218,8 @@ class Compiler(Agent):
         # into articles.hero_image_url. A recompile without a hero leaves the
         # previous one intact (see queries.upsert_article).
         data["hero_image_url"] = src["hero_image_url"]
+        if not data["hero_image_url"]:
+            data["hero_image_url"] = await self._maybe_generate_hero(data)
         self._persist_article(data, source_id=source_id)
         self.emit_feed(
             verb="wrote" if self._is_new(data["id"]) else "updated",
@@ -191,7 +264,7 @@ class Compiler(Agent):
 
         identity = self.load_identity()
         registry = self._known_articles_block()
-        note_body = (note["body"] or "")[:8000]
+        note_body = (note["body"] or "")[: get_settings().compiler.max_source_chars]
         schema = resolve_prompt("compiler", "schema", SCHEMA_MD)
 
         prompt = (
@@ -206,11 +279,20 @@ class Compiler(Agent):
             f"{schema}"
         )
 
-        resp, provider = await intelligence.run_intelligence(prompt)
+        resp, provider = await intelligence.run_intelligence(
+            prompt, json_object=True, json_schema=ARTICLE_JSON_SCHEMA,
+        )
         data = claude_bridge.extract_json_block(resp.get("text") or "")
         if not data:
             log.warning(
                 "compiler: enrich_stub no JSON block in %s response for article %s",
+                provider, article_id,
+            )
+            return
+
+        if not data.get("title") or not data.get("sections"):
+            log.warning(
+                "compiler: enrich_stub %s response for article %s lacks title/sections",
                 provider, article_id,
             )
             return
@@ -230,6 +312,52 @@ class Compiler(Agent):
             touched=1,
             payload={"article_id": article_id, "note_id": note_id, "provider": provider},
         )
+
+    async def _maybe_generate_hero(self, data: dict) -> str | None:
+        """Generate a hero image via yoyo when the source shipped none.
+
+        Best-effort and budget-guarded: "auto" mode requires the yoyo CLI on
+        PATH, a daily cap bounds spend, and any failure just leaves the
+        article hero-less (never fails the compile job).
+        """
+        cfg = get_settings().compiler
+        if cfg.hero_images != "auto" or not imagegen_bridge.available():
+            return None
+        with connect() as conn:
+            # Recompiles must not regenerate: the article may already carry a
+            # previously generated hero even when the *source* has none.
+            existing = conn.execute(
+                "SELECT hero_image_url FROM articles WHERE id=?",
+                (data.get("id"),),
+            ).fetchone()
+            if existing and existing["hero_image_url"]:
+                return None
+            generated_today = conn.execute(
+                "SELECT COUNT(*) FROM feed WHERE agent='compiler' AND verb='illustrated' "
+                "AND ts >= datetime('now', 'start of day')",
+            ).fetchone()[0]
+        if generated_today >= cfg.hero_images_daily_cap:
+            return None
+
+        title = data.get("title") or data.get("id") or "concept"
+        summary = data.get("summary") or ""
+        prompt = (
+            f"Minimal editorial illustration for a knowledge-wiki article titled "
+            f"\"{title}\". {summary} Abstract, conceptual, muted palette, flat "
+            f"shapes, no text or lettering in the image, 16:9 composition."
+        )
+        try:
+            url = await imagegen_bridge.generate_hero(
+                prompt, timeout_s=cfg.hero_image_timeout_s,
+            )
+        except Exception as e:
+            log.warning("compiler: hero generation failed for %s: %s", data.get("id"), e)
+            return None
+        self.emit_feed(
+            verb="illustrated", obj=title[:80], kind="image",
+            payload={"article_id": data.get("id"), "hero_image_url": url},
+        )
+        return url
 
     def _is_new(self, article_id: str) -> bool:
         with connect() as conn:
@@ -348,7 +476,13 @@ def _sections_to_md(sections: list[dict]) -> str:
     out: list[str] = []
     for s in sections:
         out.append(f"## {s.get('h', '')}\n")
-        out.append(_strip_html(s.get("body", "")))
+        if s.get("kind") == "diagram":
+            # Diagram bodies are raw Mermaid source, not HTML — keep them
+            # intact in a fenced block (Obsidian and most markdown renderers
+            # pick this up natively).
+            out.append(f"```mermaid\n{s.get('body', '').strip()}\n```")
+        else:
+            out.append(_strip_html(s.get("body", "")))
         out.append("")
     return "\n".join(out)
 
@@ -357,8 +491,12 @@ def _strip_html(html: str) -> str:
     # Preserve link targets as markdown-like refs
     s = re.sub(r'<span class="link" data-target="([^"]+)">([^<]+)</span>', r"[[\2|\1]]", html)
     s = re.sub(r"<em>([^<]+)</em>", r"*\1*", s)
+    # Keep block boundaries: multi-paragraph bodies would otherwise collapse
+    # into a single run of words ("...end.Next paragraph...").
+    s = re.sub(r"</p>\s*<p[^>]*>", "\n\n", s)
+    s = re.sub(r"<br\s*/?>", "\n", s)
     s = re.sub(r"<[^>]+>", "", s)
-    return s
+    return s.strip()
 
 
 def _render_markdown(data: dict) -> str:
