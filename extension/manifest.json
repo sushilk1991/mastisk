@@ -14,13 +14,7 @@
     "tabs"
   ],
   "host_permissions": [
-    "http://localhost:5555/*",
-    "http://127.0.0.1:5555/*",
     "<all_urls>"
-  ],
-  "optional_host_permissions": [
-    "http://*/*",
-    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"
