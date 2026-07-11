@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
+import { quadtree, type Quadtree, type QuadtreeLeaf } from 'd3-quadtree';
 import { api } from '../api';
 import type { GraphData, View } from '../types';
 
@@ -9,10 +10,12 @@ interface Props {
 interface SimNode {
   id: string;
   title: string;
+  titleLC: string;
   kind: string;
   color: string;
   size: number;
   degree: number;
+  index: number;
   x: number;
   y: number;
   fx?: number | null;
@@ -45,6 +48,17 @@ const GRAPH_CACHE_KEY = 'mastisk:graph:v1';
 const GRAPH_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 const ORGANIC_RELAX_TICKS = 16;
 
+// ── Motion time-constants (ms). Eased with 1 - exp(-dt/τ) so motion is
+// frame-rate independent and always converges in finite time. ─────────────
+const TAU_VIEW = 100;    // wheel/keyboard zoom + pan ease toward target
+const TAU_FOCUS = 100;   // hover/search dim fade-in / fade-out
+const TAU_POS = 60;      // interpolation between simulation snapshots
+const TAU_INERTIA = 90;  // pan-release velocity decay
+const VIEW_EPS = 0.0005;
+const PAN_EPS = 0.05;
+const INERTIA_SPEED_EPS = 0.004; // px/ms below which inertia stops
+const EDGE_BUCKETS = 4;
+
 interface LayoutBounds {
   x: number;
   y: number;
@@ -67,6 +81,12 @@ interface GraphPerf {
   fitPan?: { x: number; y: number };
   fitViewport?: { w: number; h: number };
   fitBounds?: LayoutBounds;
+  // Simulation + animation instrumentation (the evidence for the perf gate).
+  simTickMs?: number;    // last worker-reported force-tick cost
+  simAlpha?: number;     // last reported simulation alpha
+  snapshotHz?: number;   // measured position-snapshot rate
+  fps?: number;          // interpolated display frame rate (EMA)
+  workerActive?: boolean;
 }
 
 function graphPerf(): GraphPerf | null {
@@ -88,6 +108,11 @@ function hashUnit(s: string): number {
 
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 function canFitViewport(viewport: { w: number; h: number }): boolean {
@@ -142,14 +167,16 @@ function layoutBounds(nodes: SimNode[]): LayoutBounds {
 
 function organicLayout(data: GraphData): { nodes: SimNode[]; links: SimLink[] } {
   const byKind = new Map<string, SimNode[]>();
-  const nodes: SimNode[] = data.nodes.map((n) => {
+  const nodes: SimNode[] = data.nodes.map((n, i) => {
     const node = {
       id: n.id,
       title: n.title,
+      titleLC: n.title.toLowerCase(),
       kind: n.kind,
       color: n.color,
       size: n.size,
       degree: n.degree,
+      index: i,
       x: 0,
       y: 0,
     };
@@ -284,6 +311,14 @@ function resolveCssColor(value: string): string {
   return value;
 }
 
+// Continuous, log-scaled label prominence. Labels ease in as you zoom rather
+// than popping at fixed budget thresholds — the budget still caps how many are
+// drawn, this only controls their opacity so appearances/disappearances fade.
+function labelLayerAlpha(zoom: number): number {
+  const t = (Math.log(zoom) - Math.log(0.2)) / (Math.log(1.0) - Math.log(0.2));
+  return 0.35 + 0.65 * clamp(t, 0, 1);
+}
+
 export function GraphView({ onNavigate }: Props) {
   const [data, setData] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -294,6 +329,9 @@ export function GraphView({ onNavigate }: Props) {
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
   const [viewport, setViewport] = useState({ w: 800, h: 600 });
 
+  // React state mirrors of the displayed view, used only by React-rendered UI
+  // (zoom %, cursor, edge tooltip position). The animation loop owns the true
+  // displayed values in viewRef and mirrors here when they change.
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
 
@@ -305,12 +343,51 @@ export function GraphView({ onNavigate }: Props) {
   const nodesRef = useRef<SimNode[]>([]);
   const rankedNodesRef = useRef<SimNode[]>([]);
   const linksRef = useRef<SimLink[]>([]);
+  // Edge indices grouped into weight buckets so the non-incident edge pass is
+  // one beginPath+stroke per bucket instead of per edge (critical at ~32k edges).
+  const edgeBucketsRef = useRef<number[][]>([]);
   const layoutBoundsRef = useRef<LayoutBounds>({ x: 0, y: 0, w: WORLD_W, h: WORLD_H });
   const minimapCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
+  const quadtreeRef = useRef<Quadtree<SimNode> | null>(null);
+  const maxNodeRadiusRef = useRef(12);
   const [prewarmed, setPrewarmed] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
 
+  // Refs mirroring React state so the imperative draw()/animation loop (which
+  // runs outside React) always reads current values without stale closures.
+  const hoverNodeRef = useRef<string | null>(null);
+  const searchLCRef = useRef('');
+  const hiddenKindsRef = useRef<Set<string>>(hiddenKinds);
+  const layoutReadyRef = useRef(false);
+  const viewportRef = useRef(viewport);
+  const reduceMotionRef = useRef(prefersReducedMotion());
+
+  // Displayed view + easing targets + pan inertia. The single source of truth
+  // for what's on screen; React zoom/pan state is a mirror of this.
+  const viewRef = useRef({
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    tZoom: 1,
+    tPan: { x: 0, y: 0 },
+    panVel: { x: 0, y: 0 },
+    mode: 'idle' as 'idle' | 'ease' | 'inertia',
+  });
+  const mirrorRef = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
+  const focusRef = useRef(0); // eased 0..1 dim amount for hover/search focus
+
+  // Simulation / interpolation state.
+  const workerRef = useRef<Worker | null>(null);
+  const targetPosRef = useRef<Float32Array | null>(null); // latest snapshot
+  const simActiveRef = useRef(false);
+  const posLerpRef = useRef(false);
+  const snapTimesRef = useRef<number[]>([]);
+  const lastMiniInvalidateRef = useRef(0);
+  const qtRebuildTickRef = useRef(0);
+  const visibleEdgesRef = useRef<number[]>([]);
+
   const rafRef = useRef<number | null>(null);
+  const lastFrameRef = useRef(0);
+  const fpsRef = useRef(0);
 
   useLayoutEffect(() => {
     const cached = readCachedGraph();
@@ -344,10 +421,9 @@ export function GraphView({ onNavigate }: Props) {
       .catch((e) => setError(String(e)));
   }, []);
 
-  // Compute a deterministic organic layout synchronously. The old d3-force
-  // pre-warm loop had the right visual character but blocked the main thread
-  // for more than a second on the current 3k-node graph. This keeps the
-  // organic cloud/relationship feel without a visible simulation phase.
+  // Deterministic organic layout, computed synchronously. This is the seed the
+  // worker force-simulation refines — never a main-thread force loop (a prior
+  // synchronous d3-force prewarm blocked >1s on this graph and was removed).
   useLayoutEffect(() => {
     if (!data) return;
     const start = performance.now();
@@ -359,18 +435,156 @@ export function GraphView({ onNavigate }: Props) {
     nodesRef.current = nodes;
     rankedNodesRef.current = [...nodes].sort((a, b) => b.degree - a.degree);
     linksRef.current = links;
+    maxNodeRadiusRef.current = nodes.reduce((m, n) => Math.max(m, n.size / 2), 8);
+
+    // Static weight buckets — weight is immutable per edge, so bucket once.
+    const buckets: number[][] = Array.from({ length: EDGE_BUCKETS }, () => []);
+    for (let i = 0; i < links.length; i++) {
+      const b = clamp(Math.floor(links[i].weight * EDGE_BUCKETS), 0, EDGE_BUCKETS - 1);
+      buckets[b].push(i);
+    }
+    edgeBucketsRef.current = buckets;
+
     layoutBoundsRef.current = layoutBounds(nodes);
     minimapCacheRef.current = null;
+    rebuildQuadtree();
     setPrewarmed(true);
     return () => {
       nodesRef.current = [];
       rankedNodesRef.current = [];
       linksRef.current = [];
+      edgeBucketsRef.current = [];
+      quadtreeRef.current = null;
       minimapCacheRef.current = null;
       setPrewarmed(false);
       setLayoutReady(false);
     };
   }, [data]);
+
+  // ── Force-simulation worker ──────────────────────────────────────────────
+  // Seeded with the organicLayout positions; streams Float32Array snapshots we
+  // interpolate. Degrades gracefully: if the worker can't be constructed the
+  // graph stays on the static seed layout and every other feature still works.
+  useEffect(() => {
+    if (!prewarmed) return;
+    const nodes = nodesRef.current;
+    const links = linksRef.current;
+    if (!nodes.length) return;
+    // Reduced motion → no settling animation at all: keep the deterministic
+    // static seed (already a good layout) and never spin the worker/rAF.
+    if (reduceMotionRef.current) return;
+
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL('../workers/graphSim.ts', import.meta.url), { type: 'module' });
+    } catch (err) {
+      // No worker → static layout. Not an error state; the seed is usable.
+      console.warn('GraphView: force-sim worker unavailable, using static layout', err);
+      return;
+    }
+    workerRef.current = worker;
+
+    const n = nodes.length;
+    const x = new Float32Array(n);
+    const y = new Float32Array(n);
+    const size = new Float32Array(n);
+    const cx = new Float32Array(n);
+    const cy = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const nd = nodes[i];
+      x[i] = nd.x;
+      y[i] = nd.y;
+      size[i] = nd.size;
+      const c = CLUSTER_CENTERS[nd.kind] ?? [0.5, 0.5];
+      cx[i] = c[0] * WORLD_W;
+      cy[i] = c[1] * WORLD_H;
+    }
+    const m = links.length;
+    const linkSource = new Int32Array(m);
+    const linkTarget = new Int32Array(m);
+    const linkWeight = new Float32Array(m);
+    for (let i = 0; i < m; i++) {
+      linkSource[i] = links[i].source.index;
+      linkTarget[i] = links[i].target.index;
+      linkWeight[i] = links[i].weight;
+    }
+
+    worker.onmessage = (e: MessageEvent) => {
+      const msg = e.data as
+        | { type: 'tick'; positions: Float32Array; alpha: number; tickMs: number }
+        | { type: 'end' };
+      if (msg.type === 'tick') {
+        targetPosRef.current = msg.positions;
+        posLerpRef.current = true;
+        simActiveRef.current = true;
+        const now = performance.now();
+        const times = snapTimesRef.current;
+        times.push(now);
+        while (times.length > 30) times.shift();
+        const perf = graphPerf();
+        if (perf) {
+          perf.simTickMs = msg.tickMs;
+          perf.simAlpha = msg.alpha;
+          perf.workerActive = true;
+          if (times.length >= 2) {
+            const span = times[times.length - 1] - times[0];
+            perf.snapshotHz = span > 0 ? ((times.length - 1) / span) * 1000 : 0;
+          }
+        }
+        // The quadtree is rebuilt in the frame loop from the *interpolated*
+        // (displayed) coords, not here from the just-arrived target — rebuilding
+        // from targets would index positions the nodes haven't moved to yet.
+        // The minimap offscreen layer is a full 32k-edge + 10.5k-node redraw, so
+        // invalidate it at most ~2Hz during settle instead of every tick.
+        if (now - lastMiniInvalidateRef.current > 500) {
+          minimapCacheRef.current = null;
+          lastMiniInvalidateRef.current = now;
+        }
+        kick();
+      } else if (msg.type === 'end') {
+        simActiveRef.current = false;
+        minimapCacheRef.current = null; // final settle → accurate minimap
+        const perf = graphPerf();
+        if (perf) perf.workerActive = false;
+        kick();
+      }
+    };
+
+    // Async worker failures (module load/runtime) surface here, NOT via the
+    // synchronous try/catch above. Without this a mid-sim throw would leave
+    // simActiveRef true and the rAF loop spinning forever (idle-CPU bug).
+    const failSafe = () => {
+      // Kill the dead worker and fall back to the static seed layout. Clearing
+      // simActive/posLerp lets the rAF loop reach its idle branch and stop.
+      try { worker.terminate(); } catch { /* already gone */ }
+      if (workerRef.current === worker) workerRef.current = null;
+      simActiveRef.current = false;
+      posLerpRef.current = false;
+      const perf = graphPerf();
+      if (perf) perf.workerActive = false;
+      kick();
+    };
+    worker.onerror = failSafe;
+    worker.onmessageerror = failSafe;
+
+    worker.postMessage(
+      { type: 'init', n, x, y, size, cx, cy, linkSource, linkTarget, linkWeight },
+      [x.buffer, y.buffer, size.buffer, cx.buffer, cy.buffer, linkSource.buffer, linkTarget.buffer, linkWeight.buffer],
+    );
+
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+      simActiveRef.current = false;
+      posLerpRef.current = false;
+      targetPosRef.current = null;
+      snapTimesRef.current = [];
+    };
+    // Keyed on `data` too: if the graph is replaced, batching could otherwise
+    // leave `prewarmed` unchanged (false→true collapses) and keep the stale
+    // worker simulating the old node set into the new nodesRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prewarmed, data]);
 
   // Re-runs when the canvas first mounts (after data arrives) so we measure
   // against the real DOM synchronously, before the first paint of the graph.
@@ -393,12 +607,25 @@ export function GraphView({ onNavigate }: Props) {
     return () => ro.disconnect();
   }, [data]);
 
-  const fitToViewport = useCallback(() => {
+  const rebuildQuadtree = useCallback(() => {
     const nodes = nodesRef.current;
-    if (!nodes.length || !viewport.w || !viewport.h) return;
+    if (!nodes.length) {
+      quadtreeRef.current = null;
+      return;
+    }
+    quadtreeRef.current = quadtree<SimNode>()
+      .x((n) => n.x)
+      .y((n) => n.y)
+      .addAll(nodes);
+  }, []);
+
+  const fitToViewport = useCallback((animated = false) => {
+    const nodes = nodesRef.current;
+    const vp = viewportRef.current;
+    if (!nodes.length || !vp.w || !vp.h) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of nodes) {
-      if (hiddenKinds.has(n.kind)) continue;
+      if (hiddenKindsRef.current.has(n.kind)) continue;
       const x = n.x ?? 0, y = n.y ?? 0, r = n.size / 2;
       if (x - r < minX) minX = x - r;
       if (y - r < minY) minY = y - r;
@@ -409,55 +636,26 @@ export function GraphView({ onNavigate }: Props) {
     const pad = 48;
     const w = maxX - minX + pad * 2;
     const h = maxY - minY + pad * 2;
-    const z = clamp(Math.min(viewport.w / w, viewport.h / h), MIN_ZOOM, 1.5);
+    const z = clamp(Math.min(vp.w / w, vp.h / h), MIN_ZOOM, 1.5);
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
-    const nextPan = { x: viewport.w / 2 - cx * z, y: viewport.h / 2 - cy * z };
+    const nextPan = { x: vp.w / 2 - cx * z, y: vp.h / 2 - cy * z };
     const perf = graphPerf();
     if (perf) {
       perf.fitZoom = z;
       perf.fitPan = nextPan;
-      perf.fitViewport = { w: viewport.w, h: viewport.h };
+      perf.fitViewport = { w: vp.w, h: vp.h };
       perf.fitBounds = { x: minX, y: minY, w, h };
     }
-    setZoom(z);
-    setPan(nextPan);
-  }, [viewport.w, viewport.h, hiddenKinds]);
-
-  // One-shot synchronous fit after pre-warm + viewport measurement. No setTimeout,
-  // no observable "snap" — fit lands in the same paint as the first node render.
-  // Window resizes afterwards do NOT auto-refit (would yank the user's view).
-  const firstFitRef = useRef(false);
-  useLayoutEffect(() => {
-    if (firstFitRef.current) return;
-    if (!prewarmed || !nodesRef.current.length || !canFitViewport(viewport)) return;
-    firstFitRef.current = true;
-    fitToViewport();
-    const perf = graphPerf();
-    if (perf) perf.readyMs = performance.now() - mountTsRef.current;
-    setLayoutReady(true);
-  }, [prewarmed, viewport.w, viewport.h, fitToViewport]);
+    setView(z, nextPan, animated);
+  }, []);
 
   // ── Canvas rendering ─────────────────────────────────────────────────────
-  // The main graph layer (nodes + edges) is drawn imperatively to a <canvas>
-  // rather than rendered as React-managed SVG. Reconciling thousands of SVG
-  // primitives on every simulation tick or hover change was the dominant cost
-  // (526 nodes + ~2.3k edges = ~5k DOM elements each tick). Canvas redraws on
-  // demand via requestAnimationFrame so a tick + hover + pan in the same frame
-  // coalesce into a single paint.
-
-  // drawStateRef captures the latest visual inputs for the draw function. The
-  // draw function is invoked from the simulation tick handler (outside React)
-  // and from React effects, so it must read up-to-date values from a ref.
-  const drawStateRef = useRef({
-    pan,
-    zoom,
-    hoverNode,
-    searchLC: '',
-    hiddenKinds,
-    layoutReady,
-    viewport,
-  });
+  // The main graph layer (nodes + edges) is drawn imperatively to a <canvas>.
+  // Reconciling thousands of SVG primitives per tick/hover was the dominant
+  // cost; canvas coalesces tick + hover + pan in a frame into one paint. All
+  // displayed inputs are read from refs so the draw is valid when invoked from
+  // the animation loop (outside React).
 
   const draw = useCallback(() => {
     const drawStart = performance.now();
@@ -471,11 +669,19 @@ export function GraphView({ onNavigate }: Props) {
       draws.push(drawMs);
       if (draws.length > 120) draws.shift();
       perf.draws = draws;
+      perf.fps = fpsRef.current;
     };
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const { pan, zoom, hoverNode, searchLC, hiddenKinds, layoutReady, viewport } =
-      drawStateRef.current;
+    const view = viewRef.current;
+    const zoom = view.zoom;
+    const pan = view.pan;
+    const hoverNode = hoverNodeRef.current;
+    const searchLC = searchLCRef.current;
+    const hiddenKinds = hiddenKindsRef.current;
+    const layoutReady = layoutReadyRef.current;
+    const viewport = viewportRef.current;
+    const focusAmt = focusRef.current;
     const dpr = window.devicePixelRatio || 1;
     const cw = Math.max(1, Math.round(viewport.w * dpr));
     const ch = Math.max(1, Math.round(viewport.h * dpr));
@@ -514,13 +720,21 @@ export function GraphView({ onNavigate }: Props) {
       kindColorCache[raw] = resolved;
       return resolved;
     };
-    const hasFocus = !!hoverNode || !!searchLC;
+
+    // World-space bounds of the viewport, for edge culling when zoomed in.
+    const cullPad = 40 / zoom;
+    const wl = -pan.x / zoom - cullPad;
+    const wr = (viewport.w - pan.x) / zoom + cullPad;
+    const wt = -pan.y / zoom - cullPad;
+    const wb = (viewport.h - pan.y) / zoom + cullPad;
 
     const isVisible = (n: SimNode, pad = 80): boolean => {
       const sx = (n.x ?? 0) * zoom + pan.x;
       const sy = (n.y ?? 0) * zoom + pan.y;
       return sx >= -pad && sx <= viewport.w + pad && sy >= -pad && sy <= viewport.h + pad;
     };
+
+    const labelAlpha = labelLayerAlpha(zoom);
 
     const drawLabel = (
       node: SimNode,
@@ -541,6 +755,8 @@ export function GraphView({ onNavigate }: Props) {
       if (!active && intersectsAny(rect, occupied)) return false;
       occupied.push(rect);
 
+      // Active/search labels stay crisp; ambient labels fade with zoom.
+      const alpha = active || matches ? 1 : labelAlpha;
       if (active || matches) {
         ctx.fillStyle = matches ? accentColor : bgElevColor;
         ctx.globalAlpha = matches ? 0.14 : 0.96;
@@ -552,8 +768,10 @@ export function GraphView({ onNavigate }: Props) {
         ctx.lineWidth = 1;
         ctx.stroke();
       }
+      ctx.globalAlpha = alpha;
       ctx.fillStyle = active || matches ? fgColor : fgMuteColor;
       ctx.fillText(text, sx - tw / 2, sy);
+      ctx.globalAlpha = 1;
       return true;
     };
 
@@ -572,7 +790,7 @@ export function GraphView({ onNavigate }: Props) {
       for (const n of rankedNodesRef.current) {
         if (drawn >= budget) break;
         if (hiddenKinds.has(n.kind) || !isVisible(n)) continue;
-        const matches = !!searchLC && n.title.toLowerCase().includes(searchLC);
+        const matches = !!searchLC && n.titleLC.includes(searchLC);
         if (!matches && n.id === hoverNode) continue;
         const importantAtFit = zoom < 0.35 && n.degree >= 28;
         const importantMid = zoom >= 0.35 && zoom < 0.75 && n.degree >= 16;
@@ -675,22 +893,40 @@ export function GraphView({ onNavigate }: Props) {
     ctx.scale(zoom, zoom);
 
     // ── Edges ──
-    // Pass 1: non-incident edges. Stroke width and opacity scale with weight
-    // so the topology is more legible than a flat line wash.
+    // Pass 1: non-incident edges, batched into weight buckets. One beginPath +
+    // stroke per bucket (a few draw calls) instead of ~32k. Off-viewport edges
+    // are culled. Focus (hover/search) dims the whole ambient edge layer, eased.
     ctx.lineCap = 'round';
     ctx.strokeStyle = lineColor;
-    for (const e of links) {
-      const a = e.source as SimNode;
-      const b = e.target as SimNode;
-      if (!a || !b || typeof a !== 'object' || typeof b !== 'object') continue;
-      if (hiddenKinds.has(a.kind) || hiddenKinds.has(b.kind)) continue;
-      const incident = hoverNode != null && (a.id === hoverNode || b.id === hoverNode);
-      if (incident) continue;
-      ctx.globalAlpha = hasFocus ? 0.05 : 0.18 + 0.45 * e.weight;
-      ctx.lineWidth = (0.6 + 0.7 * e.weight) / zoom;
+    const buckets = edgeBucketsRef.current;
+    // While edge tooltips are reachable (zoomed in enough), record the on-screen
+    // edge indices this frame so the pointer hit-test scans only visible edges
+    // instead of all ~32k. Reuse the array (length=0) to avoid per-frame alloc.
+    const collectVis = zoom >= EDGE_TOOLTIP_MIN_ZOOM;
+    const vis = visibleEdgesRef.current;
+    if (collectVis) vis.length = 0;
+    for (let b = 0; b < buckets.length; b++) {
+      const members = buckets[b];
+      if (!members.length) continue;
+      const wRep = (b + 0.5) / EDGE_BUCKETS;
+      const baseAlpha = 0.18 + 0.45 * wRep;
+      ctx.globalAlpha = baseAlpha + (0.05 - baseAlpha) * focusAmt;
+      ctx.lineWidth = (0.6 + 0.7 * wRep) / zoom;
       ctx.beginPath();
-      ctx.moveTo(a.x ?? 0, a.y ?? 0);
-      ctx.lineTo(b.x ?? 0, b.y ?? 0);
+      for (let k = 0; k < members.length; k++) {
+        const e = links[members[k]];
+        const a = e.source as SimNode;
+        const bb = e.target as SimNode;
+        if (!a || !bb || typeof a !== 'object' || typeof bb !== 'object') continue;
+        if (hiddenKinds.has(a.kind) || hiddenKinds.has(bb.kind)) continue;
+        if (hoverNode != null && (a.id === hoverNode || bb.id === hoverNode)) continue;
+        const ax = a.x ?? 0, ay = a.y ?? 0, bx = bb.x ?? 0, by = bb.y ?? 0;
+        // Cull edges whose bounding box is fully outside the viewport.
+        if ((ax < wl && bx < wl) || (ax > wr && bx > wr) || (ay < wt && by < wt) || (ay > wb && by > wb)) continue;
+        if (collectVis) vis.push(members[k]);
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+      }
       ctx.stroke();
     }
     // Pass 2: incident edges drawn on top in the accent colour with extra
@@ -703,7 +939,7 @@ export function GraphView({ onNavigate }: Props) {
         if (!a || !b || typeof a !== 'object' || typeof b !== 'object') continue;
         if (hiddenKinds.has(a.kind) || hiddenKinds.has(b.kind)) continue;
         if (a.id !== hoverNode && b.id !== hoverNode) continue;
-        ctx.globalAlpha = 0.55 + 0.35 * e.weight;
+        ctx.globalAlpha = (0.55 + 0.35 * e.weight) * focusAmt;
         ctx.lineWidth = (1.3 + 0.6 * e.weight) / zoom;
         ctx.beginPath();
         ctx.moveTo(a.x ?? 0, a.y ?? 0);
@@ -715,7 +951,7 @@ export function GraphView({ onNavigate }: Props) {
 
     // ── Nodes ──
     // Soft halo behind the hovered node — gives the focused element clear
-    // visual primacy without animating, which keeps the cost flat.
+    // visual primacy. Alpha eases with the focus amount.
     if (hoverNode) {
       const hn = nodes.find((x) => x.id === hoverNode);
       if (hn) {
@@ -723,7 +959,7 @@ export function GraphView({ onNavigate }: Props) {
         ctx.beginPath();
         ctx.arc(hn.x ?? 0, hn.y ?? 0, hn.size / 2 + 10, 0, Math.PI * 2);
         ctx.fillStyle = c;
-        ctx.globalAlpha = 0.18;
+        ctx.globalAlpha = 0.18 * focusAmt;
         ctx.fill();
         ctx.globalAlpha = 1;
       }
@@ -731,16 +967,18 @@ export function GraphView({ onNavigate }: Props) {
 
     for (const n of nodes) {
       if (hiddenKinds.has(n.kind)) continue;
+      if (!isVisible(n, 40)) continue;
       let dim = false;
       if (hoverNode) dim = !(n.id === hoverNode || (neighbors?.has(n.id) ?? false));
-      else if (searchLC) dim = !n.title.toLowerCase().includes(searchLC);
+      else if (searchLC) dim = !n.titleLC.includes(searchLC);
       const active = hoverNode === n.id;
       const r = n.size / 2;
       const c = kindColor(n.color);
       ctx.beginPath();
       ctx.arc(n.x ?? 0, n.y ?? 0, r, 0, Math.PI * 2);
       ctx.fillStyle = n.size >= 22 ? c : bgCardColor;
-      ctx.globalAlpha = dim ? 0.2 : 1;
+      // Dim eases in/out via focusAmt instead of snapping between 1 and 0.2.
+      ctx.globalAlpha = dim ? 1 - 0.8 * focusAmt : 1;
       ctx.fill();
       ctx.strokeStyle = c;
       ctx.lineWidth = (active ? 2.6 : 1.4) / zoom;
@@ -754,43 +992,230 @@ export function GraphView({ onNavigate }: Props) {
     finishDraw();
   }, []);
 
-  const scheduleDraw = useCallback(() => {
-    if (rafRef.current !== null) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
-      draw();
-    });
-  }, [draw]);
+  // ── Animation loop ───────────────────────────────────────────────────────
+  // A single rAF loop advances every time-based motion (view ease, pan inertia,
+  // focus fade, snapshot interpolation) and draws. It runs only while something
+  // is unsettled and stops entirely otherwise — zero idle CPU. kick() (re)starts
+  // it after any state change that needs animating.
+  const frame = useCallback((now: number) => {
+    rafRef.current = null;
+    const last = lastFrameRef.current || now;
+    const dt = Math.min(64, now - last);
+    lastFrameRef.current = now;
+    if (dt > 0) {
+      const instFps = 1000 / dt;
+      fpsRef.current = fpsRef.current ? fpsRef.current * 0.9 + instFps * 0.1 : instFps;
+    }
 
-  // Keep drawStateRef in sync with React state and request a redraw. Runs every
-  // render — the body is a few field assignments + an rAF, which dedupes when
-  // multiple state updates land in the same tick.
-  useLayoutEffect(() => {
-    drawStateRef.current = {
-      pan,
-      zoom,
-      hoverNode,
-      searchLC: search.trim().toLowerCase(),
-      hiddenKinds,
-      layoutReady,
-      viewport,
-    };
-    scheduleDraw();
-  });
+    const reduce = reduceMotionRef.current;
+    const view = viewRef.current;
+    let active = false;
+
+    // View easing / inertia.
+    if (view.mode === 'ease') {
+      if (reduce) {
+        view.zoom = view.tZoom;
+        view.pan.x = view.tPan.x;
+        view.pan.y = view.tPan.y;
+        view.mode = 'idle';
+      } else {
+        const k = 1 - Math.exp(-dt / TAU_VIEW);
+        view.zoom += (view.tZoom - view.zoom) * k;
+        view.pan.x += (view.tPan.x - view.pan.x) * k;
+        view.pan.y += (view.tPan.y - view.pan.y) * k;
+        if (
+          Math.abs(view.tZoom - view.zoom) < VIEW_EPS &&
+          Math.abs(view.tPan.x - view.pan.x) < PAN_EPS &&
+          Math.abs(view.tPan.y - view.pan.y) < PAN_EPS
+        ) {
+          view.zoom = view.tZoom;
+          view.pan.x = view.tPan.x;
+          view.pan.y = view.tPan.y;
+          view.mode = 'idle';
+        } else {
+          active = true;
+        }
+      }
+    } else if (view.mode === 'inertia') {
+      view.pan.x += view.panVel.x * dt;
+      view.pan.y += view.panVel.y * dt;
+      const decay = Math.exp(-dt / TAU_INERTIA);
+      view.panVel.x *= decay;
+      view.panVel.y *= decay;
+      view.tPan.x = view.pan.x;
+      view.tPan.y = view.pan.y;
+      if (Math.hypot(view.panVel.x, view.panVel.y) < INERTIA_SPEED_EPS) {
+        view.panVel.x = 0;
+        view.panVel.y = 0;
+        view.mode = 'idle';
+      } else {
+        active = true;
+      }
+    }
+
+    // Focus (hover/search dim) fade.
+    const focusTarget = hoverNodeRef.current || searchLCRef.current ? 1 : 0;
+    if (reduce) {
+      focusRef.current = focusTarget;
+    } else {
+      const k = 1 - Math.exp(-dt / TAU_FOCUS);
+      focusRef.current += (focusTarget - focusRef.current) * k;
+      if (Math.abs(focusTarget - focusRef.current) < 0.003) focusRef.current = focusTarget;
+      else active = true;
+    }
+
+    // Interpolate node positions toward the latest simulation snapshot.
+    if (posLerpRef.current && targetPosRef.current) {
+      const target = targetPosRef.current;
+      const nodes = nodesRef.current;
+      const k = reduce ? 1 : 1 - Math.exp(-dt / TAU_POS);
+      // The actively-dragged node follows the pointer, not the snapshot — pulling
+      // it toward a (stale, pre-pin) snapshot each frame makes it rubber-band.
+      const drag = dragRef.current;
+      const dragIdx = drag && drag.mode === 'node' ? drag.nodeIndex : -1;
+      let maxDelta = 0;
+      for (let i = 0; i < nodes.length; i++) {
+        if (i === dragIdx) continue;
+        const n = nodes[i];
+        const tx = target[i * 2];
+        const ty = target[i * 2 + 1];
+        const dx = tx - n.x;
+        const dy = ty - n.y;
+        n.x += dx * k;
+        n.y += dy * k;
+        const ad = Math.abs(dx) + Math.abs(dy);
+        if (ad > maxDelta) maxDelta = ad;
+      }
+      layoutBoundsRef.current = layoutBounds(nodes);
+      if (!simActiveRef.current && maxDelta < 0.05) {
+        // Converged and worker stopped — snap exactly and stop interpolating.
+        for (let i = 0; i < nodes.length; i++) {
+          nodes[i].x = target[i * 2];
+          nodes[i].y = target[i * 2 + 1];
+        }
+        rebuildQuadtree();
+        posLerpRef.current = false;
+      } else {
+        // Rebuild the quadtree from the just-written interpolated coords every
+        // few frames (not per-frame — a 10.5k addAll is ~1ms) so hit-testing
+        // tracks the displayed positions, not the unreached snapshot targets.
+        if (++qtRebuildTickRef.current >= 4) {
+          qtRebuildTickRef.current = 0;
+          rebuildQuadtree();
+        }
+        active = true;
+      }
+    }
+    if (simActiveRef.current) active = true;
+
+    draw();
+
+    // Mirror displayed view into React state for the tooltip / % / cursor.
+    const mirror = mirrorRef.current;
+    if (Math.abs(view.zoom - mirror.zoom) > 1e-4) {
+      mirror.zoom = view.zoom;
+      setZoom(view.zoom);
+    }
+    if (Math.abs(view.pan.x - mirror.pan.x) > 0.25 || Math.abs(view.pan.y - mirror.pan.y) > 0.25) {
+      mirror.pan = { x: view.pan.x, y: view.pan.y };
+      setPan({ x: view.pan.x, y: view.pan.y });
+    }
+
+    const perf = graphPerf();
+    if (active) {
+      rafRef.current = requestAnimationFrame(frame);
+    } else {
+      // Final settle: sync exact mirror and clear the per-loop fps.
+      mirror.zoom = view.zoom;
+      mirror.pan = { x: view.pan.x, y: view.pan.y };
+      setZoom(view.zoom);
+      setPan({ x: view.pan.x, y: view.pan.y });
+      lastFrameRef.current = 0;
+      fpsRef.current = 0;
+      if (perf) perf.fps = 0;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draw, rebuildQuadtree]);
+
+  const kick = useCallback(() => {
+    if (rafRef.current !== null) return;
+    lastFrameRef.current = 0;
+    rafRef.current = requestAnimationFrame(frame);
+  }, [frame]);
+
+  // Redraw once (no animation) — for hidden-kind toggles, theme, resize etc.
+  const requestDraw = useCallback(() => {
+    kick();
+  }, [kick]);
+
+  // Commit a new view. `animated` eases toward it; otherwise it snaps (used for
+  // the first fit and reduced-motion).
+  const setView = useCallback(
+    (nextZoom: number, nextPan: { x: number; y: number }, animated: boolean) => {
+      const view = viewRef.current;
+      view.tZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
+      view.tPan = { x: nextPan.x, y: nextPan.y };
+      view.panVel = { x: 0, y: 0 };
+      if (!animated || reduceMotionRef.current) {
+        view.zoom = view.tZoom;
+        view.pan = { x: view.tPan.x, y: view.tPan.y };
+        view.mode = 'idle';
+      } else {
+        view.mode = 'ease';
+      }
+      kick();
+    },
+    [kick],
+  );
+
+  // Keep the state-mirroring refs current.
+  useEffect(() => { hoverNodeRef.current = hoverNode; kick(); }, [hoverNode, kick]);
+  useEffect(() => { searchLCRef.current = search.trim().toLowerCase(); kick(); }, [search, kick]);
+  useEffect(() => { hiddenKindsRef.current = hiddenKinds; requestDraw(); }, [hiddenKinds, requestDraw]);
+  useEffect(() => { layoutReadyRef.current = layoutReady; requestDraw(); }, [layoutReady, requestDraw]);
+  useEffect(() => { viewportRef.current = viewport; requestDraw(); }, [viewport, requestDraw]);
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => { reduceMotionRef.current = mq.matches; };
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
 
   useEffect(() => () => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
   }, []);
 
+  // One-shot fit after prewarm + viewport measurement — instant, no visible
+  // "snap". Window resizes afterwards do NOT auto-refit (would yank the view).
+  const firstFitRef = useRef(false);
+  useLayoutEffect(() => {
+    if (firstFitRef.current) return;
+    if (!prewarmed || !nodesRef.current.length || !canFitViewport(viewport)) return;
+    firstFitRef.current = true;
+    viewportRef.current = viewport;
+    fitToViewport(false);
+    const perf = graphPerf();
+    if (perf) perf.readyMs = performance.now() - mountTsRef.current;
+    layoutReadyRef.current = true;
+    setLayoutReady(true);
+  }, [prewarmed, viewport, fitToViewport]);
+
   const zoomAt = useCallback(
     (factor: number, cx: number, cy: number) => {
-      setZoom((z) => {
-        const nz = clamp(z * factor, MIN_ZOOM, MAX_ZOOM);
-        setPan((p) => ({ x: cx - (cx - p.x) * (nz / z), y: cy - (cy - p.y) * (nz / z) }));
-        return nz;
-      });
+      const view = viewRef.current;
+      // Anchor on the current *target* so rapid wheel steps accumulate smoothly.
+      const baseZoom = view.mode === 'ease' ? view.tZoom : view.zoom;
+      const basely = view.mode === 'ease' ? view.tPan : view.pan;
+      const nz = clamp(baseZoom * factor, MIN_ZOOM, MAX_ZOOM);
+      const nextPan = {
+        x: cx - (cx - basely.x) * (nz / baseZoom),
+        y: cy - (cy - basely.y) * (nz / baseZoom),
+      };
+      setView(nz, nextPan, true);
     },
-    [],
+    [setView],
   );
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -815,14 +1240,15 @@ export function GraphView({ onNavigate }: Props) {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      const vp = viewportRef.current;
       if (e.key === '+' || e.key === '=') {
-        zoomAt(1.25, viewport.w / 2, viewport.h / 2);
+        zoomAt(1.25, vp.w / 2, vp.h / 2);
         e.preventDefault();
       } else if (e.key === '-' || e.key === '_') {
-        zoomAt(0.8, viewport.w / 2, viewport.h / 2);
+        zoomAt(0.8, vp.w / 2, vp.h / 2);
         e.preventDefault();
       } else if (e.key === '0') {
-        fitToViewport();
+        fitToViewport(true);
         e.preventDefault();
       } else if (e.key === 'Escape') {
         setSearch('');
@@ -831,7 +1257,7 @@ export function GraphView({ onNavigate }: Props) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [zoomAt, fitToViewport, viewport.w, viewport.h]);
+  }, [zoomAt, fitToViewport]);
 
   const dragRef = useRef<
     | null
@@ -841,25 +1267,64 @@ export function GraphView({ onNavigate }: Props) {
         sy: number;
         origPan: { x: number; y: number };
         nodeId?: string;
+        nodeIndex?: number;
         nodeStart?: { x: number; y: number };
+        lastX: number;
+        lastY: number;
+        lastT: number;
+        vx: number;
+        vy: number;
       }
   >(null);
 
-  // Convert a (clientX, clientY) relative to the canvas wrapper into world
-  // coordinates by inverting the current pan + zoom transform.
+  // Convert (clientX, clientY) relative to the canvas wrapper into world
+  // coordinates by inverting the *displayed* pan + zoom transform.
   const clientToWorld = (clientX: number, clientY: number) => {
     const el = containerRef.current;
     if (!el) return { x: 0, y: 0 };
     const r = el.getBoundingClientRect();
-    return { x: (clientX - r.left - pan.x) / zoom, y: (clientY - r.top - pan.y) / zoom };
+    const view = viewRef.current;
+    return {
+      x: (clientX - r.left - view.pan.x) / view.zoom,
+      y: (clientY - r.top - view.pan.y) / view.zoom,
+    };
   };
 
   const hitTestNode = (wx: number, wy: number): SimNode | null => {
+    const hidden = hiddenKindsRef.current;
+    const qt = quadtreeRef.current;
+    if (qt) {
+      // quadtree.find returns only the nearest CENTER, which is wrong when that
+      // node is hidden, or when the pointer sits inside an overlapping node
+      // whose centre isn't the closest. Collect every candidate within the
+      // pointer's radius bbox via a pruned visit, then return the topmost
+      // (highest index = last drawn) whose radius actually contains the pointer.
+      const R = maxNodeRadiusRef.current + 2;
+      let best: SimNode | null = null;
+      qt.visit((node, x0, y0, x1, y1) => {
+        if (!('length' in node)) {
+          let leaf: QuadtreeLeaf<SimNode> | undefined = node;
+          do {
+            const d = leaf.data;
+            if (d && !hidden.has(d.kind)) {
+              const dx = d.x - wx, dy = d.y - wy, r = d.size / 2;
+              if (dx * dx + dy * dy <= r * r && (!best || d.index > best.index)) best = d;
+            }
+            leaf = leaf.next;
+          } while (leaf);
+        }
+        return x0 > wx + R || x1 < wx - R || y0 > wy + R || y1 < wy - R;
+      });
+      if (best) return best;
+      // A miss is authoritative only once settled; while the sim is hot the tree
+      // can lag live coords, so fall through to the exact scan.
+      if (!simActiveRef.current) return null;
+    }
+    // Fallback linear scan (quadtree not yet built, or sim-active miss above).
     const nodes = nodesRef.current;
-    // Scan in reverse so visually-on-top nodes (last drawn) win ties.
     for (let i = nodes.length - 1; i >= 0; i--) {
       const n = nodes[i];
-      if (hiddenKinds.has(n.kind)) continue;
+      if (hidden.has(n.kind)) continue;
       const dx = (n.x ?? 0) - wx;
       const dy = (n.y ?? 0) - wy;
       const r = n.size / 2;
@@ -870,18 +1335,28 @@ export function GraphView({ onNavigate }: Props) {
 
   const hitTestEdge = (wx: number, wy: number): number | null => {
     const links = linksRef.current;
-    const tol = EDGE_HIT_TOLERANCE / zoom;
+    const hidden = hiddenKindsRef.current;
+    const tol = EDGE_HIT_TOLERANCE / viewRef.current.zoom;
     const tol2 = tol * tol;
     let bestI = -1;
     let bestD2 = Infinity;
-    for (let i = 0; i < links.length; i++) {
+    // Scan only the edges the draw pass marked visible this frame (already
+    // viewport-culled), not all ~32k. Callers only invoke this at zoom >=
+    // EDGE_TOOLTIP_MIN_ZOOM, which is exactly when the list is populated.
+    const candidates = visibleEdgesRef.current;
+    for (let ci = 0; ci < candidates.length; ci++) {
+      const i = candidates[ci];
       const e = links[i];
       const a = e.source as SimNode;
       const b = e.target as SimNode;
       if (!a || !b || typeof a !== 'object' || typeof b !== 'object') continue;
-      if (hiddenKinds.has(a.kind) || hiddenKinds.has(b.kind)) continue;
+      if (hidden.has(a.kind) || hidden.has(b.kind)) continue;
       const ax = a.x ?? 0, ay = a.y ?? 0;
       const bx = b.x ?? 0, by = b.y ?? 0;
+      // Bounding-box prefilter: skip edges whose (padded) bbox excludes the
+      // cursor before doing the projection math.
+      if (wx < Math.min(ax, bx) - tol || wx > Math.max(ax, bx) + tol) continue;
+      if (wy < Math.min(ay, by) - tol || wy > Math.max(ay, by) + tol) continue;
       const ex = bx - ax;
       const ey = by - ay;
       const len2 = ex * ex + ey * ey;
@@ -902,23 +1377,30 @@ export function GraphView({ onNavigate }: Props) {
 
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    // A pointer-down interrupts any running inertia/ease.
+    viewRef.current.mode = 'idle';
+    viewRef.current.panVel = { x: 0, y: 0 };
     const w = clientToWorld(e.clientX, e.clientY);
     const node = hitTestNode(w.x, w.y);
+    const base = { lastX: e.clientX, lastY: e.clientY, lastT: performance.now(), vx: 0, vy: 0 };
     if (node) {
       dragRef.current = {
         mode: 'node-pending',
         sx: e.clientX,
         sy: e.clientY,
-        origPan: { ...pan },
+        origPan: { ...viewRef.current.pan },
         nodeId: node.id,
+        nodeIndex: node.index,
         nodeStart: { x: node.x ?? 0, y: node.y ?? 0 },
+        ...base,
       };
     } else {
       dragRef.current = {
         mode: 'pan',
         sx: e.clientX,
         sy: e.clientY,
-        origPan: { ...pan },
+        origPan: { ...viewRef.current.pan },
+        ...base,
       };
     }
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
@@ -932,16 +1414,32 @@ export function GraphView({ onNavigate }: Props) {
       if (d.mode === 'node-pending' && Math.hypot(dx, dy) > 4 && d.nodeId) {
         d.mode = 'node';
       }
+      // Track pointer velocity (px/ms) for pan-release inertia.
+      const now = performance.now();
+      const mdt = Math.max(1, now - d.lastT);
+      d.vx = (e.clientX - d.lastX) / mdt;
+      d.vy = (e.clientY - d.lastY) / mdt;
+      d.lastX = e.clientX;
+      d.lastY = e.clientY;
+      d.lastT = now;
+
       if (d.mode === 'pan') {
-        setPan({ x: d.origPan.x + dx, y: d.origPan.y + dy });
+        const view = viewRef.current;
+        view.pan = { x: d.origPan.x + dx, y: d.origPan.y + dy };
+        view.tPan = { x: view.pan.x, y: view.pan.y };
+        kick();
       } else if (d.mode === 'node' && d.nodeId && d.nodeStart) {
         const n = nodesRef.current.find((x) => x.id === d.nodeId);
         if (n) {
-          n.x = d.nodeStart.x + dx / zoom;
-          n.y = d.nodeStart.y + dy / zoom;
-          layoutBoundsRef.current = layoutBounds(nodesRef.current);
-          minimapCacheRef.current = null;
-          scheduleDraw();
+          n.x = d.nodeStart.x + dx / viewRef.current.zoom;
+          n.y = d.nodeStart.y + dy / viewRef.current.zoom;
+          // Pin + reheat the simulation so neighbours respond (Obsidian feel).
+          // No per-move quadtree/bounds rebuild here — pointermove can fire at
+          // 120Hz+ and rebuilding 10.5k nodes each time would jank the drag; the
+          // frame loop rebuilds every few frames while the sim is hot, and
+          // pointer-up rebuilds once on release (covers the worker-disabled case).
+          workerRef.current?.postMessage({ type: 'drag', index: d.nodeIndex, x: n.x, y: n.y });
+          kick();
         }
       } else if (d.mode === 'minimap') {
         panToMinimap(e);
@@ -958,7 +1456,9 @@ export function GraphView({ onNavigate }: Props) {
       return;
     }
     if (hoverNode !== null) setHoverNode(null);
-    if (zoom < EDGE_TOOLTIP_MIN_ZOOM) {
+    // Skip edge hover while zoomed out, or while the sim is animating (positions
+    // in flux → a tooltip would be meaningless and the scan is wasted work).
+    if (viewRef.current.zoom < EDGE_TOOLTIP_MIN_ZOOM || simActiveRef.current) {
       if (hoverEdge !== null) setHoverEdge(null);
       return;
     }
@@ -973,8 +1473,21 @@ export function GraphView({ onNavigate }: Props) {
     if (d.mode === 'node-pending' && d.nodeId) {
       onNavigate('article', d.nodeId);
     } else if (d.mode === 'node' && d.nodeId) {
+      // Release the pin → node relaxes back into the simulation. Rebuild the
+      // spatial structures once here (they're skipped during the move).
+      workerRef.current?.postMessage({ type: 'dragEnd', index: d.nodeIndex });
+      layoutBoundsRef.current = layoutBounds(nodesRef.current);
       minimapCacheRef.current = null;
-      scheduleDraw();
+      rebuildQuadtree();
+      kick();
+    } else if (d.mode === 'pan') {
+      // Hand the pointer velocity to the inertia integrator.
+      const view = viewRef.current;
+      if (!reduceMotionRef.current && Math.hypot(d.vx, d.vy) > INERTIA_SPEED_EPS) {
+        view.panVel = { x: d.vx, y: d.vy };
+        view.mode = 'inertia';
+        kick();
+      }
     }
     (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
   };
@@ -1002,7 +1515,12 @@ export function GraphView({ onNavigate }: Props) {
     const { scale, ox, oy } = miniTransform();
     const worldX = (mx - ox) / scale;
     const worldY = (my - oy) / scale;
-    setPan({ x: viewport.w / 2 - worldX * zoom, y: viewport.h / 2 - worldY * zoom });
+    const view = viewRef.current;
+    const nextPan = { x: viewport.w / 2 - worldX * view.zoom, y: viewport.h / 2 - worldY * view.zoom };
+    view.pan = nextPan;
+    view.tPan = { ...nextPan };
+    view.mode = 'idle';
+    kick();
   }
 
   const onMinimapPointerDown = (e: React.PointerEvent) => {
@@ -1012,7 +1530,12 @@ export function GraphView({ onNavigate }: Props) {
       mode: 'minimap',
       sx: e.clientX,
       sy: e.clientY,
-      origPan: { ...pan },
+      origPan: { ...viewRef.current.pan },
+      lastX: e.clientX,
+      lastY: e.clientY,
+      lastT: performance.now(),
+      vx: 0,
+      vy: 0,
     };
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     panToMinimap(e);
@@ -1156,7 +1679,7 @@ export function GraphView({ onNavigate }: Props) {
           <button
             type="button"
             className="graph-ctrl"
-            onClick={() => fitToViewport()}
+            onClick={() => fitToViewport(true)}
             title="Fit (0)"
             aria-label="Fit to view"
           >

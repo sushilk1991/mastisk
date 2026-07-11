@@ -16,12 +16,16 @@
     "@codemirror/view": "^6.43.1",
     "@lezer/markdown": "^1.6.4",
     "chart.js": "^4.5.1",
+    "d3-force": "^3.0.0",
+    "d3-quadtree": "^3.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-h5-audio-player": "^3.10.2",
     "react-markdown": "^10.1.0"
   },
   "devDependencies": {
+    "@types/d3-force": "^3.0.10",
+    "@types/d3-quadtree": "^3.0.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
