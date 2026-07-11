@@ -66,6 +66,91 @@ function notify(title, message, articleUrl) {
   });
 }
 
+// --- In-page toast ---
+// macOS quietly drops chrome.notifications unless the user has granted Chrome
+// notification permission in System Settings, so the primary clip feedback is
+// a toast injected into the page itself. Notifications remain the fallback
+// (restricted pages, closed tabs) and the click-to-open-article channel.
+
+async function showToast(tabId, message, type = 'info') {
+  if (!tabId) return false;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (message, type) => {
+        try {
+          const HOST_ID = 'mastisk-toast-host';
+          document.getElementById(HOST_ID)?.remove();
+          const host = document.createElement('div');
+          host.id = HOST_ID;
+          host.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483647;pointer-events:none;';
+          const root = host.attachShadow({ mode: 'open' });
+          const accent = { info: '#6366f1', success: '#059669', error: '#dc2626' }[type] || '#6366f1';
+          const icon = { info: '⋯', success: '✓', error: '✕' }[type] || '⋯';
+          const box = document.createElement('div');
+          box.style.cssText = [
+            'display:flex', 'align-items:center', 'gap:10px',
+            'max-width:360px', 'padding:12px 16px',
+            'background:#1f2430', 'color:#f3f4f6',
+            `border-left:3px solid ${accent}`, 'border-radius:8px',
+            'box-shadow:0 8px 24px rgba(0,0,0,.35)',
+            'font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+            'opacity:0', 'transform:translateY(-6px)',
+            'transition:opacity .18s ease,transform .18s ease',
+          ].join(';');
+          const badge = document.createElement('span');
+          badge.textContent = icon;
+          badge.style.cssText = `flex:none;width:20px;height:20px;border-radius:50%;background:${accent};color:#fff;font-size:12px;line-height:20px;text-align:center;`;
+          const text = document.createElement('span');
+          text.textContent = message;
+          box.append(badge, text);
+          root.appendChild(box);
+          document.documentElement.appendChild(host);
+          requestAnimationFrame(() => {
+            box.style.opacity = '1';
+            box.style.transform = 'translateY(0)';
+          });
+          const ttl = type === 'error' ? 6000 : 3200;
+          setTimeout(() => {
+            box.style.opacity = '0';
+            box.style.transform = 'translateY(-6px)';
+            setTimeout(() => host.remove(), 250);
+          }, ttl);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      args: [message, type],
+    });
+    return results?.[0]?.result === true;
+  } catch {
+    return false; // restricted page, tab gone, etc.
+  }
+}
+
+// Toast into the tab if possible; fall back to an OS notification otherwise.
+// Only for immediate feedback (the user just acted in that tab, so it is the
+// active one). Delayed/terminal outcomes go through toastIfSameTab + notify.
+async function feedback(tabId, type, title, message, articleUrl) {
+  const shown = await showToast(tabId, message ? `${title} — ${message}` : title, type);
+  if (!shown) notify(title, message, articleUrl);
+}
+
+// Guarded toast for delayed outcomes: only inject if the tab still exists AND
+// still shows the page the clip came from — otherwise the clip title would
+// appear on (and be readable by) an unrelated page the user navigated to.
+async function toastIfSameTab(meta, message, type) {
+  if (!meta?.tabId || !meta?.tabUrl) return false;
+  try {
+    const tab = await chrome.tabs.get(meta.tabId);
+    if (!tab || tab.url !== meta.tabUrl) return false;
+  } catch {
+    return false; // tab closed
+  }
+  return showToast(meta.tabId, message, type);
+}
+
 async function rememberNotifUrl(notificationId, url) {
   await withStore(async () => {
     const store = await chrome.storage.session.get(NOTIF_KEY);
@@ -232,10 +317,14 @@ async function handleTerminalStatus(sourceId, status, fallbackTitle) {
     const title = meta.title || fallbackTitle;
     if (status.article) {
       await flashSuccessBadge();
+      // Toast only if the originating tab still shows the clipped page; the
+      // notification fires regardless — it's the click-to-open-article channel.
+      await toastIfSameTab(meta, `Indexed in Mastisk: ${status.article.title || title || 'your clip'}`, 'success');
       notify('Indexed', status.article.title || title || 'Saved to your wiki',
         articleUrl(server, status.article.id));
     } else {
       // Compiler skipped it — saved as a source but not turned into an article.
+      await toastIfSameTab(meta, 'Saved to Mastisk, but not compiled into an article.', 'info');
       notify('Saved to Mastisk', 'Saved but not compiled into an article.');
     }
     return true;
@@ -243,7 +332,9 @@ async function handleTerminalStatus(sourceId, status, fallbackTitle) {
   if (status.status === 'failed') {
     const meta = await claimJob(sourceId);
     if (!meta) return true;
-    notify('Indexing failed', status.error || 'The daemon could not index this clip.');
+    const msg = status.error || 'The daemon could not index this clip.';
+    await toastIfSameTab(meta, `Indexing failed — ${msg}`, 'error');
+    notify('Indexing failed', msg);
     return true;
   }
   return false; // queued | running | pending
@@ -252,7 +343,9 @@ async function handleTerminalStatus(sourceId, status, fallbackTitle) {
 async function expireJob(sourceId, fallbackTitle) {
   const meta = await claimJob(sourceId);
   if (!meta) return;
-  notify('Still indexing', `"${meta.title || fallbackTitle || 'Your clip'}" is taking a while. Check Mastisk later.`);
+  const msg = `"${meta.title || fallbackTitle || 'Your clip'}" is taking a while. Check Mastisk later.`;
+  await toastIfSameTab(meta, `Still indexing — ${msg}`, 'info');
+  notify('Still indexing', msg);
 }
 
 // --- Poll a queued job to completion (fast in-SW loop for snappy UX) ---
@@ -322,12 +415,14 @@ function sleep(ms) {
 
 // Kick off ingest + tracking for a payload. `title` is used for
 // notification copy before the compiled article title is known.
-async function ingestAndTrack(payload) {
+// `feedbackTab` is the tab where the user acted — toasts land there.
+async function ingestAndTrack(payload, feedbackTab) {
+  const feedbackTabId = feedbackTab?.id;
   const server = await getServerUrl();
 
   // Guard/clamp to backend limits before POSTing.
   if (typeof payload.url === 'string' && payload.url.length > FIELD_LIMITS.url) {
-    notify("Can't clip", 'The page URL is too long to save.');
+    await feedback(feedbackTabId, 'error', "Can't clip", 'The page URL is too long to save.');
     return;
   }
   payload.title = clampField(payload.title, FIELD_LIMITS.title);
@@ -340,7 +435,7 @@ async function ingestAndTrack(payload) {
   try {
     res = await ingestWeb(payload);
   } catch (err) {
-    notify('Clip failed', err.message);
+    await feedback(feedbackTabId, 'error', 'Clip failed', err.message);
     return;
   }
 
@@ -348,29 +443,30 @@ async function ingestAndTrack(payload) {
 
   // Already compiled — the daemon hands back the existing article.
   if (res.article) {
+    showToast(feedbackTabId, `Already in your wiki: ${res.article.title || title}`, 'success');
     notify('Already in your wiki', res.article.title || title,
       articleUrl(server, res.article.id));
     return;
   }
 
   if (!res.source_id) {
-    notify('Clip failed', 'Daemon did not return a source id.');
+    await feedback(feedbackTabId, 'error', 'Clip failed', 'Daemon did not return a source id.');
     return;
   }
 
   // Terminal states with no article.
   if (res.status === 'done') {
-    notify('Saved to Mastisk', 'Saved but not compiled into an article.');
+    await feedback(feedbackTabId, 'info', 'Saved to Mastisk', 'Saved but not compiled into an article.');
     return;
   }
   if (res.status === 'failed') {
-    notify('Indexing failed', res.error || 'The daemon could not index this clip.');
+    await feedback(feedbackTabId, 'error', 'Indexing failed', res.error || 'The daemon could not index this clip.');
     return;
   }
 
   // queued | running | pending | (unset) -> track to completion.
-  notify('Sent to Mastisk', 'Indexing…');
-  await addJob(res.source_id, { title });
+  await feedback(feedbackTabId, 'success', 'Sent to Mastisk', 'Indexing…');
+  await addJob(res.source_id, { title, tabId: feedbackTabId, tabUrl: feedbackTab?.url });
   await pollJob(res.source_id, title);
 }
 
@@ -436,9 +532,10 @@ async function sendPage(tab) {
     notify("Can't clip this page", 'This browser page cannot be read by extensions.');
     return;
   }
+  showToast(tab.id, 'Sending page to Mastisk…', 'info');
   const data = await extractFromTab(tab.id);
   if (!data || !data.content) {
-    notify("Can't clip this page", 'Could not extract readable content from this page.');
+    await feedback(tab.id, 'error', "Can't clip this page", 'Could not extract readable content from this page.');
     return;
   }
   await ingestAndTrack({
@@ -448,16 +545,17 @@ async function sendPage(tab) {
     author: data.author || undefined,
     hero_image_url: data.hero_image_url || undefined,
     kind: mapKind(data.type),
-  });
+  }, tab);
 }
 
 // Send just the selected text (plus cheap page context).
 async function sendSelection(info, tab) {
   const selection = (info.selectionText || '').trim();
   if (!selection) {
-    notify("Can't clip", 'No text was selected.');
+    await feedback(tab?.id, 'error', "Can't clip", 'No text was selected.');
     return;
   }
+  showToast(tab?.id, 'Sending selection to Mastisk…', 'info');
   // Try to grab full page content too, but a selection is enough on its own.
   let content = '';
   let title = tab?.title || '';
@@ -482,21 +580,25 @@ async function sendSelection(info, tab) {
     author,
     hero_image_url: hero,
     kind,
-  });
+  }, tab);
 }
 
 // Send a link target: open it in a background tab, extract, then close.
-async function sendLink(linkUrl) {
+// Feedback lands in `srcTab` — the tab where the user right-clicked —
+// because the background tab is invisible and gets closed.
+async function sendLink(linkUrl, srcTab) {
+  const srcTabId = srcTab?.id;
   if (!linkUrl || isRestrictedUrl(linkUrl)) {
-    notify("Can't clip this link", 'This link cannot be opened for clipping.');
+    await feedback(srcTabId, 'error', "Can't clip this link", 'This link cannot be opened for clipping.');
     return;
   }
+  showToast(srcTabId, 'Fetching link for Mastisk…', 'info');
 
   let bgTab;
   try {
     bgTab = await chrome.tabs.create({ url: linkUrl, active: false });
   } catch (err) {
-    notify("Can't clip this link", err.message);
+    await feedback(srcTabId, 'error', "Can't clip this link", err.message);
     return;
   }
 
@@ -506,7 +608,7 @@ async function sendLink(linkUrl) {
     await sleep(1200);
     const data = await extractFromTab(bgTab.id);
     if (!data || !data.content) {
-      notify("Can't clip this link", 'Could not extract readable content from the link.');
+      await feedback(srcTabId, 'error', "Can't clip this link", 'Could not extract readable content from the link.');
       return;
     }
     await ingestAndTrack({
@@ -516,9 +618,9 @@ async function sendLink(linkUrl) {
       author: data.author || undefined,
       hero_image_url: data.hero_image_url || undefined,
       kind: mapKind(data.type),
-    });
+    }, srcTab);
   } catch (err) {
-    notify("Can't clip this link", err.message);
+    await feedback(srcTabId, 'error', "Can't clip this link", err.message);
   } finally {
     try { await chrome.tabs.remove(bgTab.id); } catch { /* already gone */ }
   }
@@ -571,11 +673,11 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     switch (info.menuItemId) {
       case MENU.page: await sendPage(tab); break;
       case MENU.selection: await sendSelection(info, tab); break;
-      case MENU.link: await sendLink(info.linkUrl); break;
+      case MENU.link: await sendLink(info.linkUrl, tab); break;
     }
   })().catch((err) => {
     console.error('[Mastisk] Clip error:', err);
-    notify('Clip failed', err.message || 'Unknown error');
+    return feedback(tab?.id, 'error', 'Clip failed', err.message || 'Unknown error');
   });
 });
 
