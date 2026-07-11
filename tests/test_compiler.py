@@ -111,6 +111,25 @@ def test_sections_to_md_fences_diagrams():
     assert "Hello *world*" in md
 
 
+def test_normalize_article_data_drops_malformed_entries():
+    """Prod failure 2026-07-12: a bare string in sections crashed the compile."""
+    from mastisk.agents.compiler import _normalize_article_data
+
+    data = {
+        "sections": [
+            {"h": "Ok", "body": "<p>fine</p>"},
+            "a stray string section",
+            {"h": "No body", "body": None},
+        ],
+        "related": [{"id": "x", "weight": 0.5}, "stray", {"label": "no id"}],
+        "aka": ["alias", 42],
+    }
+    _normalize_article_data(data)
+    assert data["sections"] == [{"h": "Ok", "body": "<p>fine</p>"}]
+    assert data["related"] == [{"id": "x", "weight": 0.5}]
+    assert data["aka"] == ["alias"]
+
+
 def test_strip_html_preserves_paragraph_boundaries():
     from mastisk.agents.compiler import _strip_html
 

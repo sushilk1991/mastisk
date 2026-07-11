@@ -207,6 +207,13 @@ class Compiler(Agent):
                 provider, source_id, missing,
             )
             return
+        _normalize_article_data(data)
+        if not data["sections"]:
+            log.warning(
+                "compiler: %s response for source %s had no usable sections",
+                provider, source_id,
+            )
+            return
 
         # Guard against mis-classification: a single-source article is almost
         # never a genuine Synthesis — that kind is reserved for cross-source
@@ -290,6 +297,7 @@ class Compiler(Agent):
             )
             return
 
+        _normalize_article_data(data)
         if not data.get("title") or not data.get("sections"):
             log.warning(
                 "compiler: enrich_stub %s response for article %s lacks title/sections",
@@ -443,6 +451,34 @@ class Compiler(Agent):
             "Synthesis": "synthesis",
         }.get(kind, "concepts")
         return vault_dir() / folder / f"{slug}.md"
+
+
+def _normalize_article_data(data: dict) -> None:
+    """Coerce LLM output lists to the shapes downstream code indexes into.
+
+    Tool-forcing guarantees syntactically valid JSON, not schema conformance —
+    observed in prod: a bare string inside "sections" crashed
+    ``_extract_link_refs`` with ``'str' object has no attribute 'get'``.
+    Non-dict entries are dropped (logged), never fatal.
+    """
+    sections = data.get("sections") or []
+    clean_sections = []
+    for s in sections if isinstance(sections, list) else []:
+        if isinstance(s, dict) and isinstance(s.get("body"), str):
+            s["h"] = str(s.get("h") or "")
+            clean_sections.append(s)
+        else:
+            log.warning("compiler: dropping malformed section entry: %r", str(s)[:120])
+    data["sections"] = clean_sections
+
+    related = data.get("related") or []
+    data["related"] = [
+        r for r in (related if isinstance(related, list) else [])
+        if isinstance(r, dict) and r.get("id")
+    ]
+
+    aka = data.get("aka") or []
+    data["aka"] = [a for a in (aka if isinstance(aka, list) else []) if isinstance(a, str)]
 
 
 def _extract_link_refs(sections: list[dict]) -> dict[str, str]:
