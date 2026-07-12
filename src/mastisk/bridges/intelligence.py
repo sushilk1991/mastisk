@@ -169,16 +169,23 @@ async def _run_provider(
             prompt, timeout_s=timeout_s, json_object=json_object,
             json_schema=json_schema,
         )
+    s = get_settings().intelligence
     if provider == "codex":
         # Local `codex exec --help` exposes no Claude-style no-tools /
         # classification flag. The bridge uses a non-interactive prompt
         # argument and detached stdin; do not pass a made-up kwarg through.
-        return await codex_bridge.run_codex(prompt, timeout=float(timeout_s))
+        return await codex_bridge.run_codex(
+            prompt,
+            model=s.codex_model or None,
+            reasoning_effort=s.codex_reasoning_effort or None,
+            timeout=float(timeout_s),
+        )
     if provider == "claude":
         return await claude_bridge.run_claude(
             prompt,
             timeout_s=timeout_s,
             classification=classification,
+            model=s.claude_model or None,
         )
     # Ollama tier. ``ollama_bridge.chat`` hardcodes its own httpx timeout
     # (~180s), so we wrap it to honour ``timeout_s`` consistently with the

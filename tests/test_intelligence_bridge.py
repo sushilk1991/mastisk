@@ -216,6 +216,46 @@ def test_classification_mode_keeps_codex_first(data_tmp):
     assert m_o.call_count == 0
 
 
+def test_cli_tier_model_pins_are_forwarded(data_tmp):
+    """Default pins: codex runs gpt-5.6-luna at low effort, claude runs haiku."""
+    _reload_settings()
+    from mastisk.bridges import intelligence
+
+    p_claude, p_codex, p_ollama = _patch_chain(
+        codex=RuntimeError("nope"),
+        claude={"text": "ok"},
+    )
+    with p_claude as m_c, p_codex as m_x, p_ollama:
+        asyncio.run(intelligence.run_intelligence("hi"))
+
+    assert m_x.call_args.kwargs.get("model") == "gpt-5.6-luna"
+    assert m_x.call_args.kwargs.get("reasoning_effort") == "low"
+    assert m_c.call_args.kwargs.get("model") == "haiku"
+
+
+def test_cli_tier_model_pins_can_be_cleared(data_tmp):
+    """Empty-string TOML values fall back to each CLI's own default model."""
+    (data_tmp / "config.toml").write_text(
+        "[intelligence]\n"
+        'codex_model = ""\n'
+        'codex_reasoning_effort = ""\n'
+        'claude_model = ""\n',
+        encoding="utf-8",
+    )
+    _reload_settings()
+    from mastisk.bridges import intelligence
+
+    p_claude, p_codex, p_ollama = _patch_chain(
+        codex=RuntimeError("nope"),
+        claude={"text": "ok"},
+    )
+    with p_claude as m_c, p_codex as m_x, p_ollama:
+        asyncio.run(intelligence.run_intelligence("hi"))
+
+    assert m_x.call_args.kwargs.get("model") is None
+    assert m_c.call_args.kwargs.get("model") is None
+
+
 def test_provider_order_rejects_unknown_provider(data_tmp):
     (data_tmp / "config.toml").write_text(
         "[intelligence]\n"

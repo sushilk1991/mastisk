@@ -55,6 +55,7 @@ async def run_claude(
     schema_md: str | None = None,
     timeout_s: int = 300,
     classification: bool = False,
+    model: str | None = None,
 ) -> dict:
     """Run Claude headlessly, return parsed JSON from stdout."""
     s = get_settings()
@@ -80,6 +81,9 @@ async def run_claude(
         ]
         if classification:
             cmd += ["--tools", ""]
+        if model:
+            # e.g. "haiku" — an alias the CLI resolves to its current Haiku.
+            cmd += ["--model", model]
         log.info("claude %s (workdir=%s)", prompt[:80].replace("\n", " "), workdir)
         # stdin=DEVNULL: when the daemon runs under launchd it inherits a
         # piped stdin, which ``claude -p`` will then try to consume — same

@@ -181,18 +181,8 @@ class Compiler(Agent):
             f"{schema}"
         )
 
-        resp, provider = await intelligence.run_intelligence(
-            prompt, json_object=True, json_schema=ARTICLE_JSON_SCHEMA,
-        )
-        # extract_json_block tolerates both fenced and naked-braces JSON,
-        # so this works whether Claude / Codex / Ollama served. The anthropic
-        # tier guarantees valid JSON via tool-forcing (json_object=True).
-        data = claude_bridge.extract_json_block(resp.get("text") or "")
+        data, provider = await self._run_for_json(prompt, label=f"source {source_id}")
         if not data:
-            log.warning(
-                "compiler: no JSON block in %s response for source %s",
-                provider, source_id,
-            )
             return
 
         if data.get("skip"):
@@ -233,7 +223,7 @@ class Compiler(Agent):
             obj=data["title"][:80],
             kind=data["kind"].lower(),
             touched=1,
-            payload={"article_id": data["id"], "source_id": source_id},
+            payload={"article_id": data["id"], "source_id": source_id, "provider": provider},
         )
 
     async def _handle_enrich_stub(self, job: dict) -> None:
@@ -286,15 +276,10 @@ class Compiler(Agent):
             f"{schema}"
         )
 
-        resp, provider = await intelligence.run_intelligence(
-            prompt, json_object=True, json_schema=ARTICLE_JSON_SCHEMA,
+        data, provider = await self._run_for_json(
+            prompt, label=f"enrich_stub article {article_id}",
         )
-        data = claude_bridge.extract_json_block(resp.get("text") or "")
         if not data:
-            log.warning(
-                "compiler: enrich_stub no JSON block in %s response for article %s",
-                provider, article_id,
-            )
             return
 
         _normalize_article_data(data)
@@ -320,6 +305,28 @@ class Compiler(Agent):
             touched=1,
             payload={"article_id": article_id, "note_id": note_id, "provider": provider},
         )
+
+    async def _run_for_json(self, prompt: str, *, label: str) -> tuple[dict | None, str]:
+        """Run the intelligence chain and parse a JSON article out of it.
+
+        The anthropic tier (when configured) tool-forces valid JSON; the CLI
+        tiers return free text where long HTML-in-JSON bodies occasionally
+        arrive malformed — one retry recovers most of those instead of
+        dropping the source.
+        """
+        provider = "?"
+        for attempt in (1, 2):
+            resp, provider = await intelligence.run_intelligence(
+                prompt, json_object=True, json_schema=ARTICLE_JSON_SCHEMA,
+            )
+            data = claude_bridge.extract_json_block(resp.get("text") or "")
+            if data:
+                return data, provider
+            log.warning(
+                "compiler: no JSON block in %s response for %s (attempt %d)",
+                provider, label, attempt,
+            )
+        return None, provider
 
     async def _maybe_generate_hero(self, data: dict) -> str | None:
         """Generate a hero image via yoyo when the source shipped none.

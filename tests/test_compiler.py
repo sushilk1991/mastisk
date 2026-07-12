@@ -111,6 +111,23 @@ def test_sections_to_md_fences_diagrams():
     assert "Hello *world*" in md
 
 
+def test_run_for_json_retries_once_on_malformed_response(compiler, db, vault_tmp):
+    from unittest.mock import patch as _patch
+
+    responses = iter([
+        ({"text": "sorry, no json here"}, "codex"),
+        (COMPILER_ENRICH_JSON, "codex"),
+    ])
+
+    async def fake_run(*a, **kw):
+        return next(responses)
+
+    with _patch("mastisk.agents.compiler.intelligence.run_intelligence", new=fake_run):
+        data, provider = asyncio.run(compiler._run_for_json("p", label="test"))
+    assert provider == "codex"
+    assert data and data["title"] == "Compounding Knowledge Systems"
+
+
 def test_normalize_article_data_drops_malformed_entries():
     """Prod failure 2026-07-12: a bare string in sections crashed the compile."""
     from mastisk.agents.compiler import _normalize_article_data

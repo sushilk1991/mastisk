@@ -77,6 +77,15 @@ class IntelligenceSettings(BaseSettings):
     anthropic_auto: bool = True
     anthropic_model: str = "claude-haiku-4-5-20251001"
     anthropic_max_tokens: int = 8192
+    # Model pins for the CLI tiers — intelligence chain only (roundtable,
+    # blog-writer, etc. keep their own model handling). The codex CLI's
+    # default model runs deep reasoning and was observed timing out at
+    # 180-300s per call under the daemon; gpt-5.6-luna at low effort answers
+    # a full 60k-char compile prompt in under a minute on a ChatGPT
+    # subscription. Set to None (or "" in TOML) to use each CLI's default.
+    codex_model: str | None = "gpt-5.6-luna"
+    codex_reasoning_effort: str | None = "low"
+    claude_model: str | None = "haiku"
     # Circuit breaker: after this many CONSECUTIVE failures a provider is
     # skipped for cooldown_s seconds. Prevents a dead CLI tier (e.g. codex
     # hanging to its 180s timeout on every call) from taxing every request.

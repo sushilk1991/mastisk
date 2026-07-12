@@ -19,6 +19,7 @@ async def run_codex(
     prompt: str,
     *,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     timeout: float = 120.0,
 ) -> dict:
     """Invoke `codex exec`. Returns {'text': str, 'raw': str}.
@@ -34,6 +35,8 @@ async def run_codex(
     cmd = ["codex", "exec", "--skip-git-repo-check"]
     if model:
         cmd += ["-c", f'model="{model}"']
+    if reasoning_effort:
+        cmd += ["-c", f'model_reasoning_effort="{reasoning_effort}"']
     cmd.append(prompt)
     # stdin=DEVNULL is load-bearing: when the daemon runs under launchd, the
     # subprocess inherits a piped stdin. ``codex exec PROMPT`` then sees stdin
