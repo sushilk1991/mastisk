@@ -1180,6 +1180,11 @@ def repair_graph_cmd(
     references. For each slug that isn't already an article, creates an Entity stub
     titled from the most-common display label. Then calls Linter.repair_graph() to
     populate the ``links`` table. Idempotent — a second run reports 0 new stubs.
+
+    NOTE: this is a force-everything escape hatch — it mints stubs for ALL
+    dangling targets, bypassing the stub gate's Suggestions queue
+    (settings.compiler.stub_gate_min_sources). Pending suggestions whose slug
+    gets minted here read as promoted from then on.
     """
     import re
     from collections import Counter, defaultdict

@@ -1976,6 +1976,182 @@ def ensure_stub_article(
     return True
 
 
+def gate_stub_targets(
+    conn: sqlite3.Connection,
+    *,
+    from_article: str,
+    refs: dict[str, str],
+    min_sources: int = 2,
+) -> dict[str, str]:
+    """Write-time pollution gate for wiki-link stub creation.
+
+    A referenced slug with no article no longer auto-mints an Entity stub on
+    first sight — it accumulates in ``wiki_suggestions`` until ``min_sources``
+    distinct articles have referenced it (then it's minted and marked
+    promoted), the user promotes it from the queue, or the user dismisses it
+    (it keeps counting but never mints). ``min_sources <= 1`` restores the
+    legacy mint-on-first-reference behavior.
+
+    Returns the ``{slug: title}`` subset that was minted on this call.
+    """
+    minted: dict[str, str] = {}
+    for slug, label in refs.items():
+        if not slug or slug == from_article:
+            continue
+        exists = conn.execute("SELECT 1 FROM articles WHERE id = ?", (slug,)).fetchone()
+        if exists:
+            continue
+        if min_sources <= 1:
+            if ensure_stub_article(conn, id=slug, title=label, kind="Entity"):
+                minted[slug] = label
+            continue
+
+        row = conn.execute(
+            "SELECT title, kind, referrers_json, status FROM wiki_suggestions WHERE slug = ?",
+            (slug,),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                """INSERT INTO wiki_suggestions (slug, title, occurrences, referrers_json)
+                   VALUES (?, ?, 1, ?)""",
+                (slug, label or slug, json.dumps([from_article])),
+            )
+            referrers = [from_article]
+            status = "pending"
+            title = label or slug
+            kind = "Entity"
+        else:
+            try:
+                referrers = list(json.loads(row["referrers_json"] or "[]"))
+            except json.JSONDecodeError:
+                referrers = []
+            if from_article not in referrers:
+                referrers.append(from_article)
+            status = row["status"]
+            kind = row["kind"] or "Entity"
+            # Upgrade a slug-shaped placeholder title once a real label shows up.
+            title = row["title"] or slug
+            if title == slug and label and label != slug:
+                title = label
+            conn.execute(
+                """UPDATE wiki_suggestions
+                   SET occurrences = ?, referrers_json = ?, title = ?,
+                       last_seen_at = CURRENT_TIMESTAMP
+                   WHERE slug = ?""",
+                (len(referrers), json.dumps(referrers), title, slug),
+            )
+
+        if status == "pending" and len(referrers) >= min_sources:
+            if ensure_stub_article(conn, id=slug, title=title, kind=kind):
+                minted[slug] = title
+            _mark_suggestion_promoted(conn, slug=slug, referrers=referrers)
+    return minted
+
+
+def _mark_suggestion_promoted(
+    conn: sqlite3.Connection, *, slug: str, referrers: list[str]
+) -> None:
+    """Flip a suggestion to promoted and heal graph edges from its referrers.
+
+    Articles compiled while the target was gated had their body links dropped
+    by ``set_related``'s existence check; reconnect them now so the new stub
+    is born with its backlinks instead of waiting for the next boot-time
+    ``Linter.repair_graph()`` pass.
+    """
+    conn.execute(
+        """UPDATE wiki_suggestions
+           SET status = 'promoted', decided_at = CURRENT_TIMESTAMP
+           WHERE slug = ?""",
+        (slug,),
+    )
+    for ref in referrers:
+        if ref == slug:
+            continue
+        exists = conn.execute("SELECT 1 FROM articles WHERE id = ?", (ref,)).fetchone()
+        if not exists:
+            continue
+        conn.execute(
+            """INSERT OR IGNORE INTO links (from_article, to_article, weight, snippet)
+               VALUES (?, ?, 0.5, '[gate] promoted')""",
+            (ref, slug),
+        )
+
+
+def list_wiki_suggestions(
+    conn: sqlite3.Connection, *, status: str = "pending", limit: int = 50
+) -> list[dict]:
+    rows = conn.execute(
+        """SELECT slug, title, kind, occurrences, referrers_json, status,
+                  created_at, last_seen_at, decided_at
+           FROM wiki_suggestions
+           WHERE status = ?
+           ORDER BY occurrences DESC, last_seen_at DESC
+           LIMIT ?""",
+        (status, limit),
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["referrers"] = json.loads(d.pop("referrers_json") or "[]")
+        except json.JSONDecodeError:
+            d["referrers"] = []
+        out.append(d)
+    return out
+
+
+def decide_wiki_suggestion(
+    conn: sqlite3.Connection, slug: str, *, action: str
+) -> dict | None:
+    """Apply a user decision to a suggestion: promote | dismiss | restore.
+
+    Promote mints the stub (idempotent) and heals referrer edges; dismiss
+    parks the slug (it keeps counting, never mints); restore returns a
+    dismissed slug to pending. Returns the updated row or None if unknown.
+    """
+    row = conn.execute(
+        "SELECT slug, title, kind, referrers_json FROM wiki_suggestions WHERE slug = ?",
+        (slug,),
+    ).fetchone()
+    if row is None:
+        return None
+    if action == "promote":
+        try:
+            referrers = list(json.loads(row["referrers_json"] or "[]"))
+        except json.JSONDecodeError:
+            referrers = []
+        ensure_stub_article(conn, id=slug, title=row["title"] or slug, kind=row["kind"] or "Entity")
+        _mark_suggestion_promoted(conn, slug=slug, referrers=referrers)
+    elif action == "dismiss":
+        conn.execute(
+            """UPDATE wiki_suggestions
+               SET status = 'dismissed', decided_at = CURRENT_TIMESTAMP
+               WHERE slug = ?""",
+            (slug,),
+        )
+    elif action == "restore":
+        conn.execute(
+            """UPDATE wiki_suggestions
+               SET status = 'pending', decided_at = NULL
+               WHERE slug = ?""",
+            (slug,),
+        )
+    else:
+        raise ValueError(f"unknown suggestion action: {action!r}")
+    updated = conn.execute(
+        """SELECT slug, title, kind, occurrences, referrers_json, status,
+                  created_at, last_seen_at, decided_at
+           FROM wiki_suggestions WHERE slug = ?""",
+        (slug,),
+    ).fetchone()
+    d = dict(updated)
+    try:
+        d["referrers"] = json.loads(d.pop("referrers_json") or "[]")
+    except json.JSONDecodeError:
+        d["referrers"] = []
+    return d
+
+
 def ensure_note_stub_article(
     conn: sqlite3.Connection,
     *,

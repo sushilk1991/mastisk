@@ -1087,3 +1087,26 @@ CREATE INDEX IF NOT EXISTS idx_topic_suggestions_kind_created
 -- a racing process landing the same title gets collapsed.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_topic_suggestions_dedup
   ON topic_suggestions(kind, date(created_at), title);
+
+-- ─────────────────────────────── Wiki suggestions (stub gate) ───────────────────────────────
+-- Write-time pollution gate for the knowledge graph. A wiki-link target that
+-- doesn't resolve to an article no longer auto-mints an Entity stub on first
+-- reference; it lands here as a pending suggestion instead. The gate promotes
+-- it automatically once `occurrences` distinct articles have referenced it
+-- (settings.compiler.stub_gate_min_sources), or the user promotes/dismisses
+-- from the Suggestions queue. Dismissed slugs keep counting but never mint.
+CREATE TABLE IF NOT EXISTS wiki_suggestions (
+  slug           TEXT PRIMARY KEY,                        -- would-be article id
+  title          TEXT NOT NULL,                           -- best display label seen so far
+  kind           TEXT NOT NULL DEFAULT 'Entity',
+  occurrences    INTEGER NOT NULL DEFAULT 0,              -- distinct referencing articles
+  referrers_json TEXT NOT NULL DEFAULT '[]',              -- article ids that referenced it
+  status         TEXT NOT NULL DEFAULT 'pending',         -- 'pending' | 'promoted' | 'dismissed'
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  decided_at     DATETIME                                 -- when promoted/dismissed
+);
+
+CREATE INDEX IF NOT EXISTS idx_wiki_suggestions_pending
+  ON wiki_suggestions(occurrences DESC, last_seen_at DESC)
+  WHERE status = 'pending';

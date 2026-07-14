@@ -127,6 +127,11 @@ class CompilerSettings(BaseSettings):
     hero_images: Literal["auto", "off"] = "auto"
     hero_images_daily_cap: int = 10
     hero_image_timeout_s: int = 180
+    # Write-time pollution gate: a wiki-link target with no article is minted
+    # as an Entity stub only after this many distinct articles reference it;
+    # until then it sits in the Suggestions queue. 1 = legacy mint-on-first-
+    # reference behavior.
+    stub_gate_min_sources: int = 2
 
 
 class ServerSettings(BaseSettings):

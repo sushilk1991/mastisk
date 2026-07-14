@@ -7,7 +7,7 @@ import type {
   QuickCaptureResponse, RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
   SettingsBundle, SettingsPatch, SlippingItem, TaskRow, TimeOfDay, TranscriptAnchor, JournalDay, JournalDaySummary,
-  SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem,
+  SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem, WikiSuggestion,
   NeedsReviewItem,
 } from './types';
 
@@ -1007,6 +1007,17 @@ export const api = {
     dismiss: (id: number): Promise<void> =>
       fetch(`${BASE}/topic-suggestions/${id}/dismiss`, { method: 'POST' })
         .then((r) => { if (!r.ok) throw new Error(`dismiss → ${r.status}`); }),
+  },
+
+  wikiSuggestions: {
+    list: (status: 'pending' | 'promoted' | 'dismissed' = 'pending') =>
+      j<{ suggestions: WikiSuggestion[] }>(`${BASE}/suggestions?status=${status}`),
+    decide: (slug: string, action: 'promote' | 'dismiss' | 'restore'): Promise<WikiSuggestion> =>
+      fetch(`${BASE}/suggestions/${encodeURIComponent(slug)}/${action}`, { method: 'POST' })
+        .then((r) => {
+          if (!r.ok) throw new Error(`${action} → ${r.status}`);
+          return r.json();
+        }),
   },
 
   github: {

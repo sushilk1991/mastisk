@@ -669,6 +669,36 @@ summary:focus-visible {
   color: var(--fg-faint);
 }
 
+/* suggestions queue (stub gate) */
+.sugg-list { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+.sugg-row {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--rad);
+  background: var(--bg-elev);
+}
+.sugg-main { flex: 1; min-width: 0; }
+.sugg-title { font-size: 15px; font-weight: 600; color: var(--fg); }
+.sugg-meta {
+  display: flex; align-items: center; gap: 10px; margin-top: 3px;
+  font-size: 11px; color: var(--fg-faint);
+}
+.sugg-slug { font-family: var(--mono); font-size: 10px; color: var(--fg-faint); }
+.sugg-count { font-family: var(--mono); font-size: 10px; }
+.sugg-refs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.sugg-ref {
+  font-family: var(--mono); font-size: 10px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-soft); border-radius: 999px;
+  background: transparent; color: var(--fg-mute);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.sugg-ref:hover { border-color: var(--accent); color: var(--fg); }
+.sugg-ref-more { font-family: var(--mono); font-size: 10px; color: var(--fg-faint); align-self: center; }
+.sugg-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
 /* dated-facts convention: "(YYYY-MM-DD) fact (previously X as of DATE)" */
 .art-body .fact-date {
   font-family: var(--mono);

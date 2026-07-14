@@ -15,7 +15,7 @@ interface Props {
 
 const SYS_VIEWS = new Set<View>([
   'today', 'digest', 'queue', 'feed', 'agents', 'graph', 'ingest', 'lint', 'settings',
-  'open_questions', 'notes', 'library', 'tasks', 'projects', 'routines', 'journal', 'inbox_triage',
+  'open_questions', 'suggestions', 'notes', 'library', 'tasks', 'projects', 'routines', 'journal', 'inbox_triage',
   'people', 'inventory', 'content',
   'roundtables', 'repos', 'blog', 'tweets',
 ]);

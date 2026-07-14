@@ -12,6 +12,7 @@ from pathlib import Path
 
 from slugify import slugify
 
+from mastisk import wiki_suggestions
 from mastisk.agents.base import Agent
 from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import claude_bridge, imagegen_bridge, intelligence
@@ -441,13 +442,17 @@ class Compiler(Agent):
                 "hero_image_url": data.get("hero_image_url"),
             })
             q.replace_sections(conn, article_id, data.get("sections", []))
-            # Stub any body-referenced targets that don't have their own article
-            # yet. This happens before set_related so related-link reconciliation
-            # sees the stubs. Self-links are skipped.
-            for target_id, display_label in link_refs.items():
-                if target_id == article_id:
-                    continue
-                q.ensure_stub_article(conn, id=target_id, title=display_label, kind="Entity")
+            # Body-referenced targets without an article no longer stub
+            # unconditionally — the gate accumulates them in wiki_suggestions
+            # and mints only once enough distinct articles reference the same
+            # target (or the user promotes from the queue). Runs before
+            # set_related so related-link reconciliation sees fresh mints.
+            minted = q.gate_stub_targets(
+                conn,
+                from_article=article_id,
+                refs=link_refs,
+                min_sources=get_settings().compiler.stub_gate_min_sources,
+            )
             q.set_related(conn, article_id, data.get("related", []))
             if source_id is not None:
                 conn.execute(
@@ -458,6 +463,15 @@ class Compiler(Agent):
         # Mirror to vault
         vault_path.parent.mkdir(parents=True, exist_ok=True)
         vault_path.write_text(_render_markdown(data))
+
+        for slug, title in minted.items():
+            self.emit_feed(
+                verb="minted", obj=title[:80], kind="entity",
+                payload={"article_id": slug, "via": "stub gate"},
+            )
+        # Refresh the phone-readable shortlist; content-diffed, so this is a
+        # no-op write on compiles that didn't touch the queue.
+        wiki_suggestions.render_vault_file()
 
     def _vault_path_for(self, kind: str, slug: str) -> Path:
         folder = {

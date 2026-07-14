@@ -24,6 +24,7 @@ const JUMPS: { id: View; l: string; d: string }[] = [
   { id: 'digest',         l: 'Daily Digest',   d: 'Agent reading' },
   { id: 'queue',          l: 'Reading queue',  d: 'Jobs & ingest' },
   { id: 'open_questions', l: 'Open questions', d: 'Unresolved threads' },
+  { id: 'suggestions',    l: 'Suggestions',    d: 'Topics awaiting a page' },
   { id: 'graph',          l: 'Graph view',     d: 'Browse the wiki' },
   { id: 'agents',         l: 'Agents',         d: 'Live activity' },
   { id: 'settings',       l: 'Settings',       d: 'Models & keys' },

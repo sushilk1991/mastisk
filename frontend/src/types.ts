@@ -420,7 +420,20 @@ export type View =
   | 'repos' | 'repo'
   | 'blog' | 'blog_post'
   | 'tweets' | 'tweet_thread'
-  | 'podcasts' | 'podcast';
+  | 'podcasts' | 'podcast'
+  | 'suggestions';
+
+export interface WikiSuggestion {
+  slug: string;
+  title: string;
+  kind: string;
+  occurrences: number;
+  referrers: string[];
+  status: 'pending' | 'promoted' | 'dismissed';
+  created_at: string;
+  last_seen_at: string;
+  decided_at: string | null;
+}
 
 export type TaskStatus = 'open' | 'done' | string;
 export type Priority = 'high' | 'medium' | 'low' | null;

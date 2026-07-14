@@ -46,6 +46,7 @@ const VIEW_PATHS: Record<string, View> = {
   '/blog': 'blog',
   '/tweets': 'tweets',
   '/podcasts': 'podcasts',
+  '/suggestions': 'suggestions',
 };
 
 const PATH_FOR_VIEW: Record<View, string> = {
@@ -84,6 +85,7 @@ const PATH_FOR_VIEW: Record<View, string> = {
   tweet_thread: '/tweets/',
   podcasts: '/podcasts',
   podcast: '/p/',
+  suggestions: '/suggestions',
 };
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;

@@ -47,6 +47,7 @@ from mastisk.routes import (
     signals_route,
     sources_route,
     stats_route,
+    suggestions,
     synthesis_route,
     tasks,
     templates,
@@ -110,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(feed_route.router, prefix="/api")
     app.include_router(ask.router, prefix="/api")
     app.include_router(open_questions_route.router, prefix="/api")
+    app.include_router(suggestions.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
     app.include_router(signals_route.router, prefix="/api")
     app.include_router(sources_route.router, prefix="/api")

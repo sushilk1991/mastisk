@@ -237,12 +237,18 @@ def test_enrich_stub_overwrites_placeholder_in_place(compiler, db, vault_tmp):
     ).fetchall()
     assert [s["heading"] for s in sections] == ["TL;DR", "Mechanism"]
 
-    # Body-referenced target was auto-stubbed (Compiler-stub kind, not escalator-stub).
+    # Body-referenced target is gated now (stub_gate_min_sources=2 default):
+    # first reference records a pending suggestion instead of minting a stub.
     target = db.execute(
-        "SELECT id, updated_by FROM articles WHERE id='agent-orchestration'",
+        "SELECT id FROM articles WHERE id='agent-orchestration'",
     ).fetchone()
-    assert target is not None
-    assert "stub" in (target["updated_by"] or "").lower()
+    assert target is None
+    suggestion = db.execute(
+        "SELECT slug, occurrences, status FROM wiki_suggestions WHERE slug='agent-orchestration'",
+    ).fetchone()
+    assert suggestion is not None
+    assert suggestion["status"] == "pending"
+    assert suggestion["occurrences"] == 1
 
     # Feed row emitted.
     feed = db.execute(
