@@ -415,7 +415,9 @@ class Compiler(Agent):
             f"{body}"
         )
 
-    def _persist_article(self, data: dict, *, source_id: str | None) -> None:
+    def _persist_article(
+        self, data: dict, *, source_id: str | None, updated_by: str = "Compiler",
+    ) -> None:
         article_id = data["id"]
         data["title"] = q.clamp_generated_title(data.get("title") or article_id)
         slug = slugify(data["title"])[:80] or article_id
@@ -437,7 +439,7 @@ class Compiler(Agent):
                 "body_md": _sections_to_md(data.get("sections", [])),
                 "confidence": float(data.get("confidence", 0.6)),
                 "reading_minutes": int(data.get("reading_minutes", 5)),
-                "updated_by": "Compiler",
+                "updated_by": updated_by,
                 "vault_path": str(vault_path),
                 "hero_image_url": data.get("hero_image_url"),
             })

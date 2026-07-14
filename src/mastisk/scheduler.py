@@ -432,6 +432,22 @@ async def start_scheduler():
         log.warning("scheduler: topic_suggester registration failed: %s", e)
 
     try:
+        from mastisk.agents.gardener import Gardener
+        # Gardener is timer-driven: hourly tick, self-gating on per-page
+        # curated_at cooldowns, the daily weave cap, and a 22h reflection
+        # cadence. First run 3min after boot — consolidation is never urgent.
+        sched.add_job(
+            Gardener().run_once, "interval",
+            seconds=Gardener.tick_seconds, id="gardener",
+            max_instances=1,
+            next_run_time=datetime.now(UTC) + timedelta(minutes=3),
+            coalesce=True,
+        )
+        log.info("scheduler: gardener registered (hourly tick)")
+    except Exception as e:
+        log.warning("scheduler: gardener registration failed: %s", e)
+
+    try:
         from mastisk.agents.opinion_gap_miner import OpinionGapMiner
         # OpinionGapMiner is timer-driven, weekly cadence. Hourly tick is
         # plenty — the agent self-times via cadence_hours so we won't run

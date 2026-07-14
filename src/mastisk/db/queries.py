@@ -134,6 +134,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     """Idempotent column additions for pre-existing DBs. CREATE TABLE IF NOT
     EXISTS handles fresh installs; this handles upgrade-in-place."""
     _add_column_if_missing(conn, "articles", "hero_image_url", "TEXT")
+    _add_column_if_missing(conn, "articles", "curated_at", "TEXT")
     _ensure_editing_locks_schema(conn)
     _add_column_if_missing(conn, "sources", "hero_image_url", "TEXT")
     _add_column_if_missing(conn, "sources", "media_json", "TEXT")

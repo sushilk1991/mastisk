@@ -88,6 +88,18 @@ _AGENT_SPECS: tuple[dict[str, Any], ...] = (
         "slots": (),
     },
     {
+        "id": "gardener",
+        "name": "Gardener",
+        "role": "Weaves stub pages, distills learnings",
+        "color": "emerald",
+        "module": "mastisk.agents.gardener",
+        "load_cap": 10,
+        "slots": (
+            {"slot_id": "weave", "label": "Weave prompt", "module_attr": "WEAVE_PROMPT", "primary": True, "format_template": True},
+            {"slot_id": "reflect", "label": "Reflection prompt", "module_attr": "REFLECT_PROMPT", "format_template": True},
+        ),
+    },
+    {
         "id": "synthesizer",
         "name": "Synthesizer",
         "role": "Cross-source synthesis, themes",

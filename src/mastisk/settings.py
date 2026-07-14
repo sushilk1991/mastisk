@@ -134,6 +134,18 @@ class CompilerSettings(BaseSettings):
     stub_gate_min_sources: int = 2
 
 
+class GardenerSettings(BaseSettings):
+    """Config for the Gardener (consolidation + reflection) agent."""
+    # Weave pass: stub pages become real articles once this many articles
+    # reference them; per-page cooldown + daily cap bound LLM spend.
+    weave_min_backlinks: int = 3
+    weave_daily_cap: int = 4
+    cooldown_days: int = 7
+    # Reflection pass: at most this many dated learnings per day appended to
+    # vault/_self/learnings.md.
+    reflect_max_learnings: int = 2
+
+
 class ServerSettings(BaseSettings):
     """HTTP server trust-boundary config."""
     allowed_origins: list[str] = Field(default_factory=list)
@@ -350,6 +362,8 @@ class Settings(BaseSettings):
     intelligence: IntelligenceSettings = Field(default_factory=IntelligenceSettings)
 
     compiler: CompilerSettings = Field(default_factory=CompilerSettings)
+
+    gardener: GardenerSettings = Field(default_factory=GardenerSettings)
 
     reminders: RemindersSettings = Field(default_factory=RemindersSettings)
 
