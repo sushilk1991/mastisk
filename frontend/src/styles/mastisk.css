@@ -669,6 +669,36 @@ summary:focus-visible {
   color: var(--fg-faint);
 }
 
+/* article thumbs (feedback distillation) */
+.art-verdict { display: inline-flex; gap: 2px; margin-left: auto; }
+.verdict-btn {
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.verdict-btn:hover { color: var(--fg); border-color: var(--fg-mute); }
+.verdict-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft, transparent); }
+.verdict-btn.down.active { color: #c53030; border-color: #c53030; background: transparent; }
+.verdict-reason { display: flex; gap: 8px; margin: 10px 0 0; }
+.verdict-reason input {
+  flex: 1;
+  max-width: 420px;
+  font-size: 12px;
+  font-family: var(--sans);
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-elev);
+  color: var(--fg);
+}
+.verdict-reason input:focus { outline: none; border-color: var(--accent); }
+
 /* meeting prep on Today calendar rows */
 .cal-row { align-items: flex-start; }
 .cal-row-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

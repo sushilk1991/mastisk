@@ -33,6 +33,19 @@ def record(sig: SignalIn):
     return {"ok": True}
 
 
+@router.get("/signals/verdict")
+def verdict(article_id: str):
+    """Latest explicit thumbs verdict for an article (survives PWA remounts)."""
+    with connect() as conn:
+        row = conn.execute(
+            """SELECT kind FROM signals
+               WHERE article_id = ? AND kind IN ('liked', 'disliked')
+               ORDER BY id DESC LIMIT 1""",
+            (article_id,),
+        ).fetchone()
+    return {"verdict": row["kind"] if row else None}
+
+
 @router.get("/signals/summary")
 def summary(days: int = 7):
     """Debug aid — see what's been captured."""

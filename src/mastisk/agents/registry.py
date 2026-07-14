@@ -97,6 +97,7 @@ _AGENT_SPECS: tuple[dict[str, Any], ...] = (
         "slots": (
             {"slot_id": "weave", "label": "Weave prompt", "module_attr": "WEAVE_PROMPT", "primary": True, "format_template": True},
             {"slot_id": "reflect", "label": "Reflection prompt", "module_attr": "REFLECT_PROMPT", "format_template": True},
+            {"slot_id": "distill", "label": "Feedback distillation prompt", "module_attr": "DISTILL_PROMPT", "format_template": True},
         ),
     },
     {

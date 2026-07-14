@@ -24,6 +24,7 @@ Timer-driven like TopicSuggester: hourly tick, self-gating on per-page
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime
@@ -107,6 +108,32 @@ Rules:
 Return STRICT JSON only: {{"learnings": ["...", "..."]}} (or {{"learnings": []}}).
 """
 
+DISTILL_PROMPT = """You distill the user's explicit article feedback into short preference rules
+their agents apply from now on. You are shown the new thumbs-up/down verdicts
+(with optional reasons) and the rules that already exist.
+
+Rules:
+- At most {max_rules} new rules; return an empty list unless a real pattern
+  repeats across verdicts. One noisy dislike is not a rule.
+- Each rule is one imperative line an agent can act on ("Skip funding-round
+  news unless it names a technical shift", not "user disliked an article").
+- When a rule is a pure content filter — a topic to never ingest — phrase it
+  exactly as `avoid: <keyword or phrase>`. The RSS Scout applies those
+  mechanically against titles and summaries.
+- Never duplicate or contradict an existing rule; refine it instead (return
+  the refined replacement and it will be appended as the newer word).
+
+# Existing preference rules
+{existing_rules}
+
+# New feedback
+{feedback}
+
+Return STRICT JSON only: {{"rules": ["...", "..."]}} (or {{"rules": []}}).
+"""
+
+PREFERENCE_RULES_HEADING = "## Preference rules"
+
 
 class Gardener(Agent):
     """Daily consolidation + reflection. See module docstring."""
@@ -129,6 +156,10 @@ class Gardener(Agent):
             await self._reflect_pass()
         except Exception:
             log.exception("gardener: reflection pass failed")
+        try:
+            await self._distill_pass()
+        except Exception:
+            log.exception("gardener: distill pass failed")
 
     # ───── weave pass ─────
 
@@ -354,6 +385,112 @@ class Gardener(Agent):
                 lines.append("Notes the user's pipeline escalated to research:")
                 lines += [f"- {r['obj']}" for r in escalated]
         return "\n".join(lines)
+
+    # ───── feedback distillation pass ─────
+
+    async def _distill_pass(self) -> None:
+        """Rowboat's correction loop: once enough explicit thumbs verdicts
+        accumulate, distill them into preference rules under
+        `## Preference rules` in learnings.md. Rules override the generic
+        rubric by riding into every prompt via load_identity(); `avoid:`
+        rules are additionally applied mechanically by Scout."""
+        cfg = get_settings().gardener
+        watermark = self._distill_watermark()
+        with connect() as conn:
+            rows = conn.execute(
+                """SELECT s.id, s.kind, s.value_json, a.title
+                   FROM signals s LEFT JOIN articles a ON a.id = s.article_id
+                   WHERE s.kind IN ('liked', 'disliked') AND s.id > ?
+                   ORDER BY s.id ASC LIMIT 100""",
+                (watermark,),
+            ).fetchall()
+        if len(rows) < cfg.distill_every:
+            return
+
+        feedback_lines = []
+        for r in rows:
+            reason = ""
+            try:
+                value = json.loads(r["value_json"] or "{}")
+                if isinstance(value, dict) and value.get("reason"):
+                    reason = f' — reason: "{value["reason"]}"'
+            except ValueError:
+                pass
+            feedback_lines.append(f"- {r['kind']}: {r['title'] or '(deleted article)'}{reason}")
+
+        prompt = resolve_prompt("gardener", "distill", DISTILL_PROMPT).format(
+            max_rules=cfg.distill_max_rules,
+            existing_rules=self._preference_rules_tail(),
+            feedback="\n".join(feedback_lines),
+        )
+        resp, provider = await intelligence.run_intelligence(prompt, timeout_s=180)
+        data = claude_bridge.extract_json_block(resp.get("text") or "")
+        rules = (data or {}).get("rules")
+        if not isinstance(rules, list):
+            log.warning("gardener: distill reply from %s not parseable", provider)
+            return
+        cleaned = [
+            r.strip() for r in rules if isinstance(r, str) and r.strip()
+        ][: cfg.distill_max_rules]
+
+        if cleaned:
+            self._append_preference_rules(cleaned)
+        # Advance the watermark even on zero rules — the batch was judged;
+        # re-feeding it every tick would never converge.
+        self.emit_feed(
+            verb="distilled",
+            obj=f"{len(cleaned)} rule{'s' if len(cleaned) != 1 else ''} from {len(rows)} verdicts",
+            kind="reflection",
+            touched=len(cleaned),
+            payload={"rules": cleaned, "last_signal_id": rows[-1]["id"], "provider": provider},
+        )
+
+    def _distill_watermark(self) -> int:
+        with connect() as conn:
+            row = conn.execute(
+                """SELECT payload_json FROM feed
+                   WHERE agent='gardener' AND verb='distilled'
+                   ORDER BY id DESC LIMIT 1""",
+            ).fetchone()
+        if not row:
+            return 0
+        try:
+            return int(json.loads(row["payload_json"] or "{}").get("last_signal_id") or 0)
+        except (ValueError, TypeError):
+            return 0
+
+    def _preference_rules_tail(self, *, max_lines: int = 20) -> str:
+        path = self_dir() / "learnings.md"
+        if not path.exists():
+            return "(none yet)"
+        text = path.read_text()
+        idx = text.find(PREFERENCE_RULES_HEADING)
+        if idx == -1:
+            return "(none yet)"
+        section = text[idx + len(PREFERENCE_RULES_HEADING):]
+        nxt = section.find("\n## ")
+        if nxt != -1:
+            section = section[:nxt]
+        lines = [ln for ln in section.strip().splitlines() if ln.strip()]
+        return "\n".join(lines[-max_lines:]) or "(none yet)"
+
+    def _append_preference_rules(self, rules: list[str]) -> None:
+        tz = ZoneInfo(get_settings().capture.default_timezone)
+        today = datetime.now(tz).date().isoformat()
+        path = self_dir() / "learnings.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = path.read_text() if path.exists() else "# Learnings\n"
+        block = "".join(f"- ({today}) {rule}\n" for rule in rules)
+        if PREFERENCE_RULES_HEADING in text:
+            # Append at the end of the existing section.
+            idx = text.find(PREFERENCE_RULES_HEADING)
+            section_start = idx + len(PREFERENCE_RULES_HEADING)
+            nxt = text.find("\n## ", section_start)
+            insert_at = len(text) if nxt == -1 else nxt
+            text = text[:insert_at].rstrip("\n") + "\n" + block + text[insert_at:].lstrip("\n")
+        else:
+            text = text.rstrip("\n") + f"\n\n{PREFERENCE_RULES_HEADING}\n\n" + block
+        path.write_text(text)
 
     def _learnings_tail(self, *, max_lines: int = 30) -> str:
         path = self_dir() / "learnings.md"

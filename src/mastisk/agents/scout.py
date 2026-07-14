@@ -230,14 +230,34 @@ class Scout(Agent):
 
     def _load_dislikes(self) -> list[str]:
         p = self_dir() / "dislikes.md"
+        words: list[str] = []
+        if p.exists():
+            for line in p.read_text().splitlines():
+                if line.strip() and not line.lstrip().startswith("#"):
+                    cleaned = re.sub(r"^[-*•\d.\s]+", "", line).strip().lower()
+                    if cleaned:
+                        words.append(cleaned)
+        words.extend(self._load_avoid_rules())
+        return words
+
+    def _load_avoid_rules(self) -> list[str]:
+        """Distilled `avoid: X` preference rules from learnings.md.
+
+        The Gardener's feedback-distillation pass phrases pure content
+        filters exactly as `avoid: <keyword>` so the Scout can apply them
+        mechanically alongside the user-authored dislikes. Dated bullets
+        ("- (2026-07-14) avoid: crypto") parse the same way."""
+        p = self_dir() / "learnings.md"
         if not p.exists():
             return []
         words: list[str] = []
         for line in p.read_text().splitlines():
-            if line.strip() and not line.lstrip().startswith("#"):
-                cleaned = re.sub(r"^[-*•\d.\s]+", "", line).strip().lower()
-                if cleaned:
-                    words.append(cleaned)
+            cleaned = re.sub(r"^[-*•\d.\s]+", "", line).strip()
+            cleaned = re.sub(r"^\(\d{4}-\d{2}-\d{2}\)\s*", "", cleaned)
+            if cleaned.lower().startswith("avoid:"):
+                term = cleaned[len("avoid:"):].strip().lower()
+                if term:
+                    words.append(term)
         return words
 
     def _is_disliked(self, title: str, summary: str, dislikes: list[str]) -> bool:

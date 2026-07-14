@@ -265,6 +265,11 @@ export const api = {
       return r.json() as Promise<{ results: SearchResult[] }>;
     }),
 
+  signalVerdict: (articleId: string) =>
+    j<{ verdict: 'liked' | 'disliked' | null }>(
+      `${BASE}/signals/verdict?article_id=${encodeURIComponent(articleId)}`,
+    ),
+
   signal: (kind: string, article_id?: string | null, value?: unknown) =>
     fetch(`${BASE}/signals`, {
       method: 'POST',

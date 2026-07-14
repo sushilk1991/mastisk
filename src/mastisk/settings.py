@@ -144,6 +144,11 @@ class GardenerSettings(BaseSettings):
     # Reflection pass: at most this many dated learnings per day appended to
     # vault/_self/learnings.md.
     reflect_max_learnings: int = 2
+    # Feedback distillation: once this many new liked/disliked signals
+    # accumulate, distill them into preference rules (at most distill_max_rules
+    # per batch) under '## Preference rules' in learnings.md.
+    distill_every: int = 6
+    distill_max_rules: int = 4
 
 
 class ServerSettings(BaseSettings):

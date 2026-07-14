@@ -35,6 +35,34 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
   const [captureCtx, setCaptureCtx] = useState<CaptureContext | null>(null);
   const readStartRef = useRef<number>(Date.now());
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const [verdict, setVerdict] = useState<'liked' | 'disliked' | null>(null);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reason, setReason] = useState('');
+
+  // Restore a prior thumbs verdict so votes survive remounts.
+  useEffect(() => {
+    let live = true;
+    setVerdict(null); setReasonOpen(false); setReason('');
+    api.signalVerdict(article.id)
+      .then((d) => { if (live) setVerdict(d.verdict); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [article.id]);
+
+  function vote(kind: 'liked' | 'disliked') {
+    setVerdict(kind);
+    if (kind === 'disliked') {
+      setReasonOpen(true);
+    } else {
+      setReasonOpen(false);
+      api.signal(kind, article.id);
+    }
+  }
+
+  function submitDislike() {
+    api.signal('disliked', article.id, reason.trim() ? { reason: reason.trim() } : undefined);
+    setReasonOpen(false);
+  }
 
   const mediaLen = article.media?.length ?? 0;
   const closeLightbox = useCallback(() => setLightboxIdx(null), []);
@@ -125,7 +153,43 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
           <span className="conf-bar"><span className="fill" style={{width:`${article.confidence*100}%`}}/></span>
           {Math.round(article.confidence*100)}%
         </span>
+        <span className="art-verdict">
+          <button
+            type="button"
+            className={`verdict-btn ${verdict === 'liked' ? 'active' : ''}`}
+            title="More like this"
+            aria-label="More like this"
+            aria-pressed={verdict === 'liked'}
+            onClick={() => vote('liked')}
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            className={`verdict-btn down ${verdict === 'disliked' ? 'active' : ''}`}
+            title="Less like this"
+            aria-label="Less like this"
+            aria-pressed={verdict === 'disliked'}
+            onClick={() => vote('disliked')}
+          >
+            ▼
+          </button>
+        </span>
       </div>
+      {reasonOpen && (
+        <div className="verdict-reason">
+          <input
+            type="text"
+            value={reason}
+            maxLength={200}
+            placeholder="why? (optional — teaches your agents)"
+            onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submitDislike(); }}
+            autoFocus
+          />
+          <button type="button" className="chip" onClick={submitDislike}>save</button>
+        </div>
+      )}
 
       <h1 className="art-title">{article.title}</h1>
       {article.aka.length > 0 && (
