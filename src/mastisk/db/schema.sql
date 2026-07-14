@@ -808,6 +808,17 @@ CREATE INDEX IF NOT EXISTS idx_calendar_events_start
 CREATE INDEX IF NOT EXISTS idx_calendar_events_calendar
   ON calendar_events(calendar_id);
 
+-- Meeting prep dedup: one prep per (event, start) — a rescheduled meeting
+-- gets fresh prep. brief/note_path are what the Today view shows.
+CREATE TABLE IF NOT EXISTS meeting_preps (
+  event_id   TEXT NOT NULL,
+  start      TEXT NOT NULL,
+  note_path  TEXT,
+  brief      TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(event_id, start)
+);
+
 CREATE TABLE IF NOT EXISTS calendar_state (
   id             INTEGER PRIMARY KEY CHECK(id = 1),
   status         TEXT NOT NULL,

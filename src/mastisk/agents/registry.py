@@ -100,6 +100,17 @@ _AGENT_SPECS: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "id": "meeting_prep",
+        "name": "Meeting Prep",
+        "role": "Briefs you before meetings from your CRM",
+        "color": "violet",
+        "module": "mastisk.agents.meeting_prep",
+        "load_cap": 20,
+        "slots": (
+            {"slot_id": "brief", "label": "Brief prompt", "module_attr": "BRIEF_PROMPT", "primary": True, "format_template": True},
+        ),
+    },
+    {
         "id": "synthesizer",
         "name": "Synthesizer",
         "role": "Cross-source synthesis, themes",

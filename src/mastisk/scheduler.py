@@ -448,6 +448,21 @@ async def start_scheduler():
         log.warning("scheduler: gardener registration failed: %s", e)
 
     try:
+        from mastisk.agents.meeting_prep import MeetingPrep
+        # Self-gates: no-op unless calendar events with attendees exist and
+        # prep is enabled; dedup per (event, start) in meeting_preps.
+        sched.add_job(
+            MeetingPrep().run_once, "interval",
+            seconds=MeetingPrep.tick_seconds, id="meeting_prep",
+            max_instances=1,
+            next_run_time=datetime.now(UTC) + timedelta(minutes=2),
+            coalesce=True,
+        )
+        log.info("scheduler: meeting_prep registered (15min tick)")
+    except Exception as e:
+        log.warning("scheduler: meeting_prep registration failed: %s", e)
+
+    try:
         from mastisk.agents.opinion_gap_miner import OpinionGapMiner
         # OpinionGapMiner is timer-driven, weekly cadence. Hourly tick is
         # plenty — the agent self-times via cadence_hours so we won't run

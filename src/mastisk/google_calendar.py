@@ -368,10 +368,14 @@ def events_for_day(day: date) -> list[dict[str, Any]]:
     end_key = _stored_datetime(end)
     with connect() as conn:
         rows = conn.execute(
-            """SELECT id, calendar_id, summary, start, end, all_day, location, status, updated_at, synced_at
-               FROM calendar_events
-               WHERE start < ? AND end > ?
-               ORDER BY all_day DESC, start ASC, summary ASC""",
+            """SELECT ce.id, ce.calendar_id, ce.summary, ce.start, ce.end, ce.all_day,
+                      ce.location, ce.status, ce.updated_at, ce.synced_at,
+                      ce.attendees_json, ce.description,
+                      mp.brief AS prep_brief, mp.note_path AS prep_note_path
+               FROM calendar_events ce
+               LEFT JOIN meeting_preps mp ON mp.event_id = ce.id AND mp.start = ce.start
+               WHERE ce.start < ? AND ce.end > ?
+               ORDER BY ce.all_day DESC, ce.start ASC, ce.summary ASC""",
             (end_key, start_key),
         ).fetchall()
     matching = [
@@ -484,17 +488,43 @@ def _normalize_event(
         "status": event.get("status") if isinstance(event.get("status"), str) else None,
         "updated_at": event.get("updated") if isinstance(event.get("updated"), str) else None,
         "synced_at": synced_at,
+        "attendees_json": _normalize_attendees(event.get("attendees")),
+        "description": event.get("description") if isinstance(event.get("description"), str) else None,
     }
+
+
+def _normalize_attendees(raw: Any) -> str | None:
+    """Keep only what meeting prep needs: email, display name, self flag,
+    RSVP. Rooms/resources are dropped. None when the event has no attendees
+    (the common solo-event case) so the column stays NULL-cheap."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for a in raw:
+        if not isinstance(a, dict):
+            continue
+        email = a.get("email")
+        if not isinstance(email, str) or not email:
+            continue
+        if a.get("resource") or email.endswith("resource.calendar.google.com"):
+            continue
+        out.append({
+            "email": email,
+            "displayName": a.get("displayName") if isinstance(a.get("displayName"), str) else None,
+            "self": bool(a.get("self")),
+            "responseStatus": a.get("responseStatus") if isinstance(a.get("responseStatus"), str) else None,
+        })
+    return json.dumps(out) if out else None
 
 
 def _upsert_calendar_event(conn, row: dict[str, Any]) -> None:
     conn.execute(
         """INSERT INTO calendar_events
              (id, calendar_id, summary, start, end, all_day,
-              location, status, updated_at, synced_at)
+              location, status, updated_at, synced_at, attendees_json, description)
            VALUES
              (:id, :calendar_id, :summary, :start, :end, :all_day,
-              :location, :status, :updated_at, :synced_at)
+              :location, :status, :updated_at, :synced_at, :attendees_json, :description)
            ON CONFLICT(calendar_id, id) DO UPDATE SET
              summary=excluded.summary,
              start=excluded.start,
@@ -503,7 +533,9 @@ def _upsert_calendar_event(conn, row: dict[str, Any]) -> None:
              location=excluded.location,
              status=excluded.status,
              updated_at=excluded.updated_at,
-             synced_at=excluded.synced_at""",
+             synced_at=excluded.synced_at,
+             attendees_json=excluded.attendees_json,
+             description=excluded.description""",
         row,
     )
 
@@ -536,6 +568,13 @@ def _prune_missing_events(
 
 
 def _event_response(row: dict[str, Any]) -> dict[str, Any]:
+    try:
+        attendees = json.loads(row.get("attendees_json") or "[]")
+    except json.JSONDecodeError:
+        attendees = []
+    prep = None
+    if row.get("prep_brief") or row.get("prep_note_path"):
+        prep = {"brief": row.get("prep_brief"), "note_path": row.get("prep_note_path")}
     return {
         "id": row["id"],
         "calendar_id": row["calendar_id"],
@@ -547,6 +586,8 @@ def _event_response(row: dict[str, Any]) -> dict[str, Any]:
         "status": row["status"],
         "updated_at": row["updated_at"],
         "synced_at": row["synced_at"],
+        "attendees": attendees,
+        "prep": prep,
     }
 
 

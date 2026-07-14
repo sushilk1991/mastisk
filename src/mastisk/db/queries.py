@@ -135,6 +135,8 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     EXISTS handles fresh installs; this handles upgrade-in-place."""
     _add_column_if_missing(conn, "articles", "hero_image_url", "TEXT")
     _add_column_if_missing(conn, "articles", "curated_at", "TEXT")
+    _add_column_if_missing(conn, "calendar_events", "attendees_json", "TEXT")
+    _add_column_if_missing(conn, "calendar_events", "description", "TEXT")
     _ensure_editing_locks_schema(conn)
     _add_column_if_missing(conn, "sources", "hero_image_url", "TEXT")
     _add_column_if_missing(conn, "sources", "media_json", "TEXT")

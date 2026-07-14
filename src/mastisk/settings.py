@@ -196,6 +196,11 @@ class CalendarSettings(BaseSettings):
     client_secret: str = ""
     calendar_ids: list[str] = Field(default_factory=list)
     sync_interval_minutes: int = 15
+    # Meeting prep: generate a "what matters" brief for events starting within
+    # this many hours, matching attendees against People (facts.email, then
+    # name). Deterministic assembly; the LLM only writes the brief.
+    prep_enabled: bool = True
+    prep_lead_hours: int = 6
 
 
 class RoundtableSettings(BaseSettings):

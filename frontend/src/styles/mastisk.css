@@ -669,6 +669,28 @@ summary:focus-visible {
   color: var(--fg-faint);
 }
 
+/* meeting prep on Today calendar rows */
+.cal-row { align-items: flex-start; }
+.cal-row-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cal-prep {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-mute);
+  white-space: pre-line;
+  border-left: 2px solid var(--accent-soft, var(--accent));
+  padding-left: 8px;
+}
+.cal-prep-label {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-right: 6px;
+}
+
 /* suggestions queue (stub gate) */
 .sugg-list { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
 .sugg-row {

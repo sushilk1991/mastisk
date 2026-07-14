@@ -794,6 +794,13 @@ export interface CalendarStatus {
   last_error_at: string | null;
 }
 
+export interface CalendarAttendee {
+  email: string;
+  displayName: string | null;
+  self: boolean;
+  responseStatus: string | null;
+}
+
 export interface CalendarEvent {
   id: string;
   calendar_id: string;
@@ -805,6 +812,8 @@ export interface CalendarEvent {
   status: string | null;
   updated_at: string | null;
   synced_at: string;
+  attendees: CalendarAttendee[];
+  prep: { brief: string | null; note_path: string | null } | null;
 }
 
 export interface CalendarToday {

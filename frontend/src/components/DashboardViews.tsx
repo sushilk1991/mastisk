@@ -2194,11 +2194,19 @@ function CalendarPanel({
       ) : (
         <div className="dash-list compact">
           {events.map((event) => (
-            <div key={`${event.calendar_id}:${event.id}`} className="dash-row">
+            <div key={`${event.calendar_id}:${event.id}`} className="dash-row cal-row">
               <span className={event.all_day ? 'dash-pill mini' : 'dash-muted'}>
                 {event.all_day ? 'all-day' : formatTime(event.start)}
               </span>
-              <span>{event.summary}</span>
+              <span className="cal-row-main">
+                <span>{event.summary}</span>
+                {event.prep?.brief && (
+                  <span className="cal-prep">
+                    <span className="cal-prep-label">prep</span>
+                    {event.prep.brief}
+                  </span>
+                )}
+              </span>
             </div>
           ))}
         </div>
