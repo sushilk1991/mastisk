@@ -12,6 +12,21 @@ interface Props {
   onNavigate: (view: View, id?: string) => void;
 }
 
+// Dated-facts convention: fact bullets open with "(YYYY-MM-DD)" and may carry
+// a "(previously X as of YYYY-MM-DD)" supersession clause. Wrap both in spans
+// so the CSS can render them as quiet metadata instead of body prose.
+export function decorateFactDates(html: string): string {
+  return html
+    .replace(
+      /(<li[^>]*>)\s*\((\d{4}-\d{2}-\d{2})\)\s*/g,
+      '$1<span class="fact-date">$2</span> ',
+    )
+    .replace(
+      /\((previously\s[^()]*?\sas of\s\d{4}-\d{2}-\d{2})\)/gi,
+      '<span class="fact-prev">($1)</span>',
+    );
+}
+
 interface Pop { x: number; y: number; text: string; }
 
 export function ArticleView({ article, onAsk, onNavigate }: Props) {
@@ -161,7 +176,7 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
           if (s.kind === 'callout') return (
             <div key={i} className="callout">
               <h2>{s.h}</h2>
-              <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body }}/>
+              <div className="sec-body" dangerouslySetInnerHTML={{ __html: decorateFactDates(s.body) }}/>
             </div>
           );
           if (s.kind === 'diagram') return (
@@ -197,7 +212,7 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
           return (
             <div key={i}>
               <h2>{s.h}</h2>
-              <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body }}/>
+              <div className="sec-body" dangerouslySetInnerHTML={{ __html: decorateFactDates(s.body) }}/>
             </div>
           );
         })}

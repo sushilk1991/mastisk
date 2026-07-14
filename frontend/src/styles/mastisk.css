@@ -669,6 +669,21 @@ summary:focus-visible {
   color: var(--fg-faint);
 }
 
+/* dated-facts convention: "(YYYY-MM-DD) fact (previously X as of DATE)" */
+.art-body .fact-date {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-faint);
+  letter-spacing: 0.02em;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+.art-body .fact-prev {
+  font-size: 13px;
+  color: var(--fg-faint);
+  font-style: italic;
+}
+
 /* selection ask popover */
 .ask-pop {
   position: absolute;

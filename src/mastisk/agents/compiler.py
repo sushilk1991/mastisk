@@ -17,6 +17,7 @@ from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import claude_bridge, imagegen_bridge, intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
+from mastisk.memory_conventions import DATED_FACTS_PROMPT
 from mastisk.paths import vault_dir
 from mastisk.settings import get_settings
 
@@ -74,7 +75,15 @@ Diagrams — visualize structure whenever the source has it:
 - Most substantive articles deserve exactly one diagram; use two only if the source covers two genuinely distinct structures. Skip diagrams for thin or purely narrative sources.
 
 - "open" sections are ANALYTICAL threads the article leaves unresolved — genuine conceptual loose ends a reader would still be thinking about. NEVER use "open" to flag missing metadata ("what's the publish date?", "who is the author?", "what's his role?", "when was this written?"). If you lacked a fact, leave the field empty; do not convert metadata gaps into open questions. If the source has no genuine analytical loose ends, omit the "Open questions" section entirely.
-""".replace("__TITLE_MAX_CHARS__", str(q.MAX_GENERATED_ARTICLE_TITLE_CHARS))
+
+Key facts — durable memory the wiki maintains over time:
+- When the source contains durable, specific facts (numbers, dates, pricing, launches, org changes, commitments), include one section {"h": "Key facts", "body": "<ul><li>(2026-07-03) fact</li>…</ul>"} with 3–8 bullets.
+- When re-compiling a page that already has a "Key facts" section (see existing articles), carry its bullets forward and supersede in place rather than restating from scratch.
+- Omit the section entirely when the source has no durable facts — never pad.
+__DATED_FACTS_PROMPT__
+""".replace("__TITLE_MAX_CHARS__", str(q.MAX_GENERATED_ARTICLE_TITLE_CHARS)).replace(
+    "__DATED_FACTS_PROMPT__", DATED_FACTS_PROMPT
+)
 
 
 # Machine schema for the anthropic tier's tool-forced JSON (json_object=True).
