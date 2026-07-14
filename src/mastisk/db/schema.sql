@@ -1121,3 +1121,38 @@ CREATE TABLE IF NOT EXISTS wiki_suggestions (
 CREATE INDEX IF NOT EXISTS idx_wiki_suggestions_pending
   ON wiki_suggestions(occurrences DESC, last_seen_at DESC)
   WHERE status = 'pending';
+
+-- ─────────────────────────────── Automations (prose background tasks) ───────────────────────────────
+-- File-first mirror of vault/_automations/<slug>/task.yaml. The YAML file is
+-- canonical (user-editable in any editor); rows are a derived index rebuilt
+-- by scan_bg_tasks(). Runtime fields (last_*) are written back to the YAML by
+-- the runner so the file stays the single source of truth.
+CREATE TABLE IF NOT EXISTS bg_tasks (
+  slug             TEXT PRIMARY KEY,
+  name             TEXT NOT NULL,
+  instructions     TEXT NOT NULL,
+  active           INTEGER NOT NULL DEFAULT 1,
+  triggers_json    TEXT NOT NULL DEFAULT '{}',   -- {cron?: str, windows?: [{start,end}]}
+  model            TEXT,
+  path             TEXT NOT NULL,                -- task.yaml relative to vault
+  created_at       TEXT,
+  last_attempt_at  TEXT,                         -- bumped at run start (backoff anchor)
+  last_run_at      TEXT,                         -- success only (trigger cycle anchor)
+  last_run_summary TEXT,                         -- success only (kept over failures)
+  last_run_error   TEXT,                         -- failure only (cleared on success)
+  deleted_at       DATETIME,
+  updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS bg_task_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug        TEXT NOT NULL,
+  trigger     TEXT NOT NULL,                     -- 'manual' | 'cron' | 'window'
+  started_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  finished_at DATETIME,
+  mode        TEXT,                              -- 'output' | 'action' | 'skip'
+  summary     TEXT,
+  error       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_bg_task_runs_slug ON bg_task_runs(slug, id DESC);

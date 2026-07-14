@@ -21,6 +21,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { IngestView } from './components/IngestView';
 import { OpenQuestionsView } from './components/OpenQuestionsView';
 import { SuggestionsView } from './components/SuggestionsView';
+import { AutomationsView } from './components/AutomationsView';
 import { QueueView } from './components/QueueView';
 import { SettingsView } from './components/SettingsView';
 import { SystemCheckView } from './components/SystemCheckView';
@@ -262,6 +263,7 @@ export function App() {
         {view === 'ingest' && <IngestView/>}
         {view === 'open_questions' && <OpenQuestionsView onNavigate={navigate}/>}
         {view === 'suggestions' && <SuggestionsView onNavigate={navigate}/>}
+        {view === 'automations' && <AutomationsView liveKey={tickKey} onNavigate={navigate}/>}
         {view === 'queue' && <QueueView onNavigate={navigate}/>}
         {view === 'lint' && <SystemCheckView/>}
         {view === 'settings' && <SettingsView/>}

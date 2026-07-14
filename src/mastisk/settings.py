@@ -151,6 +151,18 @@ class GardenerSettings(BaseSettings):
     distill_max_rules: int = 4
 
 
+class AutomationsSettings(BaseSettings):
+    """Prose-defined background tasks (vault/_automations)."""
+    enabled: bool = True
+    # Global cap across all automations — a misconfigured cron can't burn the
+    # LLM budget overnight.
+    daily_run_cap: int = 24
+    # A cron fire missed by more than this (machine asleep) is skipped.
+    grace_seconds: int = 120
+    # After a failed run, wait this long before the next attempt.
+    retry_backoff_minutes: int = 5
+
+
 class ServerSettings(BaseSettings):
     """HTTP server trust-boundary config."""
     allowed_origins: list[str] = Field(default_factory=list)
@@ -374,6 +386,8 @@ class Settings(BaseSettings):
     compiler: CompilerSettings = Field(default_factory=CompilerSettings)
 
     gardener: GardenerSettings = Field(default_factory=GardenerSettings)
+
+    automations: AutomationsSettings = Field(default_factory=AutomationsSettings)
 
     reminders: RemindersSettings = Field(default_factory=RemindersSettings)
 

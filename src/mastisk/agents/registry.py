@@ -112,6 +112,17 @@ _AGENT_SPECS: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "id": "automations",
+        "name": "Automations",
+        "role": "Runs your prose-defined background tasks",
+        "color": "amber",
+        "module": "mastisk.bgtasks.runner",
+        "load_cap": 24,
+        "slots": (
+            {"slot_id": "runner", "label": "Runner prompt", "module_attr": "RUNNER_PROMPT", "primary": True, "format_template": True},
+        ),
+    },
+    {
         "id": "synthesizer",
         "name": "Synthesizer",
         "role": "Cross-source synthesis, themes",

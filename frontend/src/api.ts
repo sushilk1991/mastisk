@@ -7,6 +7,7 @@ import type {
   QuickCaptureResponse, RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
   SettingsBundle, SettingsPatch, SlippingItem, TaskRow, TimeOfDay, TranscriptAnchor, JournalDay, JournalDaySummary,
+  Automation, AutomationDetail, AutomationRun, AutomationTriggers,
   SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem, WikiSuggestion,
   NeedsReviewItem,
 } from './types';
@@ -1012,6 +1013,41 @@ export const api = {
     dismiss: (id: number): Promise<void> =>
       fetch(`${BASE}/topic-suggestions/${id}/dismiss`, { method: 'POST' })
         .then((r) => { if (!r.ok) throw new Error(`dismiss → ${r.status}`); }),
+  },
+
+  automations: {
+    list: () => j<{ automations: Automation[] }>(`${BASE}/automations`),
+    get: (slug: string) => j<AutomationDetail>(`${BASE}/automations/${encodeURIComponent(slug)}`),
+    create: (body: {
+      name: string; instructions: string;
+      triggers?: AutomationTriggers; model?: string; active?: boolean;
+    }): Promise<Automation> =>
+      fetch(`${BASE}/automations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(async (r) => {
+        if (!r.ok) throw new ApiError(r.status, (await r.json())?.detail ?? `create → ${r.status}`);
+        return r.json();
+      }),
+    patch: (slug: string, body: Partial<{
+      name: string; instructions: string;
+      triggers: AutomationTriggers; model: string | null; active: boolean;
+    }>): Promise<Automation> =>
+      fetch(`${BASE}/automations/${encodeURIComponent(slug)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(async (r) => {
+        if (!r.ok) throw new ApiError(r.status, (await r.json())?.detail ?? `patch → ${r.status}`);
+        return r.json();
+      }),
+    run: (slug: string): Promise<AutomationRun> =>
+      fetch(`${BASE}/automations/${encodeURIComponent(slug)}/run`, { method: 'POST' })
+        .then(async (r) => {
+          if (!r.ok) throw new ApiError(r.status, `run → ${r.status}`);
+          return r.json();
+        }),
   },
 
   wikiSuggestions: {

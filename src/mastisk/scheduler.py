@@ -118,6 +118,7 @@ async def start_scheduler():
         from mastisk.agents.studio import scan_agent_profiles, scan_agent_skills
         from mastisk.content.sync import scan_content
         from mastisk.inventory.sync import scan_inventory
+        from mastisk.bgtasks.sync import scan_bg_tasks
         from mastisk.journal import scan_journal_days
         from mastisk.library.sync import scan_library
         from mastisk.people.sync import scan_people
@@ -138,6 +139,7 @@ async def start_scheduler():
             scan_agent_profiles()
             scan_content()
             scan_journal_days()
+            scan_bg_tasks()
 
         sched.add_job(
             personal_os_scan, "interval",
@@ -461,6 +463,21 @@ async def start_scheduler():
         log.info("scheduler: meeting_prep registered (15min tick)")
     except Exception as e:
         log.warning("scheduler: meeting_prep registration failed: %s", e)
+
+    try:
+        from mastisk.bgtasks import runner as bgtask_runner
+        # Automations: 60s poll over vault/_automations task specs; each task
+        # self-gates on its triggers, failure backoff, and the global daily cap.
+        sched.add_job(
+            bgtask_runner.tick, "interval",
+            seconds=60, id="automations",
+            max_instances=1,
+            next_run_time=datetime.now(UTC) + timedelta(seconds=75),
+            coalesce=True,
+        )
+        log.info("scheduler: automations registered (60s tick)")
+    except Exception as e:
+        log.warning("scheduler: automations registration failed: %s", e)
 
     try:
         from mastisk.agents.opinion_gap_miner import OpinionGapMiner

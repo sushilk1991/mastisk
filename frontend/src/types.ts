@@ -421,7 +421,7 @@ export type View =
   | 'blog' | 'blog_post'
   | 'tweets' | 'tweet_thread'
   | 'podcasts' | 'podcast'
-  | 'suggestions';
+  | 'suggestions' | 'automations';
 
 export interface WikiSuggestion {
   slug: string;
@@ -433,6 +433,42 @@ export interface WikiSuggestion {
   created_at: string;
   last_seen_at: string;
   decided_at: string | null;
+}
+
+export interface AutomationTriggers {
+  cron?: string;
+  windows?: { start: string; end: string }[];
+}
+
+export interface Automation {
+  slug: string;
+  name: string;
+  instructions: string;
+  active: boolean;
+  triggers: AutomationTriggers;
+  model: string | null;
+  path: string;
+  created_at: string | null;
+  last_attempt_at: string | null;
+  last_run_at: string | null;
+  last_run_summary: string | null;
+  last_run_error: string | null;
+}
+
+export interface AutomationRun {
+  id: number;
+  slug: string;
+  trigger: string;
+  started_at: string;
+  finished_at: string | null;
+  mode: string | null;
+  summary: string | null;
+  error: string | null;
+}
+
+export interface AutomationDetail extends Automation {
+  index_md: string;
+  runs: AutomationRun[];
 }
 
 export type TaskStatus = 'open' | 'done' | string;
