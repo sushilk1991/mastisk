@@ -1,5 +1,21 @@
 # Rowboat picks — memory quality + proactive surfaces + prose agents
 
+> **As-built notes (2026-07-14).** All six features shipped on this branch.
+> Deviations from the plan below: (1) dated facts are a prompt-level writing
+> convention + `memory_conventions.py` helpers — no schema change; the
+> escalator prompt was left untouched (its stubs get enriched through the
+> compiler schema, which carries the convention). (2) The gate's table is
+> `wiki_suggestions` (the name `suggested_topics` collided with the existing
+> blog-topic `topic_suggestions`). (3) Meeting prep matches People by
+> `facts.email` (documented convention) instead of a first-class email
+> column — zero blast radius on the CRM file format. (4) Feedback rides the
+> existing `signals` table (kind liked/disliked + reason in value_json) —
+> no new table; distillation is a Gardener pass with a feed-row watermark.
+> (5) Background tasks shipped as **Automations** (`vault/_automations/`,
+> `bg_tasks` table) to avoid colliding with personal-OS "tasks"; the model
+> returns JSON and the runner applies all writes (no LLM file access); the
+> only side-effect in v1 is a push notification.
+
 Branch: `feature/rowboat-picks`. Source of the ideas: code exploration of
 rowboatlabs/rowboat (`apps/x/packages/core/src`). Six features, built in order.
 Baseline before any change: 872 passed, 2 pre-existing failures
