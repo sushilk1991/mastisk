@@ -166,15 +166,21 @@ function CreateForm({ onCreated, onError }: {
 
   return (
     <div className="auto-create">
+      <label className="auto-label" htmlFor="auto-create-name">Name</label>
       <input
+        id="auto-create-name"
         type="text"
-        placeholder="Name — e.g. Morning agent digest"
+        placeholder="e.g. Morning agent digest"
         value={name}
         maxLength={120}
         onChange={(e) => setName(e.target.value)}
       />
+      <label className="auto-label" htmlFor="auto-create-instructions">
+        What should it keep doing? In your words.
+      </label>
       <textarea
-        placeholder={'What should it keep doing? In your words.\ne.g. "Maintain a digest of new wiki articles about AI agents. Lead with what changed since yesterday; notify me only for major releases."'}
+        id="auto-create-instructions"
+        placeholder={'e.g. "Maintain a digest of new wiki articles about AI agents. Lead with what changed since yesterday; notify me only for major releases."'}
         value={instructions}
         rows={4}
         maxLength={8000}
@@ -232,8 +238,9 @@ function DetailPanel({ detail, onSaved, onError }: {
 
   return (
     <div className="auto-detail">
-      <h2 className="auto-detail-h">Instructions</h2>
+      <h2 className="auto-detail-h" id="auto-detail-instructions-label">Instructions</h2>
       <textarea
+        aria-labelledby="auto-detail-instructions-label"
         value={instructions}
         rows={4}
         maxLength={8000}

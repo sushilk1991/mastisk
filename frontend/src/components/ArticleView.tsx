@@ -183,6 +183,7 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
             value={reason}
             maxLength={200}
             placeholder="why? (optional — teaches your agents)"
+            aria-label="Why didn't this land? Optional — teaches your agents"
             onChange={(e) => setReason(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') submitDislike(); }}
             autoFocus

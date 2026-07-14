@@ -669,6 +669,56 @@ summary:focus-visible {
   color: var(--fg-faint);
 }
 
+/* shared polish for the rowboat-picks surfaces (suggestions, automations,
+   verdicts, prep). Staggered entrance, interruptible press feedback,
+   comfortable hit areas — all gated on prefers-reduced-motion. */
+@keyframes row-enter {
+  from { opacity: 0; translate: 0 6px; }
+  to { opacity: 1; translate: 0 0; }
+}
+.sugg-row, .auto-row {
+  animation: row-enter 0.3s cubic-bezier(0.2, 0, 0, 1) both;
+}
+.sugg-row:nth-child(2), .auto-row:nth-child(2) { animation-delay: 50ms; }
+.sugg-row:nth-child(3), .auto-row:nth-child(3) { animation-delay: 100ms; }
+.sugg-row:nth-child(4), .auto-row:nth-child(4) { animation-delay: 150ms; }
+.sugg-row:nth-child(5), .auto-row:nth-child(5) { animation-delay: 200ms; }
+.sugg-row:nth-child(n+6), .auto-row:nth-child(n+6) { animation-delay: 250ms; }
+
+.sugg-actions .chip, .auto-actions .chip, .auto-create-foot .chip,
+.verdict-btn, .sugg-ref {
+  transition-property: color, border-color, background, scale;
+  transition-duration: 0.15s;
+}
+.sugg-actions .chip:active, .auto-actions .chip:active,
+.auto-create-foot .chip:active, .verdict-btn:active { scale: 0.96; }
+
+/* comfortable touch targets without inflating the visual size — extended
+   vertically only, so adjacent buttons' hit areas never overlap */
+.verdict-btn, .sugg-ref { position: relative; }
+.verdict-btn::after, .sugg-ref::after {
+  content: "";
+  position: absolute;
+  inset: -8px -1px;
+}
+.sugg-actions .chip, .auto-actions .chip { min-height: 32px; padding-block: 6px; }
+
+.verdict-btn:focus-visible, .sugg-ref:focus-visible,
+.sugg-actions .chip:focus-visible, .auto-actions .chip:focus-visible,
+.auto-create input:focus-visible, .auto-create textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* numbers that update shouldn't wobble */
+.sugg-count, .auto-when, .auto-run-when, .auto-trigger { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sugg-row, .auto-row { animation: none; }
+  .sugg-actions .chip:active, .auto-actions .chip:active,
+  .auto-create-foot .chip:active, .verdict-btn:active { scale: 1; }
+}
+
 /* automations (prose background tasks) */
 .auto-list { display: flex; flex-direction: column; gap: 10px; }
 .auto-row {
@@ -718,6 +768,14 @@ summary:focus-visible {
   outline: none; border-color: var(--accent);
 }
 .auto-create-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.auto-label {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg-mute);
+}
+.auto-label + input, .auto-label + textarea { margin-top: -4px; }
 .auto-presets { display: flex; gap: 6px; flex-wrap: wrap; }
 .auto-detail { margin-top: 26px; display: flex; flex-direction: column; gap: 10px; }
 .auto-detail-h {
@@ -745,7 +803,7 @@ summary:focus-visible {
 .auto-run-summary { color: var(--fg-mute); min-width: 0; }
 
 /* article thumbs (feedback distillation) */
-.art-verdict { display: inline-flex; gap: 2px; margin-left: auto; }
+.art-verdict { display: inline-flex; gap: 8px; margin-left: auto; }
 .verdict-btn {
   font-size: 11px;
   line-height: 1;
@@ -778,11 +836,15 @@ summary:focus-visible {
 .cal-row { align-items: flex-start; }
 .cal-row-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .cal-prep {
-  display: block;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   font-size: 12px;
   line-height: 1.5;
   color: var(--fg-mute);
   white-space: pre-line;
+  text-wrap: pretty;
   border-left: 2px solid var(--accent-soft, var(--accent));
   padding-left: 8px;
 }
