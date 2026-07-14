@@ -4,6 +4,8 @@ M1 only captures. M2's Reflection agent reads from here.
 """
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -30,6 +32,38 @@ def record(sig: SignalIn):
         return {"ok": False, "error": f"unknown signal kind: {sig.kind}"}
     with connect() as conn:
         q.add_signal(conn, article_id=sig.article_id, kind=sig.kind, value=sig.value)
+    return {"ok": True}
+
+
+class ReasonIn(BaseModel):
+    article_id: str
+    reason: str
+
+
+@router.post("/signals/disliked-reason")
+def disliked_reason(body: ReasonIn):
+    """Attach a reason to the article's most recent 'disliked' signal.
+
+    The thumbs-down is recorded on click (so a vote counts even if the user
+    navigates away); the optional reason arrives later from the inline box.
+    Patching the latest row keeps one signal per click — no double-count into
+    the distiller's threshold."""
+    reason = body.reason.strip()[:200]
+    if not reason:
+        return {"ok": False, "error": "empty reason"}
+    with connect() as conn:
+        row = conn.execute(
+            """SELECT id FROM signals
+               WHERE article_id = ? AND kind = 'disliked'
+               ORDER BY id DESC LIMIT 1""",
+            (body.article_id,),
+        ).fetchone()
+        if row is None:
+            return {"ok": False, "error": "no disliked signal to annotate"}
+        conn.execute(
+            "UPDATE signals SET value_json = ? WHERE id = ?",
+            (json.dumps({"reason": reason}), row["id"]),
+        )
     return {"ok": True}
 
 

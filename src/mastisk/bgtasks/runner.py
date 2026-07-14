@@ -19,6 +19,7 @@ wiki is the automation's primary data source).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -101,6 +102,20 @@ RUN_JSON_SCHEMA = {
 # cascade guard, enforced at our layer: we refuse to run the task at all).
 _FORBIDDEN_MARKERS = ("task.yaml", "_automations/", "background task", "automation spec")
 
+# Per-slug reentrancy guard: the 60s scheduler tick can race a manual /run (or
+# a run outliving the tick interval). Without this, one logical run doubles up
+# — two LLM calls, two run rows, two push notifications. Single-threaded
+# asyncio makes the locked()-check-then-acquire safe (no await between them).
+_run_locks: dict[str, "asyncio.Lock"] = {}
+
+
+def _lock_for(slug: str) -> "asyncio.Lock":
+    lock = _run_locks.get(slug)
+    if lock is None:
+        lock = asyncio.Lock()
+        _run_locks[slug] = lock
+    return lock
+
 
 async def tick() -> None:
     """Scheduler entry: fire every due, active automation sequentially."""
@@ -127,27 +142,47 @@ async def tick() -> None:
 
 
 async def run_task(slug: str, *, trigger: str) -> dict:
-    """Run one automation now. Returns the bg_task_runs row as a dict."""
+    """Run one automation now. Returns the bg_task_runs row (or a synthetic
+    skip dict for gate rejections that don't warrant a persisted run)."""
+    lock = _lock_for(slug)
+    if lock.locked():
+        # A run is already in flight for this slug (tick racing a manual /run).
+        return {"slug": slug, "mode": "skip", "summary": "Skipped — already running.",
+                "error": None}
+    await lock.acquire()
+    try:
+        return await _run_task_locked(slug, trigger=trigger)
+    finally:
+        lock.release()
+
+
+async def _run_task_locked(slug: str, *, trigger: str) -> dict:
     task = sync.bg_task_payload(slug)
     if task is None:
         raise ValueError(f"unknown automation: {slug}")
 
     cfg = get_settings().automations
     with connect() as conn:
+        # Only real (non-skip) runs count toward the cap — skip rows must not
+        # self-inflate the count, and cap/forbidden rejections write no row.
         runs_today = conn.execute(
-            "SELECT COUNT(*) FROM bg_task_runs WHERE started_at >= datetime('now', 'start of day')",
+            "SELECT COUNT(*) FROM bg_task_runs "
+            "WHERE started_at >= datetime('now', 'start of day') "
+            "AND (mode IS NULL OR mode != 'skip')",
         ).fetchone()[0]
     if runs_today >= cfg.daily_run_cap:
-        return _record_run(slug, trigger, mode="skip",
-                           summary=f"Skipped — global daily cap ({cfg.daily_run_cap}) reached.")
+        # No row: a due window automation would otherwise insert a cap-skip
+        # row every 60s until midnight. The next real run is still allowed
+        # once the day rolls over.
+        return {"slug": slug, "mode": "skip",
+                "summary": f"Skipped — global daily cap ({cfg.daily_run_cap}) reached.",
+                "error": None}
 
     lowered = task["instructions"].lower()
     if any(marker in lowered for marker in _FORBIDDEN_MARKERS):
-        return _record_run(
-            slug, trigger, mode="skip",
-            error="refused: instructions reference automation management "
-                  "(an automation may not manage automations)",
-        )
+        return {"slug": slug, "mode": "skip", "summary": "Refused.",
+                "error": "refused: instructions reference automation management "
+                         "(an automation may not manage automations)"}
 
     started = datetime.now(UTC).replace(microsecond=0).isoformat()
     sync.write_runtime_fields(slug, last_attempt_at=started)
@@ -190,16 +225,23 @@ async def run_task(slug: str, *, trigger: str) -> dict:
                 str(notify_spec.get("body") or "")[:500],
             )
 
+    finished = datetime.now(UTC).replace(microsecond=0).isoformat()
     if mode == "skip":
-        # A judged skip is not a failure — but it doesn't advance last_run_at
-        # for window triggers either, or a "nothing new yet at 7am" skip
-        # would eat the whole band. Cron anchors on fire-time proximity, so
-        # repeated skips are naturally bounded to one per fire.
-        finished = datetime.now(UTC).replace(microsecond=0).isoformat()
-        sync.write_runtime_fields(slug, last_run_error=None, last_run_at=finished,
-                                  last_run_summary=f"(skipped) {summary}")
+        # A judged skip must NOT advance last_run_at for a window trigger, or a
+        # "nothing new yet at 07:03" skip anchors inside the band and the
+        # window never retries — defeating the whole point of windows (fire
+        # anywhere in the band). Cron/manual DO anchor: cron dedups fires by
+        # last_run_at, so not advancing would double-fire within the grace.
+        if trigger == "window":
+            sync.write_runtime_fields(
+                slug, last_run_error=None, last_run_summary=f"(skipped) {summary}",
+            )
+        else:
+            sync.write_runtime_fields(
+                slug, last_run_error=None, last_run_at=finished,
+                last_run_summary=f"(skipped) {summary}",
+            )
     else:
-        finished = datetime.now(UTC).replace(microsecond=0).isoformat()
         sync.write_runtime_fields(
             slug, last_run_at=finished, last_run_summary=summary, last_run_error=None,
         )

@@ -283,3 +283,26 @@ def test_signals_verdict_route(db):
     q.add_signal(db, article_id="voted-article", kind="liked", value=None)
     q.add_signal(db, article_id="voted-article", kind="disliked", value={"reason": "meh"})
     assert client.get("/api/signals/verdict", params={"article_id": "voted-article"}).json() == {"verdict": "disliked"}
+
+
+def test_disliked_reason_endpoint_annotates_latest_signal(db):
+    from fastapi.testclient import TestClient
+    from mastisk.app import create_app
+    from mastisk.db import queries as q
+    import json as _json
+    client = TestClient(create_app())
+    _seed_article(db, "reason-article")
+    # No disliked signal yet → 200 with ok:false, no crash.
+    r = client.post("/api/signals/disliked-reason", json={"article_id": "reason-article", "reason": "meh"})
+    assert r.json()["ok"] is False
+    # Record a bare dislike (as the click does), then attach the reason.
+    q.add_signal(db, article_id="reason-article", kind="disliked", value=None)
+    r = client.post("/api/signals/disliked-reason", json={"article_id": "reason-article", "reason": "too shallow"})
+    assert r.json()["ok"] is True
+    row = db.execute(
+        "SELECT value_json FROM signals WHERE article_id='reason-article' AND kind='disliked' ORDER BY id DESC LIMIT 1",
+    ).fetchone()
+    assert _json.loads(row["value_json"])["reason"] == "too shallow"
+    # Still exactly one disliked signal — reason patched, not a second vote.
+    n = db.execute("SELECT COUNT(*) FROM signals WHERE article_id='reason-article' AND kind='disliked'").fetchone()[0]
+    assert n == 1

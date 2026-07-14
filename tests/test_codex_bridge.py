@@ -90,6 +90,45 @@ async def test_run_codex_passes_skip_git_repo_check():
 
 
 @pytest.mark.asyncio
+async def test_run_codex_pins_read_only_sandbox_and_throwaway_cwd():
+    """SECURITY: codex must never inherit ambient sandbox config. The user's
+    ~/.codex/config.toml may set danger-full-access + approval never, and
+    scheduled agents feed attacker-influenceable text (RSS, web clips,
+    calendar invites) into the prompt. A read-only sandbox in a throwaway cwd
+    is the hard barrier against unattended RCE via prompt injection."""
+    import os
+
+    from mastisk.bridges.codex_bridge import run_codex
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b"ok", b"")
+    captured_args: list = []
+    seen_cwd: list = []
+
+    async def fake_exec(*args, **kwargs):
+        captured_args.extend(args)
+        # -C <dir> must point at a real directory that exists during the call.
+        idx = list(args).index("-C")
+        seen_cwd.append(args[idx + 1])
+        assert os.path.isdir(args[idx + 1])
+        return mock_proc
+
+    with patch("mastisk.bridges.codex_bridge.shutil.which", return_value="/usr/bin/codex"), \
+         patch("mastisk.bridges.codex_bridge.asyncio.create_subprocess_exec", side_effect=fake_exec):
+        await run_codex("prompt")
+
+    assert "--sandbox" in captured_args
+    assert captured_args[captured_args.index("--sandbox") + 1] == "read-only"
+    assert "-C" in captured_args
+    # Never leaks a working dir behind it.
+    assert not os.path.exists(seen_cwd[0])
+    # And never the dangerous bypass flags.
+    assert "--dangerously-bypass-approvals-and-sandbox" not in captured_args
+    assert "danger-full-access" not in captured_args
+
+
+@pytest.mark.asyncio
 async def test_run_codex_timeout_kills_proc():
     from mastisk.bridges.codex_bridge import CodexError, run_codex
     # Use MagicMock for the process so sync methods (.kill) don't become

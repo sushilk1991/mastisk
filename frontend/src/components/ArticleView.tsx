@@ -50,17 +50,25 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
   }, [article.id]);
 
   function vote(kind: 'liked' | 'disliked') {
+    const previous = verdict;
     setVerdict(kind);
+    // Record the verdict on click — a vote counts even if the user never
+    // opens the reason box. Optimistic: roll back the pressed state if the
+    // signal never lands. Dislikes additionally open the reason box.
+    api.signal(kind, article.id).catch(() => setVerdict(previous));
     if (kind === 'disliked') {
+      setReason('');
       setReasonOpen(true);
     } else {
       setReasonOpen(false);
-      api.signal(kind, article.id);
     }
   }
 
   function submitDislike() {
-    api.signal('disliked', article.id, reason.trim() ? { reason: reason.trim() } : undefined);
+    const r = reason.trim();
+    // The dislike is already recorded (on click); this only attaches the
+    // reason to that same signal — no second vote, no double count.
+    if (r) api.signalDislikedReason(article.id, r).catch(() => {});
     setReasonOpen(false);
   }
 

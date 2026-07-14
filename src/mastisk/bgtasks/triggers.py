@@ -54,13 +54,22 @@ def _cron_due(
         return False
     local_now = now.astimezone(tz)
     window_start = local_now - timedelta(seconds=grace_seconds)
-    # The most recent scheduled fire inside the grace window, if any:
-    # walk forward from the window start.
-    fire = trigger.get_next_fire_time(None, window_start)
-    if fire is None or fire > local_now:
+    # The MOST RECENT scheduled fire in (window_start, now]. A cron finer than
+    # the grace window (e.g. "* * * * *" with a 120s grace) has several fires
+    # in the window; taking only the earliest would let an already-run fire
+    # mask a later, legitimately-due one. Walk forward and keep the last.
+    most_recent = None
+    cursor = window_start
+    for _ in range(16):
+        fire = trigger.get_next_fire_time(None, cursor)
+        if fire is None or fire > local_now:
+            break
+        most_recent = fire
+        cursor = fire + timedelta(seconds=1)
+    if most_recent is None:
         return False
     anchor = _parse(last_run_at, tz)
-    return anchor is None or fire > anchor
+    return anchor is None or most_recent > anchor
 
 
 def _window_due(

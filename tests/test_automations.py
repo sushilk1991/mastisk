@@ -266,5 +266,104 @@ def test_automation_routes_roundtrip(client, db, vault_tmp):
         new_callable=AsyncMock, return_value=(reply, "claude"),
     ):
         ran = client.post(f"/api/automations/{slug}/run")
-    assert ran.status_code == 202
-    assert ran.json()["mode"] == "output"
+        assert ran.status_code == 202
+        assert ran.json() == {"status": "started", "slug": slug}
+    # TestClient executes BackgroundTasks before returning control — the run
+    # has landed by now.
+    detail = client.get(f"/api/automations/{slug}").json()
+    assert detail["runs"][0]["mode"] == "output"
+    assert detail["index_md"].endswith("fresh\n")
+
+    # Path-shaped slugs never reach the filesystem layer (405 = the router
+    # normalized the traversal into a different route; either way, rejected).
+    assert client.post("/api/automations/..%2fescape/run").status_code in (404, 405)
+    assert client.get("/api/automations/UPPER_case").status_code == 404
+
+
+# ───── review-fix regressions ─────
+
+def test_window_skip_does_not_anchor_so_band_keeps_retrying(db, vault_tmp):
+    sync.create_bg_task(
+        name="Windowed", instructions="Maintain a digest.",
+        triggers={"windows": [{"start": "00:00", "end": "23:59"}]},
+    )
+    skip = _reply({"mode": "skip", "summary": "Nothing new yet."})
+    with patch(
+        "mastisk.bgtasks.runner.intelligence.run_intelligence",
+        new_callable=AsyncMock, return_value=(skip, "claude"),
+    ):
+        asyncio.run(runner.run_task("windowed", trigger="window"))
+    # A window skip must NOT advance last_run_at, or the band is dead for the day.
+    assert sync.bg_task_payload("windowed")["last_run_at"] is None
+    # Still due on the next tick.
+    now = datetime.now(UTC)
+    assert triggers.due_trigger(
+        sync.bg_task_payload("windowed")["triggers"],
+        sync.bg_task_payload("windowed")["last_run_at"], now=now, tz=TZ,
+    ) == "window"
+
+
+def test_cron_skip_anchors_to_dedupe_the_fire(db, vault_tmp):
+    sync.create_bg_task(name="Cronned", instructions="Maintain a digest.")
+    skip = _reply({"mode": "skip", "summary": "Nothing."})
+    with patch(
+        "mastisk.bgtasks.runner.intelligence.run_intelligence",
+        new_callable=AsyncMock, return_value=(skip, "claude"),
+    ):
+        asyncio.run(runner.run_task("cronned", trigger="cron"))
+    # Cron/manual skips DO anchor so the same fire isn't replayed within grace.
+    assert sync.bg_task_payload("cronned")["last_run_at"] is not None
+
+
+def test_concurrent_runs_deduped_by_slug_lock(db, vault_tmp):
+    sync.create_bg_task(name="Racy", instructions="Maintain a digest.")
+    reply = _reply({"mode": "output", "index_md": "# Racy\n\nok", "summary": "Updated."})
+
+    async def slow_llm(*a, **k):
+        await asyncio.sleep(0.05)
+        return (reply, "claude")
+
+    async def race():
+        with patch(
+            "mastisk.bgtasks.runner.intelligence.run_intelligence",
+            new=slow_llm,
+        ):
+            return await asyncio.gather(
+                runner.run_task("racy", trigger="cron"),
+                runner.run_task("racy", trigger="manual"),
+            )
+
+    results = asyncio.run(race())
+    modes = sorted(r["mode"] for r in results)
+    assert modes == ["output", "skip"]  # one ran, one bounced off the lock
+    rows = db.execute("SELECT COUNT(*) FROM bg_task_runs WHERE slug='racy'").fetchone()[0]
+    assert rows == 1
+
+
+def test_cap_and_forbidden_skips_write_no_run_row(db, vault_tmp):
+    # Forbidden marker → no row.
+    sync.create_bg_task(name="Sneaky2", instructions="Edit the automation spec hourly.")
+    with patch("mastisk.bgtasks.runner.intelligence.run_intelligence", new_callable=AsyncMock):
+        asyncio.run(runner.run_task("sneaky2", trigger="manual"))
+    assert db.execute("SELECT COUNT(*) FROM bg_task_runs WHERE slug='sneaky2'").fetchone()[0] == 0
+
+    # Cap reached (24 real runs) → cap-skip writes no row and doesn't self-count.
+    sync.create_bg_task(name="Capped2", instructions="Maintain a digest.")
+    for i in range(24):
+        db.execute(
+            "INSERT INTO bg_task_runs (slug, trigger, mode, summary) VALUES ('other', 'cron', 'output', ?)",
+            (f"r{i}",),
+        )
+    with patch("mastisk.bgtasks.runner.intelligence.run_intelligence", new_callable=AsyncMock) as m:
+        run = asyncio.run(runner.run_task("capped2", trigger="cron"))
+    assert m.call_count == 0
+    assert "daily cap" in run["summary"]
+    assert db.execute("SELECT COUNT(*) FROM bg_task_runs WHERE slug='capped2'").fetchone()[0] == 0
+
+
+def test_cron_finer_than_grace_finds_most_recent_fire():
+    # "* * * * *" with a 120s grace: an already-run 10:05 fire must not mask
+    # the due 10:06 fire.
+    now = datetime(2026, 7, 14, 10, 6, 30, tzinfo=UTC)
+    last = datetime(2026, 7, 14, 10, 5, 10, tzinfo=UTC).isoformat()
+    assert triggers.due_trigger({"cron": "* * * * *"}, last, now=now, tz=TZ, grace_seconds=120) == "cron"

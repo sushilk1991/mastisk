@@ -1,15 +1,26 @@
 """Automations — CRUD + run-now for prose-defined background tasks."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
 from mastisk.bgtasks import runner, sync
 from mastisk.db.queries import connect
 
 router = APIRouter(tags=["automations"])
+
+# Slugs are minted by slugify at create time; reject anything else before it
+# reaches a filesystem path (hardening — the router already 404s traversal).
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+
+
+def _check_slug(slug: str) -> str:
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(status_code=404, detail="automation not found")
+    return slug
 
 
 class AutomationCreate(BaseModel):
@@ -46,6 +57,7 @@ def create_automation(body: AutomationCreate):
 
 @router.get("/automations/{slug}")
 def get_automation(slug: str):
+    _check_slug(slug)
     task = sync.bg_task_payload(slug)
     if task is None:
         raise HTTPException(status_code=404, detail="automation not found")
@@ -61,6 +73,7 @@ def get_automation(slug: str):
 
 @router.patch("/automations/{slug}")
 def patch_automation(slug: str, body: AutomationPatch):
+    _check_slug(slug)
     updates = {k: v for k, v in body.model_dump().items() if k in body.model_fields_set}
     try:
         task = sync.patch_bg_task(slug, updates)
@@ -72,8 +85,15 @@ def patch_automation(slug: str, body: AutomationPatch):
 
 
 @router.post("/automations/{slug}/run", status_code=202)
-async def run_now(slug: str):
-    try:
-        return await runner.run_task(slug, trigger="manual")
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+def run_now(slug: str, background_tasks: BackgroundTasks):
+    """Kick off a manual run and return immediately.
+
+    A run can hold an LLM call for minutes; blocking the request that long
+    tied up a worker and made the 202 a lie. The completed run lands in
+    bg_task_runs + a feed event, which the PWA already refreshes on.
+    """
+    _check_slug(slug)
+    if sync.bg_task_payload(slug) is None:
+        raise HTTPException(status_code=404, detail="automation not found")
+    background_tasks.add_task(runner.run_task, slug, trigger="manual")
+    return {"status": "started", "slug": slug}

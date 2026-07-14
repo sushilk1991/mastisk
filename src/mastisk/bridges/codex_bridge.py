@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import tempfile
 
 log = logging.getLogger("mastisk.codex")
 
@@ -32,7 +33,21 @@ async def run_codex(
     # codex directory, so without this flag codex refuses to run with
     # ``Not inside a trusted directory``. We use codex purely as a stateless
     # LLM (no code edits, no repo writes), so the trust check adds no value.
-    cmd = ["codex", "exec", "--skip-git-repo-check"]
+    #
+    # ``--sandbox read-only`` + throwaway ``-C`` are load-bearing security,
+    # not style: the user's ~/.codex/config.toml may set
+    # sandbox_mode="danger-full-access" with approval_policy="never", and
+    # scheduled agents (automations, gardener, meeting prep, compiler) feed
+    # attacker-influenceable text (RSS items, web clips, calendar invites
+    # from external senders) into this prompt. Without the explicit pin, a
+    # prompt-injected model reply could execute arbitrary shell commands
+    # unattended. Never inherit ambient sandbox config here.
+    workdir = tempfile.mkdtemp(prefix="mastisk-codex-")
+    cmd = [
+        "codex", "exec", "--skip-git-repo-check",
+        "--sandbox", "read-only",
+        "-C", workdir,
+    ]
     if model:
         cmd += ["-c", f'model="{model}"']
     if reasoning_effort:
@@ -44,27 +59,30 @@ async def run_codex(
     # / errors out instead of using the positional prompt arg. Detaching stdin
     # lets it use the arg path the docs advertise.
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except FileNotFoundError as e:
-        raise CodexError(f"codex not executable: {e}") from e
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise CodexError(f"codex timed out after {timeout}s")
-    if proc.returncode != 0:
-        # Codex prints a long startup banner (workdir, model, sandbox, the
-        # echoed prompt) BEFORE the actual error message, so a head-truncated
-        # stderr hides the real error behind boilerplate. Take the tail.
-        msg = stderr.decode("utf-8", errors="replace").strip()
-        if len(msg) > 500:
-            msg = "…" + msg[-500:]
-        raise CodexError(msg or f"exit {proc.returncode}")
-    text = stdout.decode("utf-8", errors="replace")
-    return {"text": text, "raw": text}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as e:
+            raise CodexError(f"codex not executable: {e}") from e
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise CodexError(f"codex timed out after {timeout}s")
+        if proc.returncode != 0:
+            # Codex prints a long startup banner (workdir, model, sandbox, the
+            # echoed prompt) BEFORE the actual error message, so a head-truncated
+            # stderr hides the real error behind boilerplate. Take the tail.
+            msg = stderr.decode("utf-8", errors="replace").strip()
+            if len(msg) > 500:
+                msg = "…" + msg[-500:]
+            raise CodexError(msg or f"exit {proc.returncode}")
+        text = stdout.decode("utf-8", errors="replace")
+        return {"text": text, "raw": text}
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)

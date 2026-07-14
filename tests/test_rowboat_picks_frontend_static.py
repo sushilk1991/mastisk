@@ -54,6 +54,17 @@ def test_verdict_buttons_are_accessible() -> None:
     assert 'aria-label="Why didn' in component  # reason input labelled
 
 
+def test_dislike_is_recorded_on_click_not_just_on_save() -> None:
+    """A thumbs-down must count even if the user never opens/saves the reason
+    box — the vote() path records the signal on click; submitDislike only
+    attaches the reason to that same signal."""
+    component = Path("frontend/src/components/ArticleView.tsx").read_text(encoding="utf-8")
+    # vote() records the signal for either kind.
+    assert "api.signal(kind, article.id)" in component
+    # submitDislike patches the reason, not a second vote.
+    assert "api.signalDislikedReason(article.id, r)" in component
+
+
 def test_automation_create_form_has_visible_labels() -> None:
     component = Path("frontend/src/components/AutomationsView.tsx").read_text(encoding="utf-8")
     assert 'htmlFor="auto-create-name"' in component

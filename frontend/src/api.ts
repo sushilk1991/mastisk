@@ -271,6 +271,13 @@ export const api = {
       `${BASE}/signals/verdict?article_id=${encodeURIComponent(articleId)}`,
     ),
 
+  signalDislikedReason: (articleId: string, reason: string): Promise<void> =>
+    fetch(`${BASE}/signals/disliked-reason`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ article_id: articleId, reason }),
+    }).then((r) => { if (!r.ok) throw new Error(`reason → ${r.status}`); }),
+
   signal: (kind: string, article_id?: string | null, value?: unknown) =>
     fetch(`${BASE}/signals`, {
       method: 'POST',

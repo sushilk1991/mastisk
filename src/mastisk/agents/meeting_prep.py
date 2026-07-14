@@ -21,13 +21,16 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
 
+import yaml
 from slugify import slugify
 
 from mastisk.agents.base import Agent
 from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import intelligence
 from mastisk.db.queries import connect
+from mastisk.file_locks import host_file_lock
 from mastisk.paths import vault_dir
+from mastisk.routes.notes import atomic_write
 from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.meeting_prep")
@@ -209,16 +212,30 @@ class MeetingPrep(Agent):
         tz = ZoneInfo(get_settings().capture.default_timezone)
         day = (event.get("start") or "")[:10] or datetime.now(tz).date().isoformat()
         slug = slugify(event.get("summary") or "meeting")[:60] or "meeting"
-        rel = f"meetings/prep/{slug}-{day}.md"
+        # Disambiguate same-titled meetings on the same day (two "Standup"s):
+        # a short event-id suffix keeps each event's note distinct so the
+        # second prep doesn't clobber the first.
+        event_key = slugify(str(event.get("id") or ""))[:8] or "0"
+        rel = f"meetings/prep/{slug}-{day}-{event_key}.md"
         path = vault_dir() / rel
 
+        # Event summaries come from external invite senders — dump the
+        # frontmatter through yaml.safe_dump rather than hand-quoting, so
+        # newlines/quotes/control chars can't produce malformed YAML.
+        frontmatter = yaml.safe_dump(
+            {
+                "source": "meeting-prep",
+                "title": f"Prep: {event.get('summary') or 'Meeting'}",
+                "event_id": event["id"],
+                "start": event["start"],
+                "generated_at": datetime.now(tz).isoformat(),
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        ).rstrip("\n")
         lines = [
             "---",
-            "source: meeting-prep",
-            f'title: "Prep: {(event.get("summary") or "Meeting").replace(chr(34), chr(39))}"',
-            f"event_id: {event['id']}",
-            f"start: {event['start']}",
-            f"generated_at: {datetime.now(tz).isoformat()}",
+            frontmatter,
             "---",
             "",
             f"# Prep: {event.get('summary') or 'Meeting'}",
@@ -236,5 +253,6 @@ class MeetingPrep(Agent):
                 lines.append(f"- {r['label']} _(no People note yet)_")
         content = "\n".join(lines).rstrip() + "\n"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        with host_file_lock(path):
+            atomic_write(path, content)
         return rel
