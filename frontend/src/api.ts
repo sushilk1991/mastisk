@@ -1034,7 +1034,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }).then(async (r) => {
-        if (!r.ok) throw new ApiError(r.status, (await r.json())?.detail ?? `create → ${r.status}`);
+        if (!r.ok) await throwApiError(r);
         return r.json();
       }),
     patch: (slug: string, body: Partial<{
@@ -1046,13 +1046,13 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }).then(async (r) => {
-        if (!r.ok) throw new ApiError(r.status, (await r.json())?.detail ?? `patch → ${r.status}`);
+        if (!r.ok) await throwApiError(r);
         return r.json();
       }),
     run: (slug: string): Promise<AutomationRun> =>
       fetch(`${BASE}/automations/${encodeURIComponent(slug)}/run`, { method: 'POST' })
         .then(async (r) => {
-          if (!r.ok) throw new ApiError(r.status, `run → ${r.status}`);
+          if (!r.ok) await throwApiError(r);
           return r.json();
         }),
   },

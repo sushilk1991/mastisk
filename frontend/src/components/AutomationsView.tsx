@@ -3,7 +3,7 @@ import { api } from '../api';
 import type { Automation, AutomationDetail, AutomationTriggers, View } from '../types';
 
 interface Props {
-  liveKey: number;
+  liveKey: string;
   onNavigate: (view: View, id?: string) => void;
 }
 
@@ -144,7 +144,7 @@ function CreateForm({ onCreated, onError }: {
 }) {
   const [name, setName] = useState('');
   const [instructions, setInstructions] = useState('');
-  const [schedule, setSchedule] = useState<'morning' | 'evening' | 'hourly' | 'manual'>('morning');
+  const [schedule, setSchedule] = useState<AutomationSchedule>('morning');
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -273,14 +273,16 @@ function DetailPanel({ detail, onSaved, onError }: {
   );
 }
 
-const PRESETS: Record<string, AutomationTriggers | undefined> = {
+const PRESETS = {
   morning: { windows: [{ start: '06:00', end: '10:00' }] },
   evening: { windows: [{ start: '18:00', end: '22:00' }] },
   hourly: { cron: '0 * * * *' },
   manual: undefined,
-};
+} satisfies Record<string, AutomationTriggers | undefined>;
 
-const PRESET_LABELS: Record<string, string> = {
+type AutomationSchedule = keyof typeof PRESETS;
+
+const PRESET_LABELS: Record<AutomationSchedule, string> = {
   morning: 'every morning',
   evening: 'every evening',
   hourly: 'hourly',
