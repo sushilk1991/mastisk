@@ -7,7 +7,7 @@ user-invokable: true
 # Mastisk integration
 
 Mastisk is the user's local personal-knowledge daemon. It runs as a launchd
-agent on this Mac, exposes an HTTP API on `http://localhost:8080`, and mirrors
+agent on this Mac, exposes an HTTP API on `http://localhost:5555`, and mirrors
 its content to a markdown vault on iCloud. **You can read it; prefer the API
 over scraping the vault directly so the user's signals/links stay coherent.**
 
@@ -16,7 +16,7 @@ over scraping the vault directly so the user's signals/links stay coherent.**
 Confirm the daemon is up before any other call:
 
 ```bash
-curl -sf http://localhost:8080/api/sidebar > /dev/null && echo "ok" || echo "DAEMON DOWN"
+curl -sf http://localhost:5555/api/sidebar > /dev/null && echo "ok" || echo "DAEMON DOWN"
 ```
 
 If down, surface that to the user — don't try to restart it yourself
@@ -68,7 +68,7 @@ gui/$UID/com.mastisk.agents`).
 
 ## Where data lives
 
-- **HTTP API** — `http://localhost:8080/api/*` (preferred; see endpoint catalog below)
+- **HTTP API** — `http://localhost:5555/api/*` (preferred; see endpoint catalog below)
 - **Vault on iCloud** — `~/Library/Mobile Documents/com~apple~CloudDocs/Mastisk/vault/`
   - `_self/` — identity files (read first for personalization)
   - `_notes/YYYY-MM-DD/` — raw notes
@@ -126,36 +126,36 @@ gui/$UID/com.mastisk.agents`).
 
 ```bash
 # 1. Quick search
-curl -s "http://localhost:8080/api/search?q_param=autopilot+reliability&limit=10" | jq
+curl -s "http://localhost:5555/api/search?q_param=autopilot+reliability&limit=10" | jq
 
 # 2. Ask the wiki a question (RAG over articles, grounded in identity)
-curl -s -X POST http://localhost:8080/api/ask \
+curl -s -X POST http://localhost:5555/api/ask \
   -H 'Content-Type: application/json' \
   -d '{"question": "What does my wiki say about agent skill composition?"}' | jq
 
 # 3. Get full article content
-curl -s "http://localhost:8080/api/articles/note-000044-skill-composing-autopilot-loop" | jq '{title, kind, confidence, sections: (.sections | length), updated_by}'
+curl -s "http://localhost:5555/api/articles/note-000044-skill-composing-autopilot-loop" | jq '{title, kind, confidence, sections: (.sections | length), updated_by}'
 
 # 4. Capture a note
-curl -s -X POST http://localhost:8080/api/notes \
+curl -s -X POST http://localhost:5555/api/notes \
   -H 'Content-Type: application/json' \
   -d '{"text": "Idea: route synthesizer jobs through a priority queue so user-pinned articles synth first.", "source": "cli"}' | jq
 
 # 5. Today's digest (what mastisk thinks the user should read)
-curl -s http://localhost:8080/api/digest | jq '.items[] | {title, score, why}'
+curl -s http://localhost:5555/api/digest | jq '.items[] | {title, score, why}'
 
 # 6. Open research questions
-curl -s http://localhost:8080/api/open-questions | jq '.[:5]'
+curl -s http://localhost:5555/api/open-questions | jq '.[:5]'
 
 # 7. Read user identity (drives personalization tone)
-curl -s http://localhost:8080/api/vault/self/identity | jq -r .content
-curl -s http://localhost:8080/api/vault/self/style    | jq -r .content
+curl -s http://localhost:5555/api/vault/self/identity | jq -r .content
+curl -s http://localhost:5555/api/vault/self/style    | jq -r .content
 
 # 8. Recent agent activity
-curl -s "http://localhost:8080/api/feed?limit=20" | jq '.[] | "\(.created_at) [\(.agent)] \(.verb) \(.obj)"'
+curl -s "http://localhost:5555/api/feed?limit=20" | jq '.[] | "\(.created_at) [\(.agent)] \(.verb) \(.obj)"'
 
 # 9. Force-escalate a note (bypass auto-rule)
-curl -s -X POST http://localhost:8080/api/notes/44/escalate
+curl -s -X POST http://localhost:5555/api/notes/44/escalate
 ```
 
 ## Decision table — which surface to use

@@ -1,0 +1,13 @@
+{
+  "name": "mastisk",
+  "displayName": "Mastisk",
+  "description": "Talk to your Mastisk personal knowledge wiki from Claude Code — search articles, ask RAG-backed questions, capture notes, look up open questions, and read your identity files.",
+  "author": {
+    "name": "Sushil Kumar",
+    "url": "https://github.com/sushilk1991"
+  },
+  "homepage": "https://github.com/sushilk1991/mastisk",
+  "repository": "https://github.com/sushilk1991/mastisk",
+  "license": "MIT",
+  "keywords": ["knowledge-base", "wiki", "notes", "rag", "personal-knowledge", "second-brain"]
+}

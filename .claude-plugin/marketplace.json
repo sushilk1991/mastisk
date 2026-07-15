@@ -1,0 +1,16 @@
+{
+  "name": "mastisk",
+  "owner": {
+    "name": "Sushil Kumar"
+  },
+  "description": "Claude Code plugin for Mastisk, the local-first personal knowledge wiki.",
+  "plugins": [
+    {
+      "name": "mastisk",
+      "source": "./",
+      "description": "Talk to your Mastisk personal knowledge wiki — search articles, ask RAG-backed questions, capture notes, look up open questions, and read your identity files.",
+      "category": "productivity",
+      "tags": ["knowledge-base", "wiki", "notes", "rag"]
+    }
+  ]
+}
