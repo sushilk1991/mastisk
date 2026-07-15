@@ -40,6 +40,9 @@ X_THREAD_CRAFT = """X thread craft rules:
 - Each tweet gets one idea. If a tweet needs "and also", split or cut.
 - Use the tweet count requested by the theme. If there is no requested count, use 4 to 6 tweets.
 - Open with a concrete thing the user saw, a number, a product name, or a line from the source.
+- A broad theme is not an angle. Choose one concrete claim the supplied evidence can actually support.
+- Give the thread a spine: observation, mechanism, consequence or tension, then the unresolved test. Each tweet must advance it. Do not write five paraphrases of the theme.
+- Preserve useful names, numbers, quotes, products, and observed actions from the evidence. Never replace a concrete detail with a category word like "interfaces" or "workflows".
 - Make the thread sound like a note to technical peers, not a blog intro chopped into posts.
 - Add personal language only when the theme or local evidence supports it.
 - End with a concrete next thought or caveat, not a tidy maxim or CTA.
@@ -761,14 +764,25 @@ class TweetWriter(Agent):
 
     async def _call_llm(self, prompt: str) -> tuple[dict[str, Any], str]:
         settings = get_settings().tweet
+        # The shared default chain is pinned for fast, compiler-sized jobs.
+        # Editorial work needs the user's normal Claude model first; Codex and
+        # Ollama remain fallbacks if that subscription CLI is unavailable.
+        editorial_route = {
+            "provider_order": ("claude", "codex", "ollama"),
+            "cli_model_overrides": {"claude": None},
+        }
         result, provider = await run_intelligence(
-            prompt, timeout_s=settings.claude_timeout_seconds,
+            prompt,
+            timeout_s=settings.claude_timeout_seconds,
+            **editorial_route,
         )
         parsed = _try_parse_json(result.get("text", "") if isinstance(result, dict) else str(result))
         if parsed is not None:
             return parsed, provider
         result, provider = await run_intelligence(
-            prompt + JSON_RETRY_SUFFIX, timeout_s=settings.claude_timeout_seconds,
+            prompt + JSON_RETRY_SUFFIX,
+            timeout_s=settings.claude_timeout_seconds,
+            **editorial_route,
         )
         parsed = _try_parse_json(result.get("text", "") if isinstance(result, dict) else str(result))
         if parsed is None:

@@ -117,6 +117,30 @@ def test_config_override_changes_provider_order(data_tmp):
     assert m_c.call_count == 0
 
 
+def test_call_override_can_prefer_default_claude_for_editorial_work(data_tmp):
+    """A quality-sensitive caller can bypass the shared compiler-oriented pins."""
+    _reload_settings()
+    from mastisk.bridges import intelligence
+
+    p_claude, p_codex, p_ollama = _patch_chain(
+        claude={"text": "editorial draft"},
+    )
+    with p_claude as m_c, p_codex as m_x, p_ollama as m_o:
+        result, label = asyncio.run(
+            intelligence.run_intelligence(
+                "hello",
+                provider_order=("claude", "codex", "ollama"),
+                cli_model_overrides={"claude": None},
+            )
+        )
+
+    assert label == "claude"
+    assert result["text"] == "editorial draft"
+    assert m_c.call_args.kwargs["model"] is None
+    assert m_x.call_count == 0
+    assert m_o.call_count == 0
+
+
 def test_codex_and_claude_fail_falls_back_to_ollama(data_tmp):
     """Codex + Claude raise → Ollama serves → 'ollama' label."""
     _reload_settings()

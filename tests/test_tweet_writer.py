@@ -378,9 +378,45 @@ def test_tweet_writer_prompt_includes_current_date_and_x_context(vault_tmp, data
     assert "Current date:" in prompt
     assert datetime.now().astimezone().date().isoformat() in prompt
     assert "[browser] X: Codex agents are trending" in prompt
+    assert "A broad theme is not an angle" in prompt
+    assert "Do not write five paraphrases of the theme" in prompt
+    assert "If none is given, use 4 to 6 tweets" in prompt
+    assert "Prefer 5 to 10 tweets" not in prompt
     fixed_date = _current_date_context(datetime(2026, 5, 30, tzinfo=UTC))
     assert fixed_date.startswith("Saturday, May 30, 2026 (")
     assert "ISO 2026-05-30" in fixed_date
+
+
+def test_tweet_writer_uses_editorial_provider_route(data_tmp):
+    from mastisk.agents.tweet_writer import TweetWriter
+
+    draft = {
+        "title": "Concrete loop",
+        "angle": "A failed gate exposed the missing verifier.",
+        "thread": ["The checkout gate passed while the artifact was still broken."],
+        "sources": [],
+        "warnings": [],
+    }
+    calls: list[dict] = []
+
+    async def fake_run_intelligence(*args, **kwargs):
+        calls.append(kwargs)
+        return {"text": json.dumps(draft)}, "claude"
+
+    with patch(
+        "mastisk.agents.tweet_writer.run_intelligence",
+        new_callable=AsyncMock,
+        side_effect=fake_run_intelligence,
+    ):
+        result, provider = asyncio.run(TweetWriter()._call_llm("draft this"))
+
+    assert result == draft
+    assert provider == "claude"
+    assert calls == [{
+        "timeout_s": 180,
+        "provider_order": ("claude", "codex", "ollama"),
+        "cli_model_overrides": {"claude": None},
+    }]
 
 
 def test_tweet_writer_searches_x_with_browser_harness():

@@ -15,7 +15,7 @@ Use this when drafting from a user-supplied theme for X/Twitter.
 - Keep the first line short enough that the reader understands the payoff before expanding.
 - One idea per tweet. No mini essay paragraphs.
 - Use line breaks only when they improve scanning. Do not force a blog outline into tweets.
-- Prefer 5 to 10 tweets for ordinary threads. A promised "top 10" should be one hook plus 10 numbered items.
+- Follow the requested count. If none is given, use 4 to 6 tweets. A promised "top 10" should be one hook plus 10 numbered items.
 
 ## Human voice
 

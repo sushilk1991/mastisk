@@ -79,23 +79,30 @@ def reset_breakers() -> None:
     _tripped_until.clear()
 
 
-def effective_order() -> list[ProviderLabel]:
+def effective_order(
+    provider_order: tuple[ProviderLabel, ...] | list[ProviderLabel] | None = None,
+) -> list[ProviderLabel]:
     """Configured order, upgraded with the anthropic tier and breaker-filtered.
 
     Missing binaries/keys are NOT filtered here — those tiers fail in
     milliseconds on their own and the fallback loop moves on. Only two
     adjustments happen: the anthropic tier is prepended when a key is
     configured but the user hasn't listed it, and providers in breaker
-    cooldown are skipped (they've proven they fail *slowly*).
+    cooldown are skipped (they've proven they fail *slowly*). A caller-supplied
+    order is exact, so a task can choose a quality-oriented route without
+    inheriting the shared compiler-oriented preference order.
     """
     s = get_settings().intelligence
-    configured = [cast(ProviderLabel, p) for p in s.provider_order]
-    if (
-        s.anthropic_auto
-        and "anthropic" not in configured
-        and anthropic_bridge.available()
-    ):
-        configured = [cast(ProviderLabel, "anthropic"), *configured]
+    if provider_order is None:
+        configured = [cast(ProviderLabel, p) for p in s.provider_order]
+        if (
+            s.anthropic_auto
+            and "anthropic" not in configured
+            and anthropic_bridge.available()
+        ):
+            configured = [cast(ProviderLabel, "anthropic"), *configured]
+    else:
+        configured = list(provider_order)
 
     usable = [p for p in configured if not _breaker_open(p)]
     # Never return an empty chain: if every breaker is open, fall back to the
@@ -110,13 +117,15 @@ async def run_intelligence(
     classification: bool = False,
     json_object: bool = False,
     json_schema: dict | None = None,
+    provider_order: tuple[ProviderLabel, ...] | list[ProviderLabel] | None = None,
+    cli_model_overrides: dict[ProviderLabel, str | None] | None = None,
 ) -> tuple[dict, ProviderLabel]:
     # json_object=True asks tiers that support constrained output (currently
     # only the Anthropic API) to guarantee a syntactically valid JSON object.
     # CLI tiers ignore it — callers still run extract_json_block either way.
     # classification=True does not reorder providers. The capture router's
     # outer timeout intentionally bounds the full configured chain.
-    order = effective_order()
+    order = effective_order(provider_order)
     errors: dict[ProviderLabel, Exception] = {}
     last_err: Exception | None = None
 
@@ -129,6 +138,7 @@ async def run_intelligence(
                 classification=classification,
                 json_object=json_object,
                 json_schema=json_schema,
+                cli_model_overrides=cli_model_overrides,
             )
             _record_success(provider)
             return result, provider
@@ -163,6 +173,7 @@ async def _run_provider(
     classification: bool,
     json_object: bool = False,
     json_schema: dict | None = None,
+    cli_model_overrides: dict[ProviderLabel, str | None] | None = None,
 ) -> dict:
     if provider == "anthropic":
         return await anthropic_bridge.run_anthropic(
@@ -176,7 +187,11 @@ async def _run_provider(
         # argument and detached stdin; do not pass a made-up kwarg through.
         return await codex_bridge.run_codex(
             prompt,
-            model=s.codex_model or None,
+            model=(
+                cli_model_overrides["codex"]
+                if cli_model_overrides is not None and "codex" in cli_model_overrides
+                else s.codex_model or None
+            ),
             reasoning_effort=s.codex_reasoning_effort or None,
             timeout=float(timeout_s),
         )
@@ -185,7 +200,11 @@ async def _run_provider(
             prompt,
             timeout_s=timeout_s,
             classification=classification,
-            model=s.claude_model or None,
+            model=(
+                cli_model_overrides["claude"]
+                if cli_model_overrides is not None and "claude" in cli_model_overrides
+                else s.claude_model or None
+            ),
         )
     # Ollama tier. ``ollama_bridge.chat`` hardcodes its own httpx timeout
     # (~180s), so we wrap it to honour ``timeout_s`` consistently with the
