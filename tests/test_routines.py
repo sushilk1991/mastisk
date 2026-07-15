@@ -44,7 +44,13 @@ def test_streak_math_handles_gaps_and_fixed_challenges():
     }
 
 
-def test_routine_routes_create_toggle_progress_and_archive_file_first(vault_tmp, data_tmp, db):
+def test_routine_routes_create_toggle_progress_and_archive_file_first(
+    vault_tmp, data_tmp, db, monkeypatch,
+):
+    monkeypatch.setattr(
+        "mastisk.routines.sync.local_today",
+        lambda now=None: "2026-06-11",
+    )
     with _client(vault_tmp, data_tmp, db) as client:
         created = client.post(
             "/api/routines",

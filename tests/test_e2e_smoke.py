@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -64,6 +63,15 @@ def test_e2e_watch_capture_task_due_reminder_and_filters(db, data_tmp, vault_tmp
     monkeypatch.setattr(
         "mastisk.agents.reminder_engine.notify.send",
         lambda title, body, url=None: sent.append((title, body, url)) or True,
+    )
+    from mastisk.agents.reminder_engine import create_task_due_reminder
+
+    monkeypatch.setattr(
+        "mastisk.routes.capture.create_task_due_reminder",
+        lambda **kwargs: create_task_due_reminder(
+            **kwargs,
+            now=datetime(2026, 6, 12, 15, 0, tzinfo=UTC),
+        ),
     )
 
     with patch("mastisk.routes.capture.route_capture", new_callable=AsyncMock, side_effect=fake_route):
