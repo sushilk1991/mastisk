@@ -218,6 +218,60 @@ def test_research_mode_adds_live_web_evidence_without_claiming_an_action(
     assert "Never claim you saved, created, emailed" in captured["prompt"]
 
 
+def test_research_reserves_context_for_web_before_large_wiki_hits(
+    db, monkeypatch,
+) -> None:
+    from mastisk.app import create_app
+
+    for index in range(12):
+        db.execute(
+            """INSERT INTO articles
+                 (id, kind, title, slug, summary, body_md, confidence)
+               VALUES (?, 'Concept', ?, ?, ?, ?, 0.7)""",
+            (
+                f"approval-{index}",
+                f"Approval system {index}",
+                f"approval-{index}",
+                "Human approval for tool-using agents",
+                "Approval evidence " * 500,
+            ),
+        )
+    captured: dict[str, str] = {}
+
+    async def fake_search_web(_question: str) -> list[dict]:
+        return [{
+            "id": "https://example.com/live-approval",
+            "kind": "web",
+            "title": "Live approval guidance",
+            "href": "https://example.com/live-approval",
+            "excerpt": "Current guidance",
+            "content": "This live evidence must survive the context budget.",
+            "untrusted": True,
+        }]
+
+    async def fake_generate(prompt: str) -> tuple[str, str]:
+        captured["prompt"] = prompt
+        return "The web evidence is present.", "test"
+
+    monkeypatch.setattr("mastisk.routes.ask._search_web", fake_search_web)
+    monkeypatch.setattr("mastisk.routes.ask._generate_answer", fake_generate)
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/ask",
+            json={
+                "question": "Research human approval for tool-using agents.",
+                "mode": "research",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["coverage"]["web"] == 1
+    assert any(source["kind"] == "web" for source in body["retrieved_sources"])
+    assert "This live evidence must survive the context budget." in captured["prompt"]
+
+
 def test_web_search_retries_instruction_heavy_questions_as_keywords(
     monkeypatch,
 ) -> None:

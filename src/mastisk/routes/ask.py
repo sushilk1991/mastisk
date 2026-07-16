@@ -85,7 +85,10 @@ async def ask(req: AskRequest) -> dict:
             )
 
     if req.mode == "research":
-        sources.extend(await _search_web(req.question))
+        sources = _prioritize_research_sources(
+            sources,
+            await _search_web(req.question),
+        )
 
     included, rendered_context = _render_sources(sources)
     prompt = _build_prompt(req, rendered_context)
@@ -213,6 +216,23 @@ def _wiki_sources(conn: sqlite3.Connection, req: AskRequest) -> list[dict]:
             sources.extend(buckets.get(kind, [])[1:])
 
     return sources
+
+
+def _prioritize_research_sources(
+    wiki_sources: list[dict], web_sources: list[dict],
+) -> list[dict]:
+    """Reserve context for live evidence before large corpus hits consume it."""
+    anchors: list[dict] = []
+    corpus_hits: list[dict] = []
+    for source in wiki_sources:
+        if (
+            source.get("current")
+            or source.get("kind") in {"overview", "profile", "selection", "web_page"}
+        ):
+            anchors.append(source)
+        else:
+            corpus_hits.append(source)
+    return [*anchors, *web_sources, *corpus_hits]
 
 
 def _overview_source(conn: sqlite3.Connection) -> dict:
