@@ -44,6 +44,9 @@ _FILE_MIRRORS = {
     "inventory": ("inventory", "id", "name", "deleted_at IS NULL", "/inventory"),
     "content": ("content_items", "slug", "title", "deleted_at IS NULL", "/content"),
 }
+_WEB_QUERY_NOISE = frozenset({
+    "compare", "current", "find", "latest", "mastisk", "recent", "research", "wiki",
+})
 
 
 class AskMessage(BaseModel):
@@ -441,7 +444,15 @@ async def _search_web(question: str) -> list[dict]:
         from mastisk.agents.blog_writer import BlogWriter
 
         writer = BlogWriter()
-        results = await writer._fetch_public_web_results(question)
+        results: list[dict] = []
+        for query in _web_search_queries(question):
+            try:
+                results = await writer._fetch_public_web_results(query)
+            except Exception as exc:
+                log.info("ask: web search attempt failed for %r: %s", query, exc)
+                continue
+            if results:
+                break
         rows: list[dict] = []
         for index, result in enumerate(results[:5]):
             excerpt = ""
@@ -463,6 +474,28 @@ async def _search_web(question: str) -> list[dict]:
     except Exception as exc:
         log.warning("ask: live web research failed: %s", exc)
         return []
+
+
+def _web_search_queries(question: str) -> list[str]:
+    """Return the user turn plus one search-engine-friendly retry.
+
+    DuckDuckGo's HTML endpoint sometimes returns no results for instruction-heavy
+    prompts ("research ... compare with my wiki") while the meaningful keywords
+    work. Keep the original query first, then retry once without UI instructions.
+    """
+    original = " ".join(question.split()).strip()
+    terms = q._palette_terms(original)
+    freshness_requested = any(term in {"current", "latest", "recent"} for term in terms)
+    meaningful = [
+        term for term in terms
+        if term not in _WEB_QUERY_NOISE
+    ]
+    if freshness_requested:
+        meaningful.append(str(date.today().year))
+    simplified = " ".join(dict.fromkeys(meaningful[:14]))
+    if simplified and simplified.casefold() != original.casefold():
+        return [original, simplified]
+    return [original] if original else []
 
 
 def _render_sources(sources: list[dict]) -> tuple[list[dict], str]:

@@ -218,6 +218,45 @@ def test_research_mode_adds_live_web_evidence_without_claiming_an_action(
     assert "Never claim you saved, created, emailed" in captured["prompt"]
 
 
+def test_web_search_retries_instruction_heavy_questions_as_keywords(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    calls: list[str] = []
+
+    class FakeWriter:
+        async def _fetch_public_web_results(self, query: str) -> list[dict]:
+            calls.append(query)
+            if len(calls) == 1:
+                return []
+            return [{
+                "title": "Human approval for tool-using agents",
+                "url": "https://example.com/approval",
+                "snippet": "Use explicit approval gates for consequential actions.",
+            }]
+
+        async def _fetch_public_web_excerpt(self, _url: str) -> str:
+            return "Approval gates should be inspectable and attributable."
+
+    monkeypatch.setattr("mastisk.agents.blog_writer.BlogWriter", FakeWriter)
+
+    from mastisk.routes.ask import _search_web
+
+    rows = asyncio.run(_search_web(
+        "Research the latest practical guidance on human approval for "
+        "tool-using agents and compare it with my wiki.",
+    ))
+
+    assert calls == [
+        "Research the latest practical guidance on human approval for "
+        "tool-using agents and compare it with my wiki.",
+        "practical guidance human approval tool using agents 2026",
+    ]
+    assert rows[0]["kind"] == "web"
+    assert rows[0]["content"] == "Approval gates should be inspectable and attributable."
+
+
 def test_retrieved_context_is_not_mislabeled_as_cited_evidence(
     db, monkeypatch,
 ) -> None:
