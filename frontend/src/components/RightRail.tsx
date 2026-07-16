@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Article, AgentInfo, FeedTick, Note, View } from '../types';
 import { ArtifactPanel } from './ArtifactPanel';
 import { api } from '../api';
+import { Icon } from './icons';
 
 interface Props {
   article: Article;
@@ -9,11 +10,24 @@ interface Props {
   agents: AgentInfo[];
   onAsk: (prompt: string, selection: string | null) => void;
   onNavigate: (view: View, id?: string) => void;
+  onClose: () => void;
 }
 
-export function RightRail({ article, feed, agents, onNavigate }: Props) {
+export function RightRail({ article, feed, agents, onAsk, onNavigate, onClose }: Props) {
   return (
     <aside className="rail">
+      <div className="rail-mobile-head">
+        <strong>Page context</strong>
+        <button type="button" onClick={onClose} aria-label="Close page context">{Icon.close}</button>
+      </div>
+      <button
+        type="button"
+        className="rail-ask"
+        onClick={() => onAsk(`Help me think through “${article.title}”`, null)}
+      >
+        <span>{Icon.ask}</span>
+        <span><strong>Ask about this page</strong><small>Chat with your whole wiki</small></span>
+      </button>
       <div className="rail-section">
         <div className="rail-h">
           Concept map

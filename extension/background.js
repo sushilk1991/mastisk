@@ -762,6 +762,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question: msg.question,
+          messages: msg.messages || [],
           page_url: msg.page_url || undefined,
           page_title: msg.page_title || undefined,
           page_content: msg.page_content || undefined,

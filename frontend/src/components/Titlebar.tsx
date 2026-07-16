@@ -113,11 +113,11 @@ export function Titlebar({
           </span>
         ))}
       </div>
-      <div className="tb-search" onClick={onSearchClick} role="button">
+      <button type="button" className="tb-search" onClick={onSearchClick} aria-label="Search Mastisk">
         {Icon.search}
         <span style={{flex:1}}>Search wiki, notes, blog...</span>
         <kbd>⌘K</kbd>
-      </div>
+      </button>
       <div className="tb-actions">
         <button
           className="tb-btn tb-search-btn"
@@ -133,10 +133,12 @@ export function Titlebar({
         >
           +
         </button>
-        <button className="tb-btn" onClick={onAsk} title="Ask Mastisk">{Icon.ask}</button>
-        <button className="tb-btn" onClick={onToggleSide} title="Toggle sidebar">{Icon.panel}</button>
-        <button className="tb-btn" onClick={onToggleRail} title="Toggle right rail" style={{transform:'scaleX(-1)'}}>{Icon.panel}</button>
-        <button className="tb-btn" onClick={onTheme} title="Toggle theme">
+        <button className="tb-btn tb-ask-btn" onClick={onAsk} title="Ask Mastisk" aria-label="Open Mastisk chat">
+          {Icon.ask}<span>Ask</span>
+        </button>
+        <button className="tb-btn" onClick={onToggleSide} title="Toggle sidebar" aria-label="Toggle sidebar">{Icon.panel}</button>
+        <button className="tb-btn" onClick={onToggleRail} title="Toggle right rail" aria-label="Toggle right rail" style={{transform:'scaleX(-1)'}}>{Icon.panel}</button>
+        <button className="tb-btn" onClick={onTheme} title="Toggle theme" aria-label={`Use ${theme === 'dark' ? 'light' : 'dark'} theme`}>
           {theme === 'dark' ? Icon.sun : Icon.moon}
         </button>
       </div>

@@ -1192,6 +1192,19 @@ def _fts_palette_query(q: str) -> str | None:
     return " ".join(f"{t}*" for t in terms)
 
 
+def _fts_ask_query(q: str) -> str | None:
+    """Build a broad, prefix-matching FTS5 query for natural-language Ask turns.
+
+    Ask questions contain connective words and often mention more concepts than
+    any one relevant document. OR semantics preserve recall across articles,
+    notes, and blog posts; the per-kind result caps below bound the noise.
+    """
+    terms = _palette_terms(q)
+    if not terms:
+        return None
+    return " OR ".join(f"{term}*" for term in terms[:16])
+
+
 def _palette_terms(q: str) -> list[str]:
     import re
 
@@ -1473,7 +1486,11 @@ def search_personal_os_context(
 
 
 def search_all(
-    conn: sqlite3.Connection, q: str, *, limit: int = 20
+    conn: sqlite3.Connection,
+    q: str,
+    *,
+    limit: int = 20,
+    any_term: bool = False,
 ) -> list[dict]:
     """Unified palette search across wiki, notes, blog, and personal-OS mirrors.
 
@@ -1505,7 +1522,7 @@ def search_all(
     collide with literal ``<mark>`` text a user might have written in a
     note about HTML. The frontend renders them as React ``<mark>`` nodes.
     """
-    expr = _fts_palette_query(q)
+    expr = _fts_ask_query(q) if any_term else _fts_palette_query(q)
     if expr is None:
         return []
 
@@ -1595,7 +1612,7 @@ def search_all(
             score=float(r["score"]),
         ))
 
-    rows.extend(_search_personal_os_mirrors(conn, q))
+    rows.extend(_search_personal_os_mirrors(conn, q, any_term=any_term))
 
     return rows[:limit]
 

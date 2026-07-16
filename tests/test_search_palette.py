@@ -16,11 +16,11 @@ from fastapi.testclient import TestClient
 
 from mastisk.db.queries import (
     _ensure_fts_initialized,
+    _fts_ask_query,
     _fts_palette_query,
     init_schema,
     search_all,
 )
-
 
 # ─────────────────────────────── _fts_palette_query ───────────────────────────────
 
@@ -40,6 +40,15 @@ from mastisk.db.queries import (
 )
 def test_fts_palette_query_basic(query: str, expected: str | None) -> None:
     assert _fts_palette_query(query) == expected
+
+
+def test_ask_query_uses_broad_or_semantics_without_changing_palette_search() -> None:
+    assert _fts_ask_query("agent governance receipts") == (
+        "agent* OR governance* OR receipts*"
+    )
+    assert _fts_palette_query("agent governance receipts") == (
+        "agent* governance* receipts*"
+    )
 
 
 def test_fts_palette_query_lowercases_to_avoid_fts5_operators() -> None:

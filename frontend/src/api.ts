@@ -248,7 +248,12 @@ export const api = {
       method: 'DELETE',
     }),
 
-  ask: (question: string, opts?: { selection?: string; article_id?: string }) =>
+  ask: (question: string, opts?: {
+    selection?: string;
+    article_id?: string;
+    messages?: { role: 'user' | 'assistant'; content: string }[];
+    mode?: 'wiki' | 'research';
+  }) =>
     j<AskResponse>(`${BASE}/ask`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

@@ -10,6 +10,7 @@ interface Props {
   article: Article;
   onAsk: (prompt: string, selection: string | null) => void;
   onNavigate: (view: View, id?: string) => void;
+  onContext: () => void;
 }
 
 // Dated-facts convention: fact bullets open with "(YYYY-MM-DD)" and may carry
@@ -29,7 +30,7 @@ export function decorateFactDates(html: string): string {
 
 interface Pop { x: number; y: number; text: string; }
 
-export function ArticleView({ article, onAsk, onNavigate }: Props) {
+export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [pop, setPop] = useState<Pop | null>(null);
   const [captureCtx, setCaptureCtx] = useState<CaptureContext | null>(null);
@@ -201,6 +202,12 @@ export function ArticleView({ article, onAsk, onNavigate }: Props) {
       )}
 
       <h1 className="art-title">{article.title}</h1>
+      <div className="article-mobile-tools" aria-label="Article actions">
+        <button type="button" onClick={() => onAsk(`Help me think through “${article.title}”`, null)}>
+          {Icon.ask} Ask this page
+        </button>
+        <button type="button" onClick={onContext}>{Icon.panel} Page context</button>
+      </div>
       {article.aka.length > 0 && (
         <div className="art-aka">
           <span className="label">also known as</span>

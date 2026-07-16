@@ -354,8 +354,23 @@ export interface OpenQuestionsResponse {
 
 export interface AskResponse {
   answer: string;
+  provider: string;
+  mode: 'wiki' | 'research';
+  coverage: Record<string, number>;
+  sources: AskSource[];
+  retrieved_sources?: AskSource[];
   cites: string[];
-  hits: { id: string; title: string; snippet?: string }[];
+  hits: { id: string; title: string; snippet?: string; kind?: string; link_target?: string | null }[];
+}
+
+export interface AskSource {
+  ref: string;
+  id: string;
+  kind: string;
+  title: string;
+  href: string | null;
+  excerpt: string;
+  cited: boolean;
 }
 
 export type SearchResultKind =

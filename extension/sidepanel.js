@@ -218,26 +218,14 @@
   }
 
   // --- Ask ---
-  function buildQuestion(userText) {
-    const history = currentHistory();
-    // Grab the last 2 completed Q/A pairs for lightweight continuity.
-    const pairs = [];
-    for (let i = history.length - 1; i >= 0 && pairs.length < 2; i--) {
-      if (history[i].role === 'assistant') {
-        // Find the user turn just before it.
-        let q = '';
-        for (let j = i - 1; j >= 0; j--) {
-          if (history[j].role === 'user') { q = history[j].content; break; }
-        }
-        pairs.unshift({ q, a: history[i].content });
-      }
-    }
-    if (pairs.length === 0) return userText;
-
-    const ctx = pairs
-      .map((p) => `Q: ${p.q}\nA: ${p.a}`)
-      .join('\n\n');
-    return `Earlier in this chat:\n${ctx}\n\nNow: ${userText}`;
+  function buildMessages() {
+    // The current user turn has already been appended. Send prior turns as a
+    // bounded structured history so the backend can use them for continuity
+    // without polluting full-text retrieval with pasted assistant prose.
+    return currentHistory()
+      .slice(0, -1)
+      .slice(-10)
+      .map((message) => ({ role: message.role, content: message.content }));
   }
 
   async function ask(userText) {
@@ -260,8 +248,7 @@
 
     const loadingBubble = appendAssistant('', null, null, true);
 
-    const question = buildQuestion(text);
-    const payload = { action: 'ask', question };
+    const payload = { action: 'ask', question: text, messages: buildMessages() };
     if (includePage.checked && pageContent?.content) {
       payload.page_url = pageContent.url || currentUrl;
       payload.page_title = pageContent.title || '';

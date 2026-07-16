@@ -16,8 +16,8 @@ No build step — load the folder as-is.
   while indexing, and you get an *Indexed: <title>* notification when it lands. Click it to open the
   compiled wiki article.
 - **Side panel chat** — ask questions across your wiki. By default the current page is included so
-  Mastisk can draw parallels between what you're reading and what you've saved. Wiki citations
-  (`[[Title]]`) and the sources list link straight to the article.
+  Mastisk can draw parallels between what you're reading and what you've saved. The cited-sources
+  list links straight to the underlying wiki articles.
 
 ## Install (load unpacked)
 

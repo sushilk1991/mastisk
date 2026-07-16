@@ -134,10 +134,10 @@ async def test_web_clip_rejects_non_http_hero(db):
 
 @pytest.mark.asyncio
 async def test_ask_survives_hostile_page_title(db, monkeypatch):
-    async def fake_chat(prompt: str, cheap: bool = True) -> str:
-        return "answer"
+    async def fake_generate(prompt: str) -> tuple[str, str]:
+        return "answer", "test"
 
-    monkeypatch.setattr("mastisk.bridges.ollama_bridge.chat", fake_chat)
+    monkeypatch.setattr("mastisk.routes.ask._generate_answer", fake_generate)
 
     from mastisk.routes.ask import AskRequest, ask
 
@@ -150,10 +150,10 @@ async def test_ask_survives_hostile_page_title(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ask_tags_article_hits(db, monkeypatch):
-    async def fake_chat(prompt: str, cheap: bool = True) -> str:
-        return "answer"
+    async def fake_generate(prompt: str) -> tuple[str, str]:
+        return "answer", "test"
 
-    monkeypatch.setattr("mastisk.bridges.ollama_bridge.chat", fake_chat)
+    monkeypatch.setattr("mastisk.routes.ask._generate_answer", fake_generate)
 
     db.execute(
         """INSERT INTO articles (id, kind, title, slug, summary, body_md)
@@ -179,11 +179,11 @@ async def test_ask_tags_article_hits(db, monkeypatch):
 async def test_ask_includes_browser_page_context(db, monkeypatch):
     captured: dict[str, str] = {}
 
-    async def fake_chat(prompt: str, cheap: bool = True) -> str:
+    async def fake_generate(prompt: str) -> tuple[str, str]:
         captured["prompt"] = prompt
-        return "answer"
+        return "answer", "test"
 
-    monkeypatch.setattr("mastisk.bridges.ollama_bridge.chat", fake_chat)
+    monkeypatch.setattr("mastisk.routes.ask._generate_answer", fake_generate)
 
     from mastisk.routes.ask import AskRequest, ask
 
@@ -197,6 +197,6 @@ async def test_ask_includes_browser_page_context(db, monkeypatch):
     )
     assert result["answer"] == "answer"
     prompt = captured["prompt"]
-    assert "Currently reading in the browser: An Essay" in prompt
+    assert "Title: An Essay" in prompt
     assert "attention is the scarcest resource" in prompt
-    assert "draw parallels" in prompt
+    assert 'kind="web_page" untrusted="true"' in prompt

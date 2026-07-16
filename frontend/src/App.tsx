@@ -17,6 +17,7 @@ import { DigestAuditView } from './components/DigestAuditView';
 import { AgentsView } from './components/AgentsView';
 import { GraphView } from './components/GraphView';
 import { AskDrawer } from './components/AskDrawer';
+import { MobileNav } from './components/MobileNav';
 import { CommandPalette } from './components/CommandPalette';
 import { IngestView } from './components/IngestView';
 import { OpenQuestionsView } from './components/OpenQuestionsView';
@@ -128,6 +129,20 @@ export function App() {
     localStorage.setItem('mk-theme', theme);
   }, [theme]);
 
+  // The desktop shell starts with both rails open; crossing into a phone-sized
+  // viewport must not preserve those panels and leave the main content buried.
+  useEffect(() => {
+    const syncShellToViewport = () => {
+      if (window.innerWidth <= 900) {
+        setSideOpen(false);
+        setRailOpen(false);
+      }
+    };
+    syncShellToViewport();
+    window.addEventListener('resize', syncShellToViewport);
+    return () => window.removeEventListener('resize', syncShellToViewport);
+  }, []);
+
   useEffect(() => {
     void api.sidebar().then(setSidebar).catch(console.error);
     void api.feed().then((d) => { setFeed(d.feed); setAgents(d.agents); }).catch(console.error);
@@ -173,7 +188,10 @@ export function App() {
 
   const navigate = useCallback((v: View, id?: string) => {
     routeNavigate(v, id);
-    if (window.innerWidth <= 900) setSideOpen(false);
+    if (window.innerWidth <= 900) {
+      setSideOpen(false);
+      setRailOpen(false);
+    }
   }, [routeNavigate]);
 
   const refreshAgents = useCallback(async () => {
@@ -182,7 +200,7 @@ export function App() {
     setAgents(data.agents);
   }, []);
 
-  const openAsk = useCallback((prompt: string, selection: string | null) => {
+  const openAsk = useCallback((prompt = '', selection: string | null = null) => {
     setAskCtx({ prompt, selection, article_id: currentArticle ?? undefined });
     setAskOpen(true);
   }, [currentArticle]);
@@ -220,9 +238,15 @@ export function App() {
         tweetThreadStatus={tweetThreadDetail?.status ?? null}
         theme={theme}
         onTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-        onToggleSide={() => setSideOpen((s) => !s)}
-        onToggleRail={() => setRailOpen((s) => !s)}
-        onAsk={() => openAsk("What's most important in my wiki right now?", null)}
+        onToggleSide={() => {
+          setRailOpen(false);
+          setSideOpen((s) => !s);
+        }}
+        onToggleRail={() => {
+          setSideOpen(false);
+          setRailOpen((s) => !s);
+        }}
+        onAsk={() => openAsk()}
         onSearchClick={() => setPaletteOpen(true)}
         onCapture={() => openQuickCapture()}
       />
@@ -242,7 +266,17 @@ export function App() {
       )}
 
       <main className="main">
-        {view === 'article' && article && <ArticleView article={article} onAsk={openAsk} onNavigate={navigate}/>}
+        {view === 'article' && article && (
+          <ArticleView
+            article={article}
+            onAsk={openAsk}
+            onNavigate={navigate}
+            onContext={() => {
+              setSideOpen(false);
+              setRailOpen(true);
+            }}
+          />
+        )}
         {view === 'article' && !article && <Loading/>}
         {view === 'today' && <TodayView liveKey={tickKey} onNavigate={navigate}/>}
         {view === 'digest' && digest && <DigestView digest={digest} onNavigate={navigate} onAsk={openAsk}/>}
@@ -341,7 +375,14 @@ export function App() {
       </main>
 
       {railOpen && view === 'article' && article && (
-        <RightRail article={article} feed={mergedFeed} agents={agents} onAsk={openAsk} onNavigate={navigate}/>
+        <RightRail
+          article={article}
+          feed={mergedFeed}
+          agents={agents}
+          onAsk={openAsk}
+          onNavigate={navigate}
+          onClose={() => setRailOpen(false)}
+        />
       )}
       {railOpen && view !== 'article' && (
         <SystemRail
@@ -353,7 +394,12 @@ export function App() {
         />
       )}
 
-      <AskDrawer open={askOpen} ctx={askCtx} onClose={() => setAskOpen(false)}/>
+      <AskDrawer
+        open={askOpen}
+        ctx={askCtx}
+        onClose={() => setAskOpen(false)}
+        onNavigate={navigate}
+      />
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
@@ -415,6 +461,18 @@ export function App() {
           {toast.msg}
         </div>
       )}
+      <MobileNav
+        currentView={view}
+        menuOpen={sideOpen}
+        onNavigate={navigate}
+        onSearch={() => setPaletteOpen(true)}
+        onChat={() => openAsk()}
+        onCapture={() => openQuickCapture()}
+        onMenu={() => {
+          setRailOpen(false);
+          setSideOpen((open) => !open);
+        }}
+      />
       <WikiLinkHoverProvider/>
     </div>
   );
