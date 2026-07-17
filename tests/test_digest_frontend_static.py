@@ -15,3 +15,11 @@ def test_digest_thread_titles_are_tooltipped_and_line_clamped() -> None:
     assert "-webkit-line-clamp: 2" in thread_rule
     assert "-webkit-box-orient: vertical" in thread_rule
     assert "overflow: hidden" in thread_rule
+
+
+def test_digest_bodies_are_rendered_as_markdown_not_raw_html() -> None:
+    component = Path("frontend/src/components/DigestView.tsx").read_text(encoding="utf-8")
+
+    assert "ReactMarkdown" in component
+    assert "dangerouslySetInnerHTML" not in component
+    assert "digestBodyMarkdown(thread.body)" in component

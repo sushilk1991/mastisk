@@ -8,7 +8,8 @@ thread with the user's current feedback verdict if any.
 from __future__ import annotations
 
 import calendar as _calendar
-from datetime import date as _date, datetime, timedelta
+from datetime import date as _date
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -307,7 +308,7 @@ def audit(date: str | None = None, window_days: int = 1):
 
 @router.get("/digest/calendar")
 def digest_calendar(year: int, month: int):
-    """Dates within (year, month) where articles were touched — drives the rail calendar."""
+    """Dates within (year, month) where a ranked digest was actually saved."""
     if not 1 <= month <= 12:
         raise HTTPException(status_code=400, detail=f"invalid month: {month}")
     if not 1900 <= year <= 2999:
@@ -316,9 +317,14 @@ def digest_calendar(year: int, month: int):
     last = _date(year, month, _calendar.monthrange(year, month)[1]).isoformat()
     with connect() as conn:
         rows = conn.execute(
-            """SELECT DISTINCT DATE(updated_at) AS d FROM articles
-               WHERE body_md != '' AND DATE(updated_at) BETWEEN ? AND ?
+            """SELECT DISTINCT dc.digest_date AS d
+               FROM digest_candidates dc
+               JOIN articles a ON a.id = dc.article_id
+               WHERE dc.selected = 1
+                 AND dc.digest_date BETWEEN ? AND ?
+                 AND DATE(a.updated_at) = dc.digest_date
+                 AND LENGTH(a.body_md) >= ?
                ORDER BY d ASC""",
-            (first, last),
+            (first, last, digest_ranker.MIN_BODY_CHARS),
         ).fetchall()
     return {"active_dates": [r["d"] for r in rows]}

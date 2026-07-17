@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { Icon } from './icons';
 import { api } from '../api';
 import { useModalA11y } from '../hooks/useModalA11y';
-import type { AskResponse, AskSource, View } from '../types';
+import type { AskConversationSummary, AskResponse, AskSource, View } from '../types';
 
 type ChatMode = 'wiki' | 'research';
 
@@ -28,6 +28,11 @@ export function AskDrawer({ open, ctx, onClose, onNavigate }: Props) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<ChatMode>('wiki');
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<AskConversationSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyErr, setHistoryErr] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -43,17 +48,35 @@ export function AskDrawer({ open, ctx, onClose, onNavigate }: Props) {
     const prompt = ctx?.prompt.trim();
     if (prompt && autoPromptRef.current !== prompt) {
       autoPromptRef.current = prompt;
-      setMsgs([]);
-      void send(prompt, []);
+      setHistoryOpen(false);
+      void send(prompt);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, ctx?.prompt, ctx?.selection]);
 
   useEffect(() => {
+    if (open) void loadHistory();
+  }, [open]);
+
+  useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [msgs, sending]);
 
-  async function send(text?: string, historyOverride?: Msg[]) {
+  async function loadHistory() {
+    setHistoryErr(null);
+    try {
+      const result = await api.askHistory.list();
+      setConversations(result.conversations);
+    } catch (error) {
+      setHistoryErr((error as Error).message);
+    }
+  }
+
+  async function send(
+    text?: string,
+    historyOverride?: Msg[],
+    conversationOverride?: string | null,
+  ) {
     const question = (text ?? input).trim();
     if (!question || sending) return;
     const history = historyOverride ?? msgs;
@@ -66,15 +89,20 @@ export function AskDrawer({ open, ctx, onClose, onNavigate }: Props) {
         selection: ctx?.selection ?? undefined,
         article_id: ctx?.article_id,
         mode,
+        conversation_id: conversationOverride === undefined
+          ? conversationId ?? undefined
+          : conversationOverride ?? undefined,
         messages: history.slice(-10).map((message) => ({
           role: message.role,
           content: message.text,
         })),
       });
+      setConversationId(response.conversation_id);
       setMsgs((current) => [
         ...current,
         { role: 'assistant', text: response.answer, response, question },
       ]);
+      void loadHistory();
     } catch (error) {
       setMsgs((current) => [
         ...current,
@@ -82,6 +110,51 @@ export function AskDrawer({ open, ctx, onClose, onNavigate }: Props) {
       ]);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function openConversation(id: string) {
+    setHistoryBusy(true);
+    setHistoryErr(null);
+    try {
+      const conversation = await api.askHistory.get(id);
+      let lastQuestion = '';
+      const restored = conversation.messages.map((message): Msg => {
+        if (message.role === 'user') {
+          lastQuestion = message.content;
+          return { role: 'user', text: message.content };
+        }
+        return {
+          role: 'assistant',
+          text: message.content,
+          question: lastQuestion,
+          response: message.response ?? undefined,
+        };
+      });
+      autoPromptRef.current = ctx?.prompt.trim() || null;
+      setConversationId(conversation.id);
+      setMode(conversation.mode);
+      setMsgs(restored);
+      setHistoryOpen(false);
+      window.setTimeout(() => inputRef.current?.focus(), 0);
+    } catch (error) {
+      setHistoryErr((error as Error).message);
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function deleteConversation(id: string) {
+    setHistoryBusy(true);
+    setHistoryErr(null);
+    try {
+      await api.askHistory.delete(id);
+      if (conversationId === id) resetChat();
+      await loadHistory();
+    } catch (error) {
+      setHistoryErr((error as Error).message);
+    } finally {
+      setHistoryBusy(false);
     }
   }
 
@@ -104,6 +177,8 @@ export function AskDrawer({ open, ctx, onClose, onNavigate }: Props) {
     setMsgs([]);
     setInput('');
     setMode('wiki');
+    setConversationId(null);
+    setHistoryOpen(false);
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -137,18 +212,72 @@ export function AskDrawer({ open, ctx, onClose, onNavigate }: Props) {
           {ctx?.selection && <span className="ask-context">selection</span>}
         </div>
         <div className="ask-head-actions">
-          {msgs.length > 0 && <button type="button" onClick={resetChat}>New chat</button>}
+          <button
+            type="button"
+            aria-pressed={historyOpen}
+            disabled={sending}
+            onClick={() => setHistoryOpen((value) => !value)}
+          >
+            History{conversations.length > 0 ? ` ${conversations.length}` : ''}
+          </button>
+          {msgs.length > 0 && <button type="button" disabled={sending} onClick={resetChat}>New chat</button>}
           <button type="button" className="tb-btn" onClick={onClose} aria-label="Close chat">
             {Icon.close}
           </button>
         </div>
       </div>
 
+      {historyOpen ? (
+        <div className="ask-history" aria-label="Past chats">
+          <div className="ask-history-intro">
+            <div>
+              <h2>Past chats</h2>
+              <p>Conversations are saved in your local Mastisk database.</p>
+            </div>
+            <button type="button" className="chip" disabled={sending} onClick={resetChat}>Start a new chat</button>
+          </div>
+          {historyErr && <p className="dash-error">{historyErr}</p>}
+          {conversations.length === 0 && !historyErr ? (
+            <div className="ask-history-empty">Your first conversation will appear here.</div>
+          ) : (
+            <div className="ask-history-list">
+              {conversations.map((conversation) => (
+                <div
+                  key={conversation.id}
+                  className={`ask-history-row ${conversation.id === conversationId ? 'active' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className="ask-history-open"
+                    disabled={historyBusy || sending}
+                    onClick={() => void openConversation(conversation.id)}
+                  >
+                    <strong>{conversation.title}</strong>
+                    <span>{historyDate(conversation.updated_at)} · {conversation.mode === 'research' ? 'Wiki + web' : 'Wiki only'}</span>
+                    <p>{conversation.preview}</p>
+                  </button>
+                  <button
+                    type="button"
+                    className="ask-history-delete"
+                    disabled={historyBusy || sending}
+                    aria-label={`Delete chat: ${conversation.title}`}
+                    title="Delete chat"
+                    onClick={() => void deleteConversation(conversation.id)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+      <>
       <div className="ask-body" aria-live="polite">
         {msgs.length === 0 && !sending && (
           <div className="ask-empty">
             <h2>Ask your second brain.</h2>
-            <p>Chat reads your articles, raw notes, drafts, Personal OS, and profile. Sources stay visible.</p>
+            <p>Your wiki is always the starting point. Add live web research when the question needs current evidence.</p>
           </div>
         )}
 
@@ -174,6 +303,7 @@ export function AskDrawer({ open, ctx, onClose, onNavigate }: Props) {
                       {message.response.sources.length > 0
                         ? `${message.response.sources.length} cited · `
                         : 'No inline citations · '}
+                      {message.response.research_status === 'unavailable' ? 'web unavailable · ' : ''}
                       {formatCoverage(message.response.coverage)} · {message.response.provider}
                     </div>
                     {message.response.sources.length > 0 && (
@@ -228,20 +358,21 @@ export function AskDrawer({ open, ctx, onClose, onNavigate }: Props) {
       </div>
 
       <div className="ask-compose">
-        <div className="ask-mode" aria-label="Chat source mode">
-          <button type="button" className={mode === 'wiki' ? 'active' : ''} onClick={() => setMode('wiki')}>
-            Wiki
+        <div className="ask-mode" aria-label="Sources for this message">
+          <button type="button" aria-pressed={mode === 'wiki'} className={mode === 'wiki' ? 'active' : ''} onClick={() => setMode('wiki')}>
+            Wiki only
           </button>
-          <button type="button" className={mode === 'research' ? 'active' : ''} onClick={() => setMode('research')}>
-            Research web
+          <button type="button" aria-pressed={mode === 'research'} className={mode === 'research' ? 'active' : ''} onClick={() => setMode('research')}>
+            Wiki + web
           </button>
+          <span>{mode === 'research' ? 'Adds current web evidence to Mastisk context.' : 'Uses Mastisk without searching the web.'}</span>
         </div>
         <div className="ask-input">
           <textarea
             ref={inputRef}
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder={mode === 'research' ? 'Research and compare with my wiki…' : 'Ask anything in Mastisk…'}
+            placeholder={mode === 'research' ? 'Ask using my wiki and current web evidence…' : 'Ask using my Mastisk wiki…'}
             aria-label="Message Mastisk"
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -261,6 +392,8 @@ export function AskDrawer({ open, ctx, onClose, onNavigate }: Props) {
           </button>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -319,4 +452,10 @@ function formatCoverage(coverage: Record<string, number>): string {
     .filter(([kind]) => kind !== 'overview')
     .map(([kind, count]) => `${count} ${labels[kind] ?? kind}${count === 1 ? '' : 's'}`);
   return parts.length ? parts.join(' · ') : 'No matching sources';
+}
+
+function historyDate(value: string): string {
+  const date = new Date(value.endsWith('Z') ? value : `${value}Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }

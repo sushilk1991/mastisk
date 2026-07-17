@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -661,21 +662,32 @@ def _needs_review_row(conn, row: dict[str, Any]) -> dict[str, Any]:
 def _note_title(summary: str | None, body: str | None, note_id: int) -> str:
     for value in (summary, body):
         if value and value.strip():
-            return value.strip().splitlines()[0][:80]
+            return _display_title(value.strip().splitlines()[0])
     return f"Note {note_id}"
 
 
 def _quote_title(text: str | None) -> str:
     if text and text.strip():
-        return text.strip().splitlines()[0][:80]
+        return _display_title(text.strip().splitlines()[0])
     return "Saved quote"
 
 
 def _excerpt(value: str | None, limit: int = 180) -> str:
     text = " ".join((value or "").split())
+    text = re.sub(r"^>\s*From repo:\s*\S+\s*#\s*", "", text, flags=re.IGNORECASE)
     if len(text) <= limit:
         return text
     return f"{text[: limit - 1].rstrip()}..."
+
+
+def _display_title(value: str, limit: int = 80) -> str:
+    if len(value) <= limit:
+        return value
+    clipped = value[: limit - 1].rstrip()
+    boundary = clipped.rfind(" ")
+    if boundary >= limit // 2:
+        clipped = clipped[:boundary].rstrip()
+    return f"{clipped.rstrip(' ,;:-.')}…"
 
 
 def _coerce_datetime(value: datetime | None) -> datetime:

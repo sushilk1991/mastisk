@@ -21,7 +21,6 @@ const JUMPS: { id: View; l: string; d: string }[] = [
   { id: 'content',        l: 'Content',        d: 'Draft pipeline' },
   { id: 'library',        l: 'Library',        d: 'Books and quotes' },
   { id: 'inbox_triage',   l: 'Inbox triage',   d: 'Needs classification' },
-  { id: 'digest',         l: 'Daily Digest',   d: 'Agent reading' },
   { id: 'queue',          l: 'Reading queue',  d: 'Jobs & ingest' },
   { id: 'open_questions', l: 'Open questions', d: 'Unresolved threads' },
   { id: 'suggestions',    l: 'Suggestions',    d: 'Topics awaiting a page' },
@@ -45,7 +44,10 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
         api.integrations.health(),
       ]);
       setIntegrations(health);
-      setCalendar(health.calendar || status);
+      setCalendar({
+        ...health.calendar,
+        credentials_configured: status.credentials_configured,
+      });
     } catch (e) {
       setCalendarErr(e instanceof Error ? e.message : 'calendar status failed');
     }
@@ -66,6 +68,25 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
     }
   }
 
+  async function connectCalendar() {
+    const popup = window.open('', 'mastisk-calendar-oauth', 'popup,width=560,height=720');
+    if (!popup) {
+      setCalendarErr('Allow pop-ups for Mastisk, then try connecting again.');
+      return;
+    }
+    setCalendarBusy(true);
+    setCalendarErr(null);
+    try {
+      const result = await api.calendar.startConnection();
+      popup.location.href = result.authorization_url;
+    } catch (e) {
+      popup.close();
+      setCalendarErr(e instanceof Error ? e.message : 'calendar connection failed');
+    } finally {
+      setCalendarBusy(false);
+    }
+  }
+
   async function disconnectCalendar() {
     setCalendarBusy(true);
     setCalendarErr(null);
@@ -80,20 +101,30 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
     }
   }
 
-  useEffect(() => { void loadCalendarStatus(); }, []);
+  useEffect(() => {
+    void loadCalendarStatus();
+    const connected = (event: MessageEvent) => {
+      if (event.data?.type !== 'mastisk-calendar-connected') return;
+      void loadCalendarStatus();
+      window.dispatchEvent(new Event('mastisk-calendar-sync'));
+    };
+    window.addEventListener('message', connected);
+    return () => window.removeEventListener('message', connected);
+  }, []);
 
   return (
     <aside className="rail">
       <div className="rail-section">
-        <div className="rail-h">Calendar</div>
+        <div className="rail-h">Digest archive</div>
         <CalendarPicker
           selectedDate={selectedDate}
           onSelect={(iso) => onNavigate('digest', iso)}
         />
+        <p className="rail-calendar-note">Choose a marked day to revisit what your agents surfaced.</p>
       </div>
 
       <div className="rail-section">
-        <div className="rail-h">Calendar health</div>
+        <div className="rail-h">Calendar connection</div>
         <div className="rel-row" style={{flexDirection:'column',alignItems:'flex-start',gap:4}}>
           <div style={{color:'var(--fg)',fontSize:13}}>
             {calendar ? calendar.status : 'loading'}
@@ -104,7 +135,9 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
             </div>
           )}
           {calendar?.status === 'unconfigured' && (
-            <code style={{fontSize:10,color:'var(--fg-faint)'}}>mastisk calendar-connect</code>
+            <div style={{fontSize:11,color:'var(--fg-faint)',lineHeight:1.5}}>
+              Connect read-only Google Calendar to see events in Today.
+            </div>
           )}
           {(calendar?.status === 'disconnected' || calendarErr || calendar?.last_error) && (
             <div style={{fontSize:11,color:'#c53030'}}>
@@ -117,9 +150,19 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
             </div>
           )}
           <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-            <button className="chip" disabled={calendarBusy || calendar?.status === 'unconfigured'} onClick={() => void syncCalendar()}>
-              {calendarBusy ? 'syncing' : 'sync'}
-            </button>
+            {calendar?.status === 'unconfigured' ? (
+              calendar.credentials_configured ? (
+                <button className="chip" disabled={calendarBusy} onClick={() => void connectCalendar()}>
+                  {calendarBusy ? 'opening…' : 'connect'}
+                </button>
+              ) : (
+                <button className="chip" onClick={() => onNavigate('today')}>set up in Today</button>
+              )
+            ) : (
+              <button className="chip" disabled={calendarBusy} onClick={() => void syncCalendar()}>
+                {calendarBusy ? 'syncing' : 'sync'}
+              </button>
+            )}
             {calendar && calendar.status !== 'unconfigured' && (
               <button className="chip muted" disabled={calendarBusy} onClick={() => void disconnectCalendar()}>
                 disconnect

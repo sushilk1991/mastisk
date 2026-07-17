@@ -361,6 +361,29 @@ export interface AskResponse {
   retrieved_sources?: AskSource[];
   cites: string[];
   hits: { id: string; title: string; snippet?: string; kind?: string; link_target?: string | null }[];
+  conversation_id: string;
+  research_status?: 'available' | 'unavailable' | 'not_requested';
+}
+
+export interface AskConversationSummary {
+  id: string;
+  title: string;
+  mode: 'wiki' | 'research';
+  context_article_id: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  preview: string;
+}
+
+export interface AskConversation extends AskConversationSummary {
+  messages: {
+    id: number;
+    role: 'user' | 'assistant';
+    content: string;
+    response: AskResponse | null;
+    created_at: string;
+  }[];
 }
 
 export interface AskSource {
@@ -843,6 +866,7 @@ export interface CalendarStatus {
   error: string | null;
   last_error: string | null;
   last_error_at: string | null;
+  credentials_configured: boolean;
 }
 
 export interface CalendarAttendee {

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { api } from '../api';
 import type { Digest, DigestThread, View } from '../types';
 
@@ -6,6 +7,49 @@ interface Props {
   digest: Digest;
   onNavigate: (view: View, id?: string) => void;
   onAsk: (prompt: string, selection: string | null) => void;
+}
+
+export function TodayDigestSection({ digest, onNavigate, onAsk }: Props) {
+  const empty = digest.counters.every((counter) => counter.value === 0) && digest.threads.length === 0;
+  return (
+    <section className="dash-section today-digest" aria-labelledby="today-digest-title">
+      <div className="dash-section-head today-digest-head">
+        <div>
+          <span className="today-digest-kicker">Your agents’ reading, in one place</span>
+          <h2 id="today-digest-title">Daily digest</h2>
+        </div>
+        <button className="chip" type="button" onClick={() => onNavigate('digest_audit', digest.iso_date)}>
+          Why these?
+        </button>
+      </div>
+      <p className="today-digest-summary">{digest.summary}</p>
+      {empty ? (
+        <div className="today-digest-empty">
+          No new reading made today’s cut. The rest of Today still works normally.
+        </div>
+      ) : (
+        <>
+          <div className="today-digest-counters" aria-label="Daily digest summary">
+            {digest.counters.filter((counter) => counter.value > 0).map((counter) => (
+              <span key={counter.label}><b>{counter.value}</b> {counter.label}</span>
+            ))}
+          </div>
+          <div className="today-digest-threads">
+            {digest.threads.map((thread, index) => (
+              <ThreadCard
+                key={thread.article_id ?? index}
+                index={index}
+                thread={thread}
+                digestDate={digest.iso_date}
+                onNavigate={onNavigate}
+                onAsk={onAsk}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
 }
 
 export function DigestView({ digest, onNavigate, onAsk }: Props) {
@@ -150,7 +194,9 @@ function ThreadCard({
       >
         {thread.title}
       </h2>
-      <p className="thread-body" dangerouslySetInnerHTML={{ __html: thread.body }}/>
+      <div className="thread-body">
+        <ReactMarkdown>{digestBodyMarkdown(thread.body)}</ReactMarkdown>
+      </div>
       <div className="thread-links">
         {thread.links.map((l) => (
           <span key={l} className="chip" onClick={() => onAsk(`Tell me about ${l}`, l)}>{l}</span>
@@ -158,6 +204,12 @@ function ThreadCard({
       </div>
     </div>
   );
+}
+
+function digestBodyMarkdown(body: string): string {
+  return body
+    .replace(/<\/?em>/gi, '*')
+    .replace(/<[^>]+>/g, '');
 }
 
 function DigestNav({ digest, onNavigate }: { digest: Digest; onNavigate: Props['onNavigate'] }) {

@@ -207,6 +207,15 @@ def persist_candidates(
         candidates[idx].rank = rank
         rank += 1
 
+    # Recomputing a date must also retire prior selections whose articles are
+    # no longer eligible for that day. Otherwise archive markers can outlive
+    # the digest they claim is available.
+    conn.execute(
+        """UPDATE digest_candidates
+           SET selected = 0, rank = NULL, computed_at = CURRENT_TIMESTAMP
+           WHERE digest_date = ?""",
+        (digest_date,),
+    )
     conn.executemany(
         """INSERT INTO digest_candidates
                (digest_date, article_id, quality_score, interest_score, final_score, selected, rank)

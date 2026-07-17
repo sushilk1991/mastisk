@@ -889,6 +889,32 @@ CREATE TABLE IF NOT EXISTS digest_candidates (
 CREATE INDEX IF NOT EXISTS idx_digest_candidates_date ON digest_candidates(digest_date DESC);
 CREATE INDEX IF NOT EXISTS idx_digest_candidates_article ON digest_candidates(article_id);
 
+-- Durable Mastisk Chat transcripts. The browser sends recent turns for
+-- retrieval, while these tables make prior conversations available across
+-- reloads and devices connected to the same local daemon.
+CREATE TABLE IF NOT EXISTS ask_conversations (
+  id                 TEXT PRIMARY KEY,
+  title              TEXT NOT NULL,
+  mode               TEXT NOT NULL DEFAULT 'wiki' CHECK(mode IN ('wiki', 'research')),
+  context_article_id TEXT,
+  created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ask_messages (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT NOT NULL REFERENCES ask_conversations(id) ON DELETE CASCADE,
+  role            TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+  content         TEXT NOT NULL,
+  response_json   TEXT,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ask_conversations_updated
+  ON ask_conversations(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ask_messages_conversation
+  ON ask_messages(conversation_id, id);
+
 -- ─────────────────────────────── GitHub ───────────────────────────────
 
 CREATE TABLE IF NOT EXISTS repos (

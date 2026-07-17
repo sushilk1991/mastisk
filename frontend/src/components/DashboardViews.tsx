@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 import { api, FocusFullError } from '../api';
 import { MarkdownBlock, VaultMarkdownEditor, type VaultEditorTarget } from './MarkdownEditor';
+import { TodayDigestSection } from './DigestView';
 import type {
   CalendarToday, CaptureTriageItem, CaptureTriageTarget, Domain, JournalDay, JournalDaySummary,
-  ChecklistTemplate, ContentDetail, ContentKind, ContentList, ContentStatus, ContentSummary, InventoryDetail, InventoryStatus, InventorySummary, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
+  ChecklistTemplate, ContentDetail, ContentKind, ContentList, ContentStatus, ContentSummary, Digest, InventoryDetail, InventoryStatus, InventorySummary, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
   RoutineGroups, RoutineProgress, RoutineRow, SlippingItem, TaskRow, TimeOfDay, View,
 } from '../types';
 
@@ -142,7 +143,12 @@ function MetricStrip({ items }: { items: MetricItem[] }) {
   );
 }
 
-export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
+export function TodayView({
+  liveKey, onNavigate, digest, onAsk,
+}: LiveProps & NavProps & {
+  digest: Digest | null;
+  onAsk: (prompt: string, selection: string | null) => void;
+}) {
   const today = localIsoToday();
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [focus, setFocus] = useState<TaskRow[]>([]);
@@ -156,6 +162,12 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
   const [calendarErr, setCalendarErr] = useState<string | null>(null);
   const [calendarBusy, setCalendarBusy] = useState(false);
   const [entry, setEntry] = useState('');
+  const [showTaskCreate, setShowTaskCreate] = useState(false);
+  const [taskText, setTaskText] = useState('');
+  const [taskDue, setTaskDue] = useState(today);
+  const [showRoutineCreate, setShowRoutineCreate] = useState(false);
+  const [routineName, setRoutineName] = useState('');
+  const [routineTime, setRoutineTime] = useState<TimeOfDay>('anytime');
   const [err, setErr] = useState<string | null>(null);
 
   async function loadCalendarToday() {
@@ -235,6 +247,28 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
     }
   }
 
+  async function createTodayTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = taskText.trim();
+    if (!text) return;
+    await api.tasks.create({ text, due: taskDue || null });
+    setTaskText('');
+    setTaskDue(today);
+    setShowTaskCreate(false);
+    await load();
+  }
+
+  async function createTodayRoutine(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = routineName.trim();
+    if (!name) return;
+    await api.routinesApi.create({ name, time_of_day: routineTime, streak_type: 'ongoing' });
+    setRoutineName('');
+    setRoutineTime('anytime');
+    setShowRoutineCreate(false);
+    await load();
+  }
+
   const dueTasks = tasks
     .filter((task) => task.status === 'open' && task.due && datePart(task.due) <= today)
     .sort(compareTasksByDue);
@@ -250,13 +284,17 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
       <DashboardHeader
         title="Today"
         subtitle={formatLongDate(today)}
-        primary={{ label: 'Open today', onClick: () => onNavigate('journal') }}
+        primary={{ label: 'Open journal', onClick: () => onNavigate('journal') }}
       />
       <MetricStrip items={[
         { label: 'focus', value: `${focus.length}/3`, detail: 'top tasks', tone: focus.length === 3 ? 'good' : undefined },
         { label: 'due now', value: dueTasks.length, detail: 'tasks', tone: dueTasks.length > 0 ? 'warn' : 'good' },
         { label: 'routines', value: `${completedRoutines}/${routineRows.length}`, detail: 'complete', tone: routineRows.length > 0 && completedRoutines === routineRows.length ? 'good' : undefined },
-        { label: 'calendar', value: calendar ? eventsCountLabel(calendar.events.length) : '-', detail: calendar?.status.status ?? 'loading' },
+        {
+          label: 'calendar',
+          value: calendar?.status.status === 'connected' ? eventsCountLabel(calendar.events.length) : '—',
+          detail: calendar?.status.status ?? 'loading',
+        },
       ]}/>
 
       {err && <p className="dash-error">{err}</p>}
@@ -266,25 +304,45 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
       <>
 
       <div className="dash-grid dash-grid-2">
-        <FocusPanel focus={focus} today={today} onChanged={load}/>
+        <FocusPanel focus={focus} tasks={tasks} today={today} onChanged={load}/>
         <CalendarPanel
           calendar={calendar}
           calendarErr={calendarErr}
           calendarBusy={calendarBusy}
           onSync={syncCalendar}
+          onReload={loadCalendarToday}
         />
       </div>
 
-      {resurface && <ResurfaceCard item={resurface}/>}
+      {resurface && <ResurfaceCard item={resurface} onNavigate={onNavigate}/>}
 
       <section className="dash-section">
         <div className="dash-section-head">
           <h2>Due now</h2>
-          <button className="chip" onClick={() => onNavigate('tasks')}>all tasks</button>
+          <div className="dash-head-actions">
+            <button className="chip" onClick={() => setShowTaskCreate((value) => !value)}>
+              {showTaskCreate ? 'Close' : 'Add task'}
+            </button>
+            <button className="chip muted" onClick={() => onNavigate('tasks')}>All tasks</button>
+          </div>
         </div>
+        {showTaskCreate && (
+          <form className="dash-quick-create" onSubmit={(event) => runMutation(() => createTodayTask(event), setErr)}>
+            <label className="dash-field">
+              <span>What needs to happen?</span>
+              <input autoFocus value={taskText} onChange={(event) => setTaskText(event.target.value)} placeholder="e.g. Send the proposal"/>
+            </label>
+            <label className="dash-field compact">
+              <span>Due</span>
+              <input type="date" value={taskDue} onChange={(event) => setTaskDue(event.target.value)}/>
+            </label>
+            <button type="submit" disabled={!taskText.trim()}>Create task</button>
+            <p>A task is a one-off action. It will appear here when its due date arrives.</p>
+          </form>
+        )}
         {dueTasks.length === 0 ? (
-          <EmptyState action={{ label: 'Create task', onClick: () => onNavigate('tasks') }}>
-            No due or overdue tasks. Create one when something needs a date.
+          <EmptyState action={{ label: 'Add a dated task', onClick: () => setShowTaskCreate(true) }}>
+            Nothing is due. Add a one-off action here when it needs a date.
           </EmptyState>
         ) : (
           <div className="dash-list">
@@ -307,11 +365,32 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
       <section className="dash-section">
         <div className="dash-section-head">
           <h2>Routines</h2>
-          <button className="chip" onClick={() => onNavigate('routines')}>all routines</button>
+          <div className="dash-head-actions">
+            <button className="chip" onClick={() => setShowRoutineCreate((value) => !value)}>
+              {showRoutineCreate ? 'Close' : 'Add routine'}
+            </button>
+            <button className="chip muted" onClick={() => onNavigate('routines')}>All routines</button>
+          </div>
         </div>
+        {showRoutineCreate && (
+          <form className="dash-quick-create" onSubmit={(event) => runMutation(() => createTodayRoutine(event), setErr)}>
+            <label className="dash-field">
+              <span>What do you want to repeat?</span>
+              <input autoFocus value={routineName} onChange={(event) => setRoutineName(event.target.value)} placeholder="e.g. Walk after lunch"/>
+            </label>
+            <label className="dash-field compact">
+              <span>When</span>
+              <select value={routineTime} onChange={(event) => setRoutineTime(event.target.value as TimeOfDay)}>
+                {TIME_GROUPS.map((group) => <option key={group} value={group}>{labelTime(group)}</option>)}
+              </select>
+            </label>
+            <button type="submit" disabled={!routineName.trim()}>Create routine</button>
+            <p>A routine returns every day. Check it off here to build its streak.</p>
+          </form>
+        )}
         {!routines || allRoutines(routines).length === 0 ? (
-          <EmptyState action={{ label: 'Create routine', onClick: () => onNavigate('routines') }}>
-            No routines yet. Create your first repeatable loop.
+          <EmptyState action={{ label: 'Add your first routine', onClick: () => setShowRoutineCreate(true) }}>
+            Routines are repeatable actions. Checking one off records today and grows its streak.
           </EmptyState>
         ) : (
           TIME_GROUPS.map((group) => routines[group]?.length ? (
@@ -358,6 +437,7 @@ export function TodayView({ liveKey, onNavigate }: LiveProps & NavProps) {
           </div>
         )}
       </section>
+      {digest && <TodayDigestSection digest={digest} onNavigate={onNavigate} onAsk={onAsk}/>}
       </>
       )}
     </div>
@@ -443,12 +523,22 @@ export function TasksView({ liveKey }: LiveProps) {
         { label: 'today', value: grouped.today.length, detail: 'dated' },
       ]}/>
       <CreatePanel open={showCreate} title="New task">
-        <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createTask(event), setErr)}>
-          <input value={newText} onChange={(event) => setNewText(event.target.value)} placeholder="Task text"/>
-          <input type="date" value={newDue} onChange={(event) => setNewDue(event.target.value)} aria-label="Due date"/>
-          <select value={newPriority ?? ''} onChange={(event) => setNewPriority((event.target.value || null) as Priority)} aria-label="Priority">
-            {PRIORITIES.map((priority) => <option key={priority.value} value={priority.value}>{priority.label}</option>)}
-          </select>
+        <p className="create-panel-copy">A task is a one-off action. It goes into today’s journal by default; dates and priority are optional.</p>
+        <form className="dash-form-grid" onSubmit={(event) => runMutation(() => createTask(event), setErr)}>
+          <label className="dash-field grow">
+            <span>Action</span>
+            <input autoFocus value={newText} onChange={(event) => setNewText(event.target.value)} placeholder="e.g. Send the proposal"/>
+          </label>
+          <label className="dash-field">
+            <span>Due date <em>optional</em></span>
+            <input type="date" value={newDue} onChange={(event) => setNewDue(event.target.value)}/>
+          </label>
+          <label className="dash-field">
+            <span>Priority <em>optional</em></span>
+            <select value={newPriority ?? ''} onChange={(event) => setNewPriority((event.target.value || null) as Priority)}>
+              {PRIORITIES.map((priority) => <option key={priority.value} value={priority.value}>{priority.label}</option>)}
+            </select>
+          </label>
           <button type="submit">Create task</button>
         </form>
       </CreatePanel>
@@ -824,23 +914,36 @@ export function RoutinesView({ liveKey }: LiveProps) {
       ]}/>
       {err && <p className="dash-error">{err}</p>}
       <CreatePanel open={showCreate} title="New routine">
-        <form className="dash-inline-form project-create" onSubmit={(event) => runMutation(() => createRoutine(event), setErr)}>
-          <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Routine name"/>
-          <select value={newTime} onChange={(event) => setNewTime(event.target.value as TimeOfDay)}>
-            {TIME_GROUPS.map((group) => <option key={group} value={group}>{labelTime(group)}</option>)}
-          </select>
-          <select value={newStreak} onChange={(event) => setNewStreak(event.target.value as 'ongoing' | 'fixed')}>
-            <option value="ongoing">ongoing streak</option>
-            <option value="fixed">fixed challenge</option>
-          </select>
+        <p className="create-panel-copy">A routine is repeatable. It returns each day in its time group, and checking it off records a streak.</p>
+        <form className="dash-form-grid" onSubmit={(event) => runMutation(() => createRoutine(event), setErr)}>
+          <label className="dash-field grow">
+            <span>Routine</span>
+            <input autoFocus value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="e.g. Walk after lunch"/>
+          </label>
+          <label className="dash-field">
+            <span>Time of day</span>
+            <select value={newTime} onChange={(event) => setNewTime(event.target.value as TimeOfDay)}>
+              {TIME_GROUPS.map((group) => <option key={group} value={group}>{labelTime(group)}</option>)}
+            </select>
+          </label>
+          <label className="dash-field">
+            <span>Tracking</span>
+            <select value={newStreak} onChange={(event) => setNewStreak(event.target.value as 'ongoing' | 'fixed')}>
+              <option value="ongoing">Ongoing streak</option>
+              <option value="fixed">Fixed-day challenge</option>
+            </select>
+          </label>
           {newStreak === 'fixed' && (
-            <input
-              type="number"
-              min="1"
-              value={newTargetDays}
-              onChange={(event) => setNewTargetDays(event.target.value)}
-              placeholder="Target days"
-            />
+            <label className="dash-field">
+              <span>Target days</span>
+              <input
+                type="number"
+                min="1"
+                value={newTargetDays}
+                onChange={(event) => setNewTargetDays(event.target.value)}
+                placeholder="30"
+              />
+            </label>
           )}
           <button type="submit">Create routine</button>
         </form>
@@ -2043,14 +2146,65 @@ export function InboxTriageView({ liveKey }: LiveProps) {
   );
 }
 
-function FocusPanel({ focus, today, onChanged }: { focus: TaskRow[]; today: string; onChanged: ChangeHandler }) {
+function FocusPanel({
+  focus, tasks, today, onChanged,
+}: {
+  focus: TaskRow[];
+  tasks: TaskRow[];
+  today: string;
+  onChanged: ChangeHandler;
+}) {
   const byPosition = new Map(focus.map((task, idx) => [task.position ?? idx + 1, task]));
+  const focused = new Set(focus.map((task) => task.uid));
+  const candidates = tasks.filter((task) => task.status === 'open' && !focused.has(task.uid)).slice(0, 6);
+  const [editingPosition, setEditingPosition] = useState<number | null>(null);
+  const [newText, setNewText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function chooseTask(taskUid: string) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.focus.add(today, taskUid);
+      setEditingPosition(null);
+      await onChanged();
+    } catch (error) {
+      setErr(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createFocusTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = newText.trim();
+    if (!text) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const task = await api.tasks.create({ text });
+      await api.focus.add(today, task.uid);
+      setNewText('');
+      setEditingPosition(null);
+      await onChanged();
+    } catch (error) {
+      setErr(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="dash-card focus-panel">
       <div className="dash-section-head">
-        <h2>Top-3 focus</h2>
+        <div>
+          <h2>Top 3 focus</h2>
+          <p className="focus-explainer">The three outcomes that deserve your attention today.</p>
+        </div>
         <span className="dash-muted">{focus.length}/3</span>
       </div>
+      {err && <p className="dash-error">{err}</p>}
       <div className="focus-slots">
         {[1, 2, 3].map((position) => {
           const task = byPosition.get(position);
@@ -2060,7 +2214,41 @@ function FocusPanel({ focus, today, onChanged }: { focus: TaskRow[]; today: stri
               {task ? (
                 <FocusTaskRow task={task} today={today} onChanged={onChanged}/>
               ) : (
-                <p className="dash-empty">No focus task.</p>
+                <div className="focus-empty-slot">
+                  <button
+                    type="button"
+                    className="focus-add"
+                    aria-expanded={editingPosition === position}
+                    onClick={() => setEditingPosition(editingPosition === position ? null : position)}
+                  >
+                    <span>＋</span> Choose or create a task
+                  </button>
+                  {editingPosition === position && (
+                    <div className="focus-chooser">
+                      {candidates.length > 0 && (
+                        <div className="focus-candidates" aria-label="Open tasks">
+                          {candidates.map((candidate) => (
+                            <button key={candidate.uid} type="button" disabled={busy} onClick={() => void chooseTask(candidate.uid)}>
+                              {candidate.text}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <form onSubmit={createFocusTask}>
+                        <label>
+                          <span>{candidates.length > 0 ? 'Or create a new task' : 'Create a task for this focus slot'}</span>
+                          <input
+                            autoFocus
+                            value={newText}
+                            onChange={(event) => setNewText(event.target.value)}
+                            placeholder="What matters today?"
+                          />
+                        </label>
+                        <button type="submit" disabled={busy || !newText.trim()}>Add to focus</button>
+                      </form>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           );
@@ -2142,15 +2330,29 @@ function SlippingRail({ items, onChanged }: { items: SlippingItem[]; onChanged: 
   );
 }
 
-function ResurfaceCard({ item }: { item: ResurfaceItem }) {
+function ResurfaceCard({ item, onNavigate }: { item: ResurfaceItem; onNavigate: NavProps['onNavigate'] }) {
+  const fromRepo = /^>\s*From repo:/i.test(item.excerpt.trim());
+  const excerpt = fromRepo
+    ? item.excerpt.replace(/^>\s*From repo:\s*\S+\s*#\s*/i, '')
+    : item.excerpt;
+  const noteId = item.link.match(/^\/notes\/(\d+)$/)?.[1];
   return (
     <section className="dash-card resurface-card">
       <div className="dash-section-head">
-        <h2>Resurfacing</h2>
-        <span className="dash-muted">{item.kind}</span>
+        <h2>{fromRepo ? 'Agent idea to revisit' : 'Thought to revisit'}</h2>
+        <span className="dash-muted">{fromRepo ? 'from a tracked repo' : item.kind === 'note' ? 'from your notes' : item.kind}</span>
       </div>
-      <a href={item.link}>{item.title}</a>
-      {item.excerpt && <p>{item.excerpt}</p>}
+      <a
+        href={item.link}
+        onClick={(event) => {
+          if (!noteId) return;
+          event.preventDefault();
+          onNavigate('note', noteId);
+        }}
+      >
+        {item.title}
+      </a>
+      {excerpt && <p>{excerpt}</p>}
     </section>
   );
 }
@@ -2160,26 +2362,124 @@ function CalendarPanel({
   calendarErr,
   calendarBusy,
   onSync,
+  onReload,
 }: {
   calendar: CalendarToday | null;
   calendarErr: string | null;
   calendarBusy: boolean;
   onSync: () => Promise<void>;
+  onReload: () => Promise<void>;
 }) {
   const status = calendar?.status.status ?? 'loading';
   const events = calendar?.events ?? [];
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [waitingForGoogle, setWaitingForGoogle] = useState(false);
+  const [setupErr, setSetupErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const connected = (event: MessageEvent) => {
+      if (event.data?.type !== 'mastisk-calendar-connected') return;
+      setWaitingForGoogle(false);
+      setSetupOpen(false);
+      void onReload();
+      window.dispatchEvent(new Event('mastisk-calendar-sync'));
+    };
+    window.addEventListener('message', connected);
+    return () => window.removeEventListener('message', connected);
+  }, [onReload]);
+
+  async function beginConnection(existingPopup?: Window | null) {
+    const popup = existingPopup ?? window.open('', 'mastisk-calendar-oauth', 'popup,width=560,height=720');
+    if (!popup) {
+      setSetupErr('Your browser blocked the Google sign-in window. Allow pop-ups for Mastisk and try again.');
+      return;
+    }
+    setConnectBusy(true);
+    setSetupErr(null);
+    try {
+      const result = await api.calendar.startConnection();
+      popup.location.href = result.authorization_url;
+      setWaitingForGoogle(true);
+      window.setTimeout(() => setWaitingForGoogle(false), 120_000);
+    } catch (error) {
+      popup.close();
+      setSetupErr(errorMessage(error));
+    } finally {
+      setConnectBusy(false);
+    }
+  }
+
+  async function saveAndConnect(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!clientId.trim() || !clientSecret.trim()) return;
+    const popup = window.open('', 'mastisk-calendar-oauth', 'popup,width=560,height=720');
+    if (!popup) {
+      setSetupErr('Your browser blocked the Google sign-in window. Allow pop-ups for Mastisk and try again.');
+      return;
+    }
+    setConnectBusy(true);
+    setSetupErr(null);
+    try {
+      await api.calendar.saveConfig(clientId.trim(), clientSecret.trim());
+      setClientSecret('');
+      await beginConnection(popup);
+    } catch (error) {
+      popup.close();
+      setSetupErr(errorMessage(error));
+      setConnectBusy(false);
+    }
+  }
+
+  const statusLabel = status === 'unconfigured'
+    ? 'not connected'
+    : status === 'not_synced'
+      ? 'ready to sync'
+      : status;
   return (
     <section className="dash-card calendar-panel">
       <div className="dash-section-head">
         <h2>Calendar</h2>
-        <span className={`dash-muted ${status === 'disconnected' ? 'warn' : ''}`}>{status}</span>
+        <span className={`dash-muted ${status === 'disconnected' ? 'warn' : ''}`}>{statusLabel}</span>
       </div>
       {calendarErr ? (
         <p className="dash-error">{calendarErr}</p>
       ) : !calendar ? (
         <EmptyLine>Loading calendar.</EmptyLine>
       ) : status === 'unconfigured' ? (
-        <EmptyLine>Connect Google Calendar with <code>mastisk calendar-connect</code>.</EmptyLine>
+        <div className="calendar-connect">
+          <p>See today’s events and meeting prep here. Mastisk requests read-only access.</p>
+          {calendar.status.credentials_configured ? (
+            <button className="chip" type="button" disabled={connectBusy || waitingForGoogle} onClick={() => void beginConnection()}>
+              {waitingForGoogle ? 'Finish in Google…' : connectBusy ? 'Opening Google…' : 'Connect Google Calendar'}
+            </button>
+          ) : (
+            <>
+              <button className="chip" type="button" aria-expanded={setupOpen} onClick={() => setSetupOpen((value) => !value)}>
+                {setupOpen ? 'Close setup' : 'Set up Calendar'}
+              </button>
+              {setupOpen && (
+                <form className="calendar-setup" onSubmit={saveAndConnect}>
+                  <p>Create a <strong>Desktop app</strong> OAuth client in Google Cloud, then paste its credentials once.</p>
+                  <label>
+                    <span>Google client ID</span>
+                    <input value={clientId} onChange={(event) => setClientId(event.target.value)} autoComplete="off"/>
+                  </label>
+                  <label>
+                    <span>Google client secret</span>
+                    <input type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} autoComplete="off"/>
+                  </label>
+                  <button type="submit" disabled={connectBusy || !clientId.trim() || !clientSecret.trim()}>
+                    {connectBusy ? 'Saving…' : 'Save and connect'}
+                  </button>
+                </form>
+              )}
+            </>
+          )}
+          {setupErr && <p className="dash-error">{setupErr}</p>}
+        </div>
       ) : status === 'not_synced' ? (
         <div className="dash-list compact">
           <EmptyLine>Calendar not synced yet.</EmptyLine>
@@ -2188,9 +2488,18 @@ function CalendarPanel({
           </button>
         </div>
       ) : status === 'disconnected' ? (
-        <p className="dash-error">{calendar.status.error || 'Calendar OAuth expired.'}</p>
+        <div className="calendar-connect">
+          <p className="dash-error">{calendar.status.error || 'Google access expired.'}</p>
+          <button className="chip" type="button" disabled={connectBusy} onClick={() => void beginConnection()}>
+            Reconnect Google Calendar
+          </button>
+          {setupErr && <p className="dash-error">{setupErr}</p>}
+        </div>
       ) : events.length === 0 ? (
-        <EmptyLine>No events today.</EmptyLine>
+        <div className="calendar-clear-day">
+          <p>No events today.</p>
+          <button className="chip muted" disabled={calendarBusy} onClick={() => void onSync()}>Sync calendar</button>
+        </div>
       ) : (
         <div className="dash-list compact">
           {events.map((event) => (

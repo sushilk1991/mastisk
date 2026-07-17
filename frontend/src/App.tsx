@@ -172,7 +172,7 @@ export function App() {
   }, [currentDate]);
 
   // Load the article whenever the route points at one. On 404, bounce to the
-  // digest so a dead deep-link doesn't leave the user staring at "loading…".
+  // Today so a dead deep-link doesn't leave the user staring at "loading…".
   useEffect(() => {
     if (view !== 'article' || !currentArticle) {
       setArticle(null);
@@ -182,7 +182,7 @@ export function App() {
       .then(setArticle)
       .catch(() => {
         setArticle(null);
-        replace('digest');
+        replace('today');
       });
   }, [view, currentArticle, replace]);
 
@@ -278,7 +278,14 @@ export function App() {
           />
         )}
         {view === 'article' && !article && <Loading/>}
-        {view === 'today' && <TodayView liveKey={tickKey} onNavigate={navigate}/>}
+        {view === 'today' && (
+          <TodayView
+            liveKey={tickKey}
+            digest={digest}
+            onNavigate={navigate}
+            onAsk={openAsk}
+          />
+        )}
         {view === 'digest' && digest && <DigestView digest={digest} onNavigate={navigate} onAsk={openAsk}/>}
         {view === 'digest' && !digest && <Loading/>}
         {view === 'digest_audit' && <DigestAuditView date={currentDate ?? undefined} onNavigate={navigate}/>}

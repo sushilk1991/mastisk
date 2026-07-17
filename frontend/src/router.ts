@@ -180,7 +180,7 @@ export function parseRoute(pathname: string): Route {
   }
   const view = VIEW_PATHS[pathname];
   if (view) return emptyRoute(view);
-  return emptyRoute('digest');
+  return emptyRoute('today');
 }
 
 export function routeToPath(view: View, arg?: string | null): string {

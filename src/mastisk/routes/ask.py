@@ -1,6 +1,7 @@
 """Grounded chat over the whole Mastisk corpus, with optional live web research."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 import sqlite3
@@ -8,8 +9,9 @@ from collections import Counter
 from datetime import date
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from mastisk.db import queries as q
@@ -60,6 +62,12 @@ class AskRequest(BaseModel):
     article_id: str | None = None
     messages: list[AskMessage] = Field(default_factory=list, max_length=12)
     mode: Literal["wiki", "research"] = "wiki"
+    conversation_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
     # Browser-extension context: the page the user is currently reading.
     page_url: str | None = None
     page_title: str | None = None
@@ -84,14 +92,20 @@ async def ask(req: AskRequest) -> dict:
                 value={"q": req.question, "selection": req.selection, "mode": req.mode},
             )
 
+    web_available = False
     if req.mode == "research":
+        web_sources = await _search_web(req.question)
+        web_available = bool(web_sources)
         sources = _prioritize_research_sources(
             sources,
-            await _search_web(req.question),
+            web_sources,
         )
 
     included, rendered_context = _render_sources(sources)
-    prompt = _build_prompt(req, rendered_context)
+    web_available = web_available and any(
+        source["kind"] in {"web", "web_page"} for source in included
+    )
+    prompt = _build_prompt(req, rendered_context, web_available=web_available)
     try:
         answer, provider = await _generate_answer(prompt)
     except Exception as exc:
@@ -109,10 +123,16 @@ async def ask(req: AskRequest) -> dict:
     ]
     cited_sources = [source for source in public_sources if source["cited"]]
     coverage = dict(Counter(source["kind"] for source in included))
-    return {
+    conversation_id = req.conversation_id or uuid4().hex
+    response = {
         "answer": answer,
         "provider": provider,
-        "mode": req.mode,
+        "mode": "research" if req.mode == "research" and web_available else "wiki",
+        "research_status": (
+            "available" if web_available
+            else "unavailable" if req.mode == "research"
+            else "not_requested"
+        ),
         "coverage": coverage,
         "sources": cited_sources,
         "retrieved_sources": public_sources,
@@ -129,7 +149,120 @@ async def ask(req: AskRequest) -> dict:
             }
             for source in included
         ],
+        "conversation_id": conversation_id,
     }
+    _store_conversation_turn(conversation_id, req, response)
+    return response
+
+
+@router.get("/ask/conversations")
+def list_ask_conversations(limit: int = 30) -> dict:
+    safe_limit = min(max(limit, 1), 100)
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT c.id, c.title, c.mode, c.context_article_id,
+                      c.created_at, c.updated_at,
+                      COUNT(m.id) AS message_count,
+                      COALESCE((
+                        SELECT content FROM ask_messages latest
+                        WHERE latest.conversation_id = c.id
+                        ORDER BY latest.id DESC LIMIT 1
+                      ), '') AS preview
+               FROM ask_conversations c
+               LEFT JOIN ask_messages m ON m.conversation_id = c.id
+               GROUP BY c.id
+               ORDER BY c.updated_at DESC, c.id DESC
+               LIMIT ?""",
+            (safe_limit,),
+        ).fetchall()
+    return {"conversations": [dict(row) for row in rows]}
+
+
+@router.get("/ask/conversations/{conversation_id}")
+def get_ask_conversation(conversation_id: str) -> dict:
+    with connect() as conn:
+        conversation = conn.execute(
+            "SELECT * FROM ask_conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        rows = conn.execute(
+            """SELECT id, role, content, response_json, created_at
+               FROM ask_messages
+               WHERE conversation_id = ? ORDER BY id""",
+            (conversation_id,),
+        ).fetchall()
+    messages = []
+    for row in rows:
+        message = dict(row)
+        raw_response = message.pop("response_json")
+        try:
+            message["response"] = json.loads(raw_response) if raw_response else None
+        except json.JSONDecodeError:
+            message["response"] = None
+        messages.append(message)
+    return {**dict(conversation), "messages": messages}
+
+
+@router.delete("/ask/conversations/{conversation_id}")
+def delete_ask_conversation(conversation_id: str) -> dict[str, bool]:
+    with connect() as conn:
+        deleted = conn.execute(
+            "DELETE FROM ask_conversations WHERE id = ?",
+            (conversation_id,),
+        ).rowcount
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return {"ok": True}
+
+
+def _store_conversation_turn(
+    conversation_id: str,
+    req: AskRequest,
+    response: dict,
+) -> None:
+    title = " ".join(req.question.split())[:80] or "New chat"
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                """INSERT INTO ask_conversations
+                     (id, title, mode, context_article_id)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     mode=excluded.mode,
+                     context_article_id=COALESCE(
+                       ask_conversations.context_article_id,
+                       excluded.context_article_id
+                     ),
+                     updated_at=CURRENT_TIMESTAMP""",
+                (conversation_id, title, req.mode, req.article_id),
+            )
+            conn.execute(
+                """INSERT INTO ask_messages (conversation_id, role, content)
+                   VALUES (?, 'user', ?)""",
+                (conversation_id, req.question),
+            )
+            conn.execute(
+                """INSERT INTO ask_messages
+                     (conversation_id, role, content, response_json)
+                   VALUES (?, 'assistant', ?, ?)""",
+                (
+                    conversation_id,
+                    response["answer"],
+                    json.dumps(response, ensure_ascii=False),
+                ),
+            )
+            conn.execute(
+                """UPDATE ask_conversations
+                   SET updated_at=CURRENT_TIMESTAMP WHERE id = ?""",
+                (conversation_id,),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
 
 
 def _wiki_sources(conn: sqlite3.Connection, req: AskRequest) -> list[dict]:
@@ -552,16 +685,22 @@ def _render_sources(sources: list[dict]) -> tuple[list[dict], str]:
     return included, "\n\n".join(chunks) or "(no relevant source content found)"
 
 
-def _build_prompt(req: AskRequest, context: str) -> str:
+def _build_prompt(req: AskRequest, context: str, *, web_available: bool = False) -> str:
     history = "\n".join(
         f"{message.role}: {message.content}" for message in req.messages[-10:]
     ) or "(new conversation)"
-    research_rule = (
-        "Live web results are included. Compare them with Mastisk and distinguish "
-        "current web evidence from the user's own notes."
-        if req.mode == "research"
-        else "No live web search was requested. Do not imply that you checked the web."
-    )
+    if req.mode == "research" and web_available:
+        research_rule = (
+            "Live web results are included. Compare them with Mastisk and distinguish "
+            "current web evidence from the user's own notes."
+        )
+    elif req.mode == "research":
+        research_rule = (
+            "Live web search returned no usable evidence. Say that plainly and answer "
+            "from Mastisk only; do not imply that current web evidence was checked."
+        )
+    else:
+        research_rule = "No live web search was requested. Do not imply that you checked the web."
     return f"""You are Mastisk Chat, the reasoning surface for a personal second brain.
 
 Today is {date.today().isoformat()}.

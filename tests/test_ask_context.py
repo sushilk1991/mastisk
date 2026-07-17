@@ -3,6 +3,58 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 
+def test_ask_conversations_are_persisted_listed_and_reopened(
+    db, monkeypatch,
+) -> None:
+    from mastisk.app import create_app
+
+    async def fake_generate(prompt: str) -> tuple[str, str]:
+        return "Use a durable event cursor. [S1]", "test"
+
+    monkeypatch.setattr("mastisk.routes.ask._generate_answer", fake_generate)
+
+    with TestClient(create_app()) as client:
+        first = client.post(
+            "/api/ask",
+            json={"question": "How should reconnect work?", "mode": "wiki"},
+        )
+        assert first.status_code == 200
+        conversation_id = first.json()["conversation_id"]
+
+        second = client.post(
+            "/api/ask",
+            json={
+                "question": "What changes with live evidence?",
+                "mode": "research",
+                "conversation_id": conversation_id,
+                "messages": [
+                    {"role": "user", "content": "How should reconnect work?"},
+                    {"role": "assistant", "content": "Use a durable event cursor."},
+                ],
+            },
+        )
+        assert second.status_code == 200
+        assert second.json()["conversation_id"] == conversation_id
+
+        listing = client.get("/api/ask/conversations")
+        assert listing.status_code == 200
+        assert listing.json()["conversations"][0]["id"] == conversation_id
+        assert listing.json()["conversations"][0]["title"] == "How should reconnect work?"
+        assert listing.json()["conversations"][0]["mode"] == "research"
+        assert listing.json()["conversations"][0]["message_count"] == 4
+
+        reopened = client.get(f"/api/ask/conversations/{conversation_id}")
+        assert reopened.status_code == 200
+        assert [message["role"] for message in reopened.json()["messages"]] == [
+            "user", "assistant", "user", "assistant",
+        ]
+        assert reopened.json()["messages"][-1]["response"]["provider"] == "test"
+
+        deleted = client.delete(f"/api/ask/conversations/{conversation_id}")
+        assert deleted.status_code == 200
+        assert client.get(f"/api/ask/conversations/{conversation_id}").status_code == 404
+
+
 def test_ask_uses_conversation_history_to_retrieve_raw_notes(
     db, monkeypatch,
 ) -> None:
@@ -216,6 +268,38 @@ def test_research_mode_adds_live_web_evidence_without_claiming_an_action(
     assert any(source["href"] == "https://example.com/agent-governance" for source in body["sources"])
     assert "Live web results are included" in captured["prompt"]
     assert "Never claim you saved, created, emailed" in captured["prompt"]
+
+
+def test_research_mode_reports_when_live_web_evidence_is_unavailable(
+    db, monkeypatch,
+) -> None:
+    from mastisk.app import create_app
+
+    captured: dict[str, str] = {}
+
+    async def fake_search_web(_question: str) -> list[dict]:
+        return []
+
+    async def fake_generate(prompt: str) -> tuple[str, str]:
+        captured["prompt"] = prompt
+        return "I could only check Mastisk for this turn.", "test"
+
+    monkeypatch.setattr("mastisk.routes.ask._search_web", fake_search_web)
+    monkeypatch.setattr("mastisk.routes.ask._generate_answer", fake_generate)
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/ask",
+            json={"question": "Research current agent governance.", "mode": "research"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "wiki"
+    assert body["research_status"] == "unavailable"
+    assert body["coverage"].get("web", 0) == 0
+    assert "Live web search returned no usable evidence" in captured["prompt"]
+    assert "Live web results are included" not in captured["prompt"]
 
 
 def test_research_reserves_context_for_web_before_large_wiki_hits(

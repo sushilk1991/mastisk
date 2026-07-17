@@ -884,9 +884,6 @@ def vault_tree(conn: sqlite3.Connection) -> list[dict]:
     def badge_if_nonzero(n: int) -> str | None:
         return str(n) if n > 0 else None
 
-    digest_n = conn.execute(
-        "SELECT COUNT(*) AS n FROM articles WHERE DATE(updated_at) = DATE('now')"
-    ).fetchone()["n"]
     queue_n = conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE status='queued'").fetchone()["n"]
     open_q_n = conn.execute(
         "SELECT COUNT(*) AS n FROM article_sections WHERE kind='open'"
@@ -895,7 +892,6 @@ def vault_tree(conn: sqlite3.Connection) -> list[dict]:
 
     return [
         {"kind": "section", "label": "Today"},
-        {"kind": "page", "id": "digest", "label": "Daily Digest", "glyph": "◐", "badge": badge_if_nonzero(digest_n)},
         {"kind": "page", "id": "queue", "label": "Reading queue", "glyph": "≡", "badge": badge_if_nonzero(queue_n)},
         {"kind": "page", "id": "open_questions", "label": "Open questions", "glyph": "?", "badge": badge_if_nonzero(open_q_n)},
         {"kind": "page", "id": "feed", "label": "Agent feed", "glyph": "◇", "badge": "live" if any_feed else None},

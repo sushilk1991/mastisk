@@ -25,6 +25,52 @@ def _create_task(client: TestClient, text: str) -> dict:
     return response.json()
 
 
+def test_digest_calendar_marks_ranked_digests_not_article_update_dates(client, db):
+    db.execute(
+        """INSERT INTO articles
+             (id, kind, title, slug, summary, body_md, confidence, updated_at)
+           VALUES ('calendar-proof', 'Concept', 'Calendar proof', 'calendar-proof',
+                   'summary', ?, 0.7, '2026-07-17 12:00:00')""",
+        ("substantial digest body " * 100,),
+    )
+    before = client.get("/api/digest/calendar?year=2026&month=7")
+    assert before.status_code == 200
+    assert before.json()["active_dates"] == []
+
+    db.execute(
+        """INSERT INTO digest_candidates
+             (digest_date, article_id, quality_score, interest_score, final_score, selected, rank)
+           VALUES ('2026-07-17', 'calendar-proof', 0.7, 0.8, 0.75, 1, 1)"""
+    )
+    after = client.get("/api/digest/calendar?year=2026&month=7")
+    assert after.json()["active_dates"] == ["2026-07-17"]
+
+    db.execute(
+        "UPDATE articles SET updated_at = '2026-07-18 12:00:00' WHERE id = 'calendar-proof'"
+    )
+    stale = client.get("/api/digest/calendar?year=2026&month=7")
+    assert stale.json()["active_dates"] == []
+    reopened = client.get("/api/digest?date=2026-07-17")
+    assert reopened.status_code == 200
+    assert reopened.json()["threads"] == []
+
+
+def test_resurfaced_titles_end_cleanly_and_repo_provenance_is_not_leaked():
+    from mastisk.dashboard.intelligence import _excerpt, _note_title
+
+    title = _note_title(
+        "Investigate when retained prompt caches make scheduled agent pods cheaper than conventional workers",
+        None,
+        1,
+    )
+    assert title.endswith("…")
+    assert len(title) <= 80
+    assert not title.endswith(" c…")
+    assert _excerpt(
+        "> From repo: local:/Users/example/Code/private # Prompt-cache retention economics"
+    ) == "Prompt-cache retention economics"
+
+
 def test_focus_cap_409_shape_and_atomic_swap(client):
     tasks = [_create_task(client, f"Focus {idx}") for idx in range(1, 5)]
     day = "2026-06-11"

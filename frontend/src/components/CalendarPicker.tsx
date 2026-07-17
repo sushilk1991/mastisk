@@ -6,7 +6,10 @@ interface Props {
   onSelect: (iso: string) => void;
 }
 
-const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const WEEKDAYS = [
+  ['S', 'Sunday'], ['M', 'Monday'], ['T', 'Tuesday'], ['W', 'Wednesday'],
+  ['T', 'Thursday'], ['F', 'Friday'], ['S', 'Saturday'],
+] as const;
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -46,7 +49,7 @@ export function CalendarPicker({ selectedDate, onSelect }: Props) {
       .then((res) => { if (!cancelled) setActive(new Set(res.active_dates)); })
       .catch(() => { if (!cancelled) setActive(new Set()); });
     return () => { cancelled = true; };
-  }, [y, m]);
+  }, [y, m, selectedDate]);
 
   const firstDow = new Date(y, m - 1, 1).getDay(); // 0=Sun
   const daysInMonth = new Date(y, m, 0).getDate();
@@ -64,12 +67,12 @@ export function CalendarPicker({ selectedDate, onSelect }: Props) {
   return (
     <div className="cal">
       <div className="cal-head">
-        <button type="button" className="cal-nav" aria-label="Previous month" onClick={() => goMonth(-1)}>◀</button>
+        <button type="button" className="cal-nav" aria-label="Previous month" onClick={() => goMonth(-1)}>‹</button>
         <span className="cal-title">{MONTH_NAMES[m - 1]} {y}</span>
-        <button type="button" className="cal-nav" aria-label="Next month" onClick={() => goMonth(1)}>▶</button>
+        <button type="button" className="cal-nav" aria-label="Next month" onClick={() => goMonth(1)}>›</button>
       </div>
       <div className="cal-dow">
-        {WEEKDAYS.map((w, i) => <span key={i}>{w}</span>)}
+        {WEEKDAYS.map(([short, full]) => <span key={full} title={full}>{short}</span>)}
       </div>
       <div className="cal-grid">
         {cells.map((day, i) => {
@@ -90,13 +93,20 @@ export function CalendarPicker({ selectedDate, onSelect }: Props) {
               className={classes.join(' ')}
               disabled={!hasActivity}
               onClick={() => hasActivity && onSelect(dateIso)}
-              title={hasActivity ? `Digest for ${dateIso}` : `No activity on ${dateIso}`}
+              aria-current={isToday ? 'date' : undefined}
+              aria-pressed={isSelected}
+              aria-label={`${MONTH_NAMES[m - 1]} ${day}, ${y}${isToday ? ', today' : ''}${hasActivity ? ', digest ready' : ', no digest'}${isSelected ? ', selected' : ''}`}
+              title={hasActivity ? `Open the ${dateIso} digest` : `No digest for ${dateIso}`}
             >
               <span className="cal-num">{day}</span>
               {hasActivity && <span className="cal-dot" aria-hidden="true"/>}
             </button>
           );
         })}
+      </div>
+      <div className="cal-legend" aria-label="Calendar legend">
+        <span><i className="today"/>Today</span>
+        <span><i className="digest"/>Digest ready</span>
       </div>
     </div>
   );

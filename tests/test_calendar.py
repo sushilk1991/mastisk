@@ -46,6 +46,63 @@ def _client(vault_tmp, data_tmp, db):
     return TestClient(create_app())
 
 
+def test_calendar_browser_oauth_setup_saves_config_and_connects(
+    vault_tmp, data_tmp, db, monkeypatch,
+):
+    from mastisk.routes import calendar_route
+    from mastisk.settings import get_settings, reload_settings
+
+    reload_settings()
+    with _client(vault_tmp, data_tmp, db) as client:
+        missing = client.post("/api/calendar/connection/start")
+        assert missing.status_code == 409
+
+        saved = client.put(
+            "/api/calendar/config",
+            json={"client_id": "browser-client", "client_secret": "browser-secret"},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["status"]["credentials_configured"] is True
+        assert get_settings().calendar.client_id == "browser-client"
+
+        started = client.post("/api/calendar/connection/start")
+        assert started.status_code == 200
+        payload = started.json()
+        assert payload["redirect_uri"] == (
+            "http://127.0.0.1:5555/api/calendar/connection/callback"
+        )
+        from urllib.parse import parse_qs, urlparse
+
+        state = parse_qs(urlparse(payload["authorization_url"]).query)["state"][0]
+
+        monkeypatch.setattr(
+            calendar_route,
+            "exchange_authorization_code",
+            lambda **kwargs: {
+                "access_token": "access-ok",
+                "refresh_token": "refresh-ok",
+                "expires_at": 4102444800,
+                "token_type": "Bearer",
+                "scope": "https://www.googleapis.com/auth/calendar.readonly",
+            },
+        )
+
+        def fake_sync_calendar():
+            from mastisk.google_calendar import mark_calendar_connected
+
+            mark_calendar_connected("2026-07-17T12:00:00+05:30")
+            return {"event_count": 0, "calendar_count": 1}
+
+        monkeypatch.setattr(calendar_route, "sync_calendar", fake_sync_calendar)
+        callback = client.get(
+            "/api/calendar/connection/callback",
+            params={"code": "oauth-code", "state": state},
+        )
+        assert callback.status_code == 200
+        assert "Calendar connected" in callback.text
+        assert client.get("/api/calendar/status").json()["status"] == "connected"
+
+
 def test_calendar_oauth_exchange_refresh_and_token_file_permissions(data_tmp, db):
     _write_calendar_config(data_tmp)
     calls: list[tuple[str, dict[str, str]]] = []

@@ -14,13 +14,28 @@ def test_chat_is_grounded_actionable_and_safe_to_render() -> None:
 
     assert "ReactMarkdown" in drawer
     assert "dangerouslySetInnerHTML" not in drawer
-    assert "Research web" in drawer
+    assert "Wiki only" in drawer
+    assert "Wiki + web" in drawer
+    assert "api.askHistory.list" in drawer
+    assert "api.askHistory.get" in drawer
+    assert "void send(prompt);" in drawer
+    assert "send(prompt, [])" not in drawer
     assert "Save as note" in drawer
     assert "messages?:" in api
     assert "mode?:" in api
     assert "sources: AskSource[]" in types
     assert "retrieved_sources?: AskSource[]" in types
     assert "coverage: Record<string, number>" in types
+    assert "conversation_id: string" in types
+
+
+def test_chat_lifecycle_is_locked_while_a_turn_is_in_flight() -> None:
+    drawer = _read("frontend/src/components/AskDrawer.tsx")
+
+    assert 'aria-pressed={historyOpen}\n            disabled={sending}' in drawer
+    assert '<button type="button" disabled={sending} onClick={resetChat}>New chat</button>' in drawer
+    assert "historyBusy || sending" in drawer
+    assert "web unavailable" in drawer
 
 
 def test_mobile_navigation_moves_primary_actions_out_of_the_header() -> None:

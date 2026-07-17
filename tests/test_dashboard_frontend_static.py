@@ -48,8 +48,26 @@ def test_today_calendar_slot_uses_real_calendar_api():
     source = _dashboard_source()
 
     assert "api.calendar.today(today)" in source
-    assert "mastisk calendar-connect" in source
+    assert "api.calendar.saveConfig" in source
+    assert "api.calendar.startConnection" in source
+    assert "Connect Google Calendar" in source
     assert '<QuietPlaceholder title="Calendar" phase="Phase 9" />' not in source
+
+
+def test_today_teaches_focus_tasks_routines_and_embeds_digest():
+    source = _dashboard_source()
+    app = Path("frontend/src/App.tsx").read_text(encoding="utf-8")
+    sidebar_backend = Path("src/mastisk/db/queries.py").read_text(encoding="utf-8")
+
+    assert "Choose or create a task" in source
+    assert "await api.tasks.create({ text });" in source
+    assert "await api.focus.add(today, task.uid);" in source
+    assert "A task is a one-off action" in source
+    assert "A routine is repeatable" in source
+    assert "Thought to revisit" in source
+    assert "TodayDigestSection" in source
+    assert "digest={digest}" in app
+    assert '"label": "Daily Digest"' not in sidebar_backend
 
 
 def test_system_rail_exposes_calendar_health_actions():

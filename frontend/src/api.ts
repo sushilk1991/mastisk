@@ -1,5 +1,5 @@
 import type {
-  Article, ArticlePreview, Artifact, ArtifactKind, AskResponse, BlogPostDetail,
+  Article, ArticlePreview, Artifact, ArtifactKind, AskConversation, AskConversationSummary, AskResponse, BlogPostDetail,
   AgentDetail, AgentProfileUpdate, AgentSkill,
   BlogPostSummary, BookDetail, BookHighlight, BookStatus, BookSummary, CaptureTriageItem, CaptureTriageTarget, ContentDetail, ContentKind, ContentList, ContentStatus, Digest, DigestAudit, Domain, Feed,
   FeedTick, AgentInfo, CalendarStatus, CalendarToday, ChecklistTemplate, GraphData, IntegrationHealth, InventoryDetail, InventoryList, InventoryStatus, Job, Note, OpenQuestionsResponse, PendingSynthesisResponse,
@@ -253,12 +253,24 @@ export const api = {
     article_id?: string;
     messages?: { role: 'user' | 'assistant'; content: string }[];
     mode?: 'wiki' | 'research';
+    conversation_id?: string;
   }) =>
     j<AskResponse>(`${BASE}/ask`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ question, ...opts }),
     }),
+
+  askHistory: {
+    list: (limit = 30) =>
+      j<{ conversations: AskConversationSummary[] }>(`${BASE}/ask/conversations?limit=${limit}`),
+    get: (conversationId: string) =>
+      j<AskConversation>(`${BASE}/ask/conversations/${encodeURIComponent(conversationId)}`),
+    delete: (conversationId: string) =>
+      j<{ ok: boolean }>(`${BASE}/ask/conversations/${encodeURIComponent(conversationId)}`, {
+        method: 'DELETE',
+      }),
+  },
 
   /** Unified keyword search across Mastisk mirrors. */
   search: (q: string, opts?: { limit?: number; signal?: AbortSignal }) =>
@@ -845,6 +857,16 @@ export const api = {
         day ? `${BASE}/calendar/today?date=${encodeURIComponent(day)}` : `${BASE}/calendar/today`,
       ),
     status: (): Promise<CalendarStatus> => j<CalendarStatus>(`${BASE}/calendar/status`),
+    saveConfig: (clientId: string, clientSecret: string): Promise<{ ok: boolean; status: CalendarStatus }> =>
+      j<{ ok: boolean; status: CalendarStatus }>(`${BASE}/calendar/config`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, client_secret: clientSecret }),
+      }),
+    startConnection: (): Promise<{ authorization_url: string; redirect_uri: string }> =>
+      j<{ authorization_url: string; redirect_uri: string }>(`${BASE}/calendar/connection/start`, {
+        method: 'POST',
+      }),
     sync: (): Promise<{ ok: boolean; event_count: number; calendar_count: number; status: CalendarStatus }> =>
       j<{ ok: boolean; event_count: number; calendar_count: number; status: CalendarStatus }>(
         `${BASE}/calendar/sync`,
