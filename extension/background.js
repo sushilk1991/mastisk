@@ -654,11 +654,34 @@ const MENU = {
   link: 'mastisk-link',
 };
 
+let contextMenuSetupPromise = null;
+
+function createContextMenu(properties) {
+  return new Promise((resolve, reject) => {
+    chrome.contextMenus.create(properties, () => {
+      const error = chrome.runtime.lastError;
+      // "duplicate id" means the menu already exists — the state we want.
+      if (error && !/duplicate id/i.test(error.message)) reject(new Error(error.message));
+      else resolve();
+    });
+  });
+}
+
 async function setupContextMenus() {
-  await chrome.contextMenus.removeAll();
-  chrome.contextMenus.create({ id: MENU.page, title: 'Send page to Mastisk', contexts: ['page'] });
-  chrome.contextMenus.create({ id: MENU.selection, title: 'Send selection to Mastisk', contexts: ['selection'] });
-  chrome.contextMenus.create({ id: MENU.link, title: 'Send link to Mastisk', contexts: ['link'] });
+  if (contextMenuSetupPromise) return contextMenuSetupPromise;
+  contextMenuSetupPromise = (async () => {
+    await chrome.contextMenus.removeAll();
+    await Promise.all([
+      createContextMenu({ id: MENU.page, title: 'Send page to Mastisk', contexts: ['page'] }),
+      createContextMenu({ id: MENU.selection, title: 'Send selection to Mastisk', contexts: ['selection'] }),
+      createContextMenu({ id: MENU.link, title: 'Send link to Mastisk', contexts: ['link'] }),
+    ]);
+  })();
+  try {
+    await contextMenuSetupPromise;
+  } finally {
+    contextMenuSetupPromise = null;
+  }
 }
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -676,15 +699,14 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 // --- Lifecycle ---
 
-chrome.runtime.onInstalled.addListener(async () => {
-  await setupContextMenus();
-  await resumeJobs();
-});
+function initExtension() {
+  setupContextMenus()
+    .then(() => resumeJobs())
+    .catch((err) => console.warn('[Mastisk] Init error:', err));
+}
 
-chrome.runtime.onStartup.addListener(async () => {
-  await setupContextMenus();
-  await resumeJobs();
-});
+chrome.runtime.onInstalled.addListener(initExtension);
+chrome.runtime.onStartup.addListener(initExtension);
 
 // Reconcile the badge, re-arm the alarm, and best-effort resume the fast
 // polls for any jobs that were in flight when the service worker was suspended.
