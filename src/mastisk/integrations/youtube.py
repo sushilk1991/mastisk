@@ -10,8 +10,50 @@ import asyncio
 import logging
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 log = logging.getLogger("mastisk.youtube")
+
+
+def canonicalize_url(url: str) -> str:
+    """Collapse single-video YouTube URL variants to one stable watch URL.
+
+    yt-dlp reports ``/watch?v=...`` as ``webpage_url`` even when the browser
+    submitted an embed, Shorts, mobile, or youtu.be URL. Normalizing before a
+    Listener job is created keeps queue identity aligned with the eventual
+    ``sources.url`` identity and drops tracking/playlist parameters that do not
+    identify the video itself. Non-YouTube URLs are returned unchanged.
+    """
+    raw = (url or "").strip()
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return raw
+
+    host = (parsed.hostname or "").lower()
+    path_parts = [part for part in parsed.path.split("/") if part]
+    video_id = ""
+    if host == "youtu.be":
+        video_id = path_parts[0] if path_parts else ""
+    elif (
+        host == "youtube.com"
+        or host.endswith(".youtube.com")
+        or host == "youtube-nocookie.com"
+        or host.endswith(".youtube-nocookie.com")
+    ):
+        if parsed.path.rstrip("/").lower() == "/watch":
+            video_id = (parse_qs(parsed.query).get("v") or [""])[0]
+        elif len(path_parts) >= 2 and path_parts[0].lower() in {
+            "embed",
+            "live",
+            "shorts",
+            "v",
+        }:
+            video_id = path_parts[1]
+
+    if not video_id or re.fullmatch(r"[A-Za-z0-9_-]+", video_id) is None:
+        return raw
+    return f"https://www.youtube.com/watch?v={video_id}"
 
 
 async def fetch_metadata(url: str) -> dict:

@@ -1,10 +1,11 @@
-"""CLI tests for the blog-writer commands.
+"""CLI command tests.
 
 Uses typer's CliRunner to invoke commands in-process. Each test asserts on
 DB state rather than stdout text — match existing style where practical.
 """
 from __future__ import annotations
 
+import json
 import tomllib
 from datetime import datetime
 
@@ -89,6 +90,31 @@ def test_blog_command_rejects_empty_pool(cli, db):
         "SELECT COUNT(*) AS c FROM jobs WHERE agent='blog_writer'"
     ).fetchone()["c"]
     assert j == 0
+
+
+def test_add_youtube_canonicalizes_and_reuses_existing_job(cli, db):
+    runner, app = cli
+
+    first = runner.invoke(
+        app,
+        ["add-youtube", "https://www.youtube.com/embed/abc123xyz89?autoplay=1"],
+    )
+    second = runner.invoke(
+        app,
+        ["add-youtube", "https://youtu.be/abc123xyz89?t=30"],
+    )
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert "already queued" in second.output.lower()
+    rows = db.execute(
+        "SELECT payload_json FROM jobs WHERE agent='listener' AND kind='transcribe'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert json.loads(rows[0]["payload_json"]) == {
+        "url": "https://www.youtube.com/watch?v=abc123xyz89",
+        "media_type": "video",
+    }
 
 
 def test_list_blogs_empty(cli, db):

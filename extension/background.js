@@ -293,6 +293,18 @@ async function getIngestStatus(sourceId) {
 // may include a long download/transcription before it hands a source to the
 // Compiler, so the extension confirms durable queue acceptance and leaves the
 // downstream agents visible in Mastisk's queue instead of timing out a badge.
+function cleanMediaTitle(title, url) {
+  let value = typeof title === 'string' ? title.trim() : '';
+  if (!value || /^(media|video|podcast)$/i.test(value)) return '';
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com')) {
+      value = value.replace(/\s+[-–—]\s+YouTube\s*$/i, '').trim();
+    }
+  } catch { /* the backend will report an invalid URL */ }
+  return clampField(value, FIELD_LIMITS.title);
+}
+
 async function enqueueMedia(media, feedbackTab, title) {
   const feedbackTabId = feedbackTab?.id;
   if (!media?.url || media.url.length > FIELD_LIMITS.url) {
@@ -301,6 +313,7 @@ async function enqueueMedia(media, feedbackTab, title) {
   }
 
   const label = media.media_type === 'podcast' ? 'Podcast' : 'Video';
+  const mediaTitle = cleanMediaTitle(title, media.url);
   await showToast(feedbackTabId, `Sending ${label.toLowerCase()} to the Listener…`, 'info');
   const server = await getServerUrl();
   let resp;
@@ -312,6 +325,7 @@ async function enqueueMedia(media, feedbackTab, title) {
         url: media.url,
         media_type: media.media_type,
         ...(media.media_scope ? { media_scope: media.media_scope } : {}),
+        ...(mediaTitle ? { title: mediaTitle } : {}),
       }),
       signal: AbortSignal.timeout(30000),
     });
@@ -334,7 +348,16 @@ async function enqueueMedia(media, feedbackTab, title) {
   }
 
   const data = await resp.json();
-  const displayTitle = title || label;
+  const displayTitle = mediaTitle || label;
+  if (data?.duplicate) {
+    const active = data.status === 'queued' || data.status === 'running';
+    const heading = active ? `${displayTitle} is already queued` : `${displayTitle} is already in Mastisk`;
+    const detail = data?.job_id && active
+      ? `${label} Listener job ${data.job_id} is ${data.status}.`
+      : `${label} was not queued again.`;
+    await feedback(feedbackTabId, 'success', heading, detail);
+    return true;
+  }
   const jobNote = data?.job_id ? ` Listener job ${data.job_id}.` : '';
   await feedback(feedbackTabId, 'success', `Sent ${displayTitle} to Mastisk`,
     `${label} queued for transcription.${jobNote}`);
@@ -647,8 +670,12 @@ async function detectMediaFromTab(tabId) {
 }
 
 async function mediaForTab(tab) {
-  return (tab?.id ? await detectMediaFromTab(tab.id) : null)
-    || classifyMediaUrl(tab?.url);
+  const direct = classifyMediaUrl(tab?.url);
+  // A direct video page is the stable identity. Inspecting its DOM first can
+  // accidentally substitute the player's /embed/ iframe for the current
+  // /watch URL, which then diverges from yt-dlp's canonical source URL.
+  if (direct?.media_type === 'video') return direct;
+  return (tab?.id ? await detectMediaFromTab(tab.id) : null) || direct;
 }
 
 // Send the whole current page.
@@ -745,7 +772,10 @@ async function sendLink(linkUrl, srcTab) {
     await sleep(1200);
     const media = await detectMediaFromTab(bgTab.id) || directMedia;
     if (media) {
-      await enqueueMedia(media, srcTab, bgTab.title || 'media');
+      // chrome.tabs.create returns before the page title settles. Re-read the
+      // completed tab so a temporary URL/title is not persisted in the queue.
+      const loadedTab = await chrome.tabs.get(bgTab.id);
+      await enqueueMedia(media, srcTab, loadedTab?.title || 'media');
       return;
     }
     const data = await extractFromTab(bgTab.id);

@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from mastisk.db.queries import connect
+from mastisk.integrations import youtube
 
 router = APIRouter(tags=["sources"])
 
@@ -162,15 +163,25 @@ def list_jobs(limit: int = 50):
             elif r["agent"] == "listener":
                 if r["kind"] == "transcribe" and payload.get("url"):
                     url = payload["url"]
-                    source_id = _src_id_for(url)
+                    canonical_url = youtube.canonicalize_url(url)
+                    source_id = _src_id_for(canonical_url)
                     src = conn.execute(
-                        "SELECT title, kind FROM sources WHERE id=?", (source_id,),
+                        """SELECT id, title, kind FROM sources
+                           WHERE id=? OR url=? LIMIT 1""",
+                        (source_id, canonical_url),
                     ).fetchone()
-                    title = (src["title"] if src and src["title"] else None) or _hostname(url) or url
+                    if src:
+                        source_id = src["id"]
+                    title = (
+                        (src["title"] if src and src["title"] else None)
+                        or payload.get("title")
+                        or _hostname(url)
+                        or url
+                    )
                     source_kind = (
                         (src["kind"] if src else None)
-                        or payload.get("media_type")
                         or _classify_url_cheap(url)
+                        or payload.get("media_type")
                     )
                     subtitle = _hostname(url)
                 elif r["kind"] == "transcribe_audio":

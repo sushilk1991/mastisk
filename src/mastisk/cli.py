@@ -662,9 +662,22 @@ def add_feed(url: str, title: Optional[str] = typer.Option(None, "--title", "-t"
 @app.command(name="add-youtube")
 def add_youtube(url: str):
     """Queue a YouTube URL for the Listener agent."""
-    from mastisk.agents.base import enqueue
+    from mastisk.integrations import youtube
+    from mastisk.routes.listen_route import enqueue_listener_once
+
     _ensure_db()
-    job_id = enqueue("listener", "transcribe", {"url": url})
+    canonical_url = youtube.canonicalize_url(url)
+    queued = enqueue_listener_once(
+        {"url": canonical_url, "media_type": "video"},
+        reuse_done=True,
+    )
+    job_id = queued["job_id"]
+    if queued["duplicate"]:
+        if job_id:
+            console.print(f"[yellow]already {queued['status']}[/yellow] job {job_id}")
+        else:
+            console.print("[green]already ingested[/green]")
+        return
     console.print(f"[green]queued[/green] job {job_id}  (Listener will pick it up on next tick)")
 
 

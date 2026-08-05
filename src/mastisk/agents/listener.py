@@ -167,24 +167,41 @@ class Listener(Agent):
         ``source_kind`` preserves whether the input was YouTube, another video,
         or a podcast page.
         """
-        meta = await youtube.fetch_metadata(url)
-        canonical_url = meta.get("webpage_url") or url
-        src_id = _hash16(canonical_url or meta.get("title") or "")
-        if self._source_exists(src_id):
+        # yt-dlp canonicalizes embed/Shorts/mobile URLs to /watch?v=..., but
+        # metadata extraction itself is a network call that can be rate-limited.
+        # Normalize and dedupe first so repeated extension saves do no remote
+        # work at all once the source exists.
+        canonical_url = youtube.canonicalize_url(url)
+        existing = self._source_for_url(canonical_url)
+        if existing:
+            log.info("listener: %s %s already ingested, skipping", source_kind, canonical_url)
+            self.emit_feed(
+                verb="duplicate",
+                obj=canonical_url[:80],
+                kind=source_kind,
+                payload={"source_id": existing["id"], "url": canonical_url},
+            )
+            return
+
+        meta = await youtube.fetch_metadata(canonical_url)
+        canonical_url = youtube.canonicalize_url(meta.get("webpage_url") or canonical_url)
+        existing = self._source_for_url(canonical_url)
+        if existing:
             log.info("listener: %s %s already ingested, skipping", source_kind, canonical_url)
             self.emit_feed(
                 verb="duplicate",
                 obj=(meta.get("title") or canonical_url)[:80],
                 kind=source_kind,
-                payload={"source_id": src_id, "url": canonical_url},
+                payload={"source_id": existing["id"], "url": canonical_url},
             )
             return
-        work_dir = tmp_dir() / f"media-{meta['id'] or _hash16(url)}"
+
+        work_dir = tmp_dir() / f"media-{meta['id'] or _hash16(canonical_url)}"
         work_dir.mkdir(parents=True, exist_ok=True)
         try:
             transcript = ""
             segments: list[whisper.TranscriptSegment] = []
-            sub_path = await youtube.fetch_subtitles(url, work_dir)
+            sub_path = await youtube.fetch_subtitles(canonical_url, work_dir)
             if sub_path:
                 transcript = Path(sub_path).read_text(encoding="utf-8", errors="replace")
             if not transcript.strip():
@@ -194,7 +211,7 @@ class Listener(Agent):
                         f"no subtitles or transcript on {url} and mlx-whisper is not installed. "
                         "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
                     )
-                audio_path = await youtube.download_audio(url, work_dir)
+                audio_path = await youtube.download_audio(canonical_url, work_dir)
                 result = await whisper.transcribe(audio_path)
                 transcript = result.text
                 segments = result.segments
@@ -204,7 +221,7 @@ class Listener(Agent):
                 "author": meta.get("uploader") or meta.get("channel"),
                 "published_at": meta.get("upload_date"),
                 "source_kind": source_kind,
-                "url": meta.get("webpage_url") or url,
+                "url": canonical_url,
                 "duration_sec": meta.get("duration_sec"),
                 "hero_image_url": meta.get("thumbnail") or None,
             }
@@ -578,6 +595,14 @@ class Listener(Agent):
         with connect() as conn:
             return conn.execute(
                 "SELECT * FROM sources WHERE id = ? LIMIT 1", (src_id,)
+            ).fetchone()
+
+    def _source_for_url(self, url: str):
+        src_id = _hash16(url)
+        with connect() as conn:
+            return conn.execute(
+                "SELECT * FROM sources WHERE id = ? OR url = ? LIMIT 1",
+                (src_id, url),
             ).fetchone()
 
     # ───── book Entity articles (pre-stub) ─────

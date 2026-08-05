@@ -130,7 +130,7 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
 
-  listen: async (url: string): Promise<{ job_id: number; kind: string; message: string }> => {
+  listen: async (url: string): Promise<{ job_id: number | null; kind: string; message: string }> => {
     const r = await fetch(`${BASE}/listen`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

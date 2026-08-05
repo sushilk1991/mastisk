@@ -293,6 +293,13 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
               const file = spec.files?.[0] || '<function>';
               scriptCalls.push({ phase, file });
               if (file === 'media-content.js') {
+                if (phase === 'youtube-page') {
+                  return [{ result: {
+                    media_type: 'video',
+                    url: 'https://www.youtube.com/embed/abc',
+                    reason: 'video-embed',
+                  } }];
+                }
                 if (phase === 'dom-video-page') {
                   return [{ result: {
                     media_type: 'video',
@@ -327,7 +334,10 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
             async create(spec) { tabCreates.push(spec); return { id: 99, ...spec }; },
             async remove() {},
             get(_tabId, callback) {
-              const tab = { status: 'complete' };
+              const tab = {
+                status: 'complete',
+                ...(phase === 'podcast-link' ? { title: 'Loaded podcast episode' } : {}),
+              };
               callback?.(tab);
               return Promise.resolve(tab);
             },
@@ -377,7 +387,7 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
           const youtubeTab = {
             id: 1,
             url: 'https://www.youtube.com/watch?v=abc',
-            title: 'A YouTube talk',
+            title: 'A YouTube talk - YouTube',
           };
           const articleTab = {
             id: 2,
@@ -456,15 +466,30 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
         "podcast-link",
     ]
     listen_by_phase = {c["phase"]: c for c in listen_calls}
-    assert listen_by_phase["youtube-page"]["body"]["media_type"] == "video"
-    assert listen_by_phase["dom-video-page"]["body"]["media_type"] == "video"
+    assert listen_by_phase["youtube-page"]["body"] == {
+        "url": "https://www.youtube.com/watch?v=abc",
+        "media_type": "video",
+        "title": "A YouTube talk",
+    }
+    assert listen_by_phase["dom-video-page"]["body"] == {
+        "url": "https://cdn.example.com/talk.mp4",
+        "media_type": "video",
+        "title": "A recorded talk",
+    }
     assert listen_by_phase["youtube-link"]["body"]["media_type"] == "video"
-    for phase in ("podcast-page", "podcast-link"):
-        assert listen_by_phase[phase]["body"] == {
-            "url": "https://cdn.example.com/exact-episode.mp3",
-            "media_type": "podcast",
-            "media_scope": "episode",
-        }
+    assert "title" not in listen_by_phase["youtube-link"]["body"]
+    assert listen_by_phase["podcast-page"]["body"] == {
+        "url": "https://cdn.example.com/exact-episode.mp3",
+        "media_type": "podcast",
+        "media_scope": "episode",
+        "title": "Exact podcast episode",
+    }
+    assert listen_by_phase["podcast-link"]["body"] == {
+        "url": "https://cdn.example.com/exact-episode.mp3",
+        "media_type": "podcast",
+        "media_scope": "episode",
+        "title": "Loaded podcast episode",
+    }
     assert [c["phase"] for c in web_calls] == [
         "article-page",
         "selection",
@@ -484,6 +509,10 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
         c["phase"] for c in observed["scriptCalls"] if c["file"] == "chat-content.js"
     }
     assert chat_phases == {"article-page", "selection", "media-selection"}
+    media_phases = {
+        c["phase"] for c in observed["scriptCalls"] if c["file"] == "media-content.js"
+    }
+    assert "youtube-page" not in media_phases
 
     classified = dict(observed["classifications"])
     assert classified["https://www.youtube.com/watch?v=abc"]["media_type"] == "video"

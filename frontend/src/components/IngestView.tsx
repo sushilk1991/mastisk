@@ -4,13 +4,13 @@ import type { Feed } from '../types';
 
 interface Toast { text: string; tone: 'ok' | 'err' | 'info' }
 
-interface ListenResult { jobId: number; kind: string; message: string }
+interface ListenResult { jobId: number | null; kind: string; message: string }
 type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 type ImportMode = 'text' | 'url' | 'document';
 
 type ImportResult =
   | { kind: 'text'; noteId: number; path: string }
-  | { kind: 'url'; jobId: number; message: string }
+  | { kind: 'url'; jobId: number | null; message: string }
   | {
       kind: 'document';
       jobId: number;
@@ -329,7 +329,7 @@ function ImportStatus({ result }: { result: ImportResult }) {
   if (result.kind === 'url') {
     return (
       <div className="listen-ok">
-        <span className="listen-ok-id">#{result.jobId}</span>
+        {result.jobId !== null && <span className="listen-ok-id">#{result.jobId}</span>}
         <span className="listen-ok-copy">{result.message || 'link queued for Listener'}</span>
       </div>
     );
