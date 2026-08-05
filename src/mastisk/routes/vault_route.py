@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from mastisk.file_locks import host_file_lock
 from mastisk.paths import self_dir, vault_dir, vault_is_icloud
 from mastisk.routes.notes import atomic_write
+from mastisk.vault_io import read_vault_text, write_vault_text
 from mastisk.vault_paths import VaultPathError, vault_markdown_file
 from mastisk.vault_rescan import rescan_vault_markdown_path
 
@@ -35,7 +36,7 @@ def read_self(name: str):
     if name not in _SELF_FILES:
         raise HTTPException(404, "unknown self file")
     p = self_dir() / f"{name}.md"
-    return {"name": name, "content": p.read_text() if p.exists() else ""}
+    return {"name": name, "content": read_vault_text(p) if p.exists() else ""}
 
 
 class SelfIn(BaseModel):
@@ -53,7 +54,7 @@ def write_self(name: str, body: SelfIn):
     if name not in _SELF_FILES:
         raise HTTPException(404, "unknown self file")
     self_dir().mkdir(parents=True, exist_ok=True)
-    (self_dir() / f"{name}.md").write_text(body.content)
+    write_vault_text(self_dir() / f"{name}.md", body.content)
     return {"ok": True}
 
 

@@ -1,8 +1,8 @@
 // ============================================================
 // Mastisk Clipper — Page Content Extractor
 // ============================================================
-// Injected on-demand by background.js into the page's MAIN world.
-// Extraction is delegated entirely to Defuddle 0.19 (full build),
+// Injected on-demand by background.js into the extension's ISOLATED world.
+// Extraction is delegated entirely to Defuddle 0.19.2 (full build),
 // which ships site-specific extractors for YouTube (description +
 // transcript), Twitter/X threads, Reddit, Hacker News, Medium,
 // Substack, Wikipedia, GitHub, LinkedIn, Bluesky, Mastodon,

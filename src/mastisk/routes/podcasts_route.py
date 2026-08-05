@@ -1,4 +1,4 @@
-"""Podcasts API — list + detail for articles whose source is a podcast/youtube.
+"""Media API — list + detail for articles whose source is a podcast/video.
 
 Composes existing pieces: an article (Compiler-written wiki page) gets joined
 with its single audio source row, the verbatim transcript text from
@@ -19,7 +19,7 @@ router = APIRouter(tags=["podcasts"])
 
 @router.get("/podcasts")
 def list_podcasts(limit: int = 100):
-    """List articles compiled from podcast/youtube sources, newest first."""
+    """List articles compiled from podcast/video sources, newest first."""
     with connect() as conn:
         return {"items": q.list_podcast_articles(conn, limit=limit)}
 
@@ -28,7 +28,7 @@ def list_podcasts(limit: int = 100):
 def get_podcast(article_id: str):
     """Joined view: article + source metadata + transcript + segments + notes.
 
-    404s when the article exists but isn't a podcast/youtube article — keeps
+    404s when the article exists but isn't a podcast/video article — keeps
     the route's contract honest so the frontend can decide whether to redirect
     to the generic ArticleView instead of rendering an empty PodcastView.
     """

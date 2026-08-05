@@ -2563,12 +2563,12 @@ function TaskLine({
   focusDate?: string;
   focused?: boolean;
 }) {
-  const [due, setDue] = useState(task.due ?? '');
+  const [due, setDue] = useState(datePart(task.due));
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [err, setErr] = useState<string | null>(null);
   const [swapFocus, setSwapFocus] = useState<TaskRow[] | null>(null);
   useEffect(() => {
-    setDue(task.due ?? '');
+    setDue(datePart(task.due));
     setPriority(task.priority);
     setSwapFocus(null);
   }, [task.due, task.priority, task.uid, focused]);
@@ -2655,12 +2655,15 @@ function TaskLine({
       </div>
       <div className="task-edit">
         <input
+          type="date"
           value={due}
-          placeholder="due"
           aria-label={`Due date for ${task.text}`}
           onChange={(e) => setDue(e.target.value)}
           onBlur={() => {
-            if ((task.due ?? '') !== due) runMutation(() => savePatch({ due: due.trim() || null }), setErr);
+            if (datePart(task.due) !== due) {
+              const nextDue = due && task.due?.includes('T') ? `${due}${task.due.slice(10)}` : due || null;
+              runMutation(() => savePatch({ due: nextDue }), setErr);
+            }
           }}
         />
         <select

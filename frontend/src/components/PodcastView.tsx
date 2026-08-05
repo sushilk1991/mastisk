@@ -94,7 +94,11 @@ export function PodcastView({ articleId, onAsk, onNavigate }: Props) {
   if (!data) return <div className="podcast-loading">Loading podcast…</div>;
 
   const cover = data.source.hero_image_url || data.article.heroImageUrl || null;
-  const isYouTube = data.source.kind === 'youtube';
+  const isPodcast = data.source.kind === 'podcast';
+  const hasPlayableAudio = isPodcast && (
+    !!data.source.feed_url
+    || /\.(mp3|m4a|ogg|opus|wav|aac|flac)(?:$|[?#])/i.test(data.source.url)
+  );
 
   return (
     <div className="podcast-view">
@@ -104,12 +108,12 @@ export function PodcastView({ articleId, onAsk, onNavigate }: Props) {
             <img src={cover} alt={data.source.title || data.article.title} />
           ) : (
             <div className="pod-cover-fallback">
-              {isYouTube ? Icon.video : Icon.podcast}
+              {isPodcast ? Icon.podcast : Icon.video}
             </div>
           )}
         </div>
         <div className="pod-meta">
-          <div className="pod-kind-tag">{isYouTube ? 'YouTube' : 'Podcast'}</div>
+          <div className="pod-kind-tag">{mediaLabel(data.source.kind)}</div>
           <h1 className="pod-title">{data.article.title}</h1>
           {data.source.author && (
             <div className="pod-show">{data.source.author}</div>
@@ -140,7 +144,7 @@ export function PodcastView({ articleId, onAsk, onNavigate }: Props) {
         </div>
       </header>
 
-      {!isYouTube && data.source.url && (
+      {hasPlayableAudio && data.source.url && (
         <div className="pod-player">
           <AudioPlayer
             ref={audioRef}
@@ -267,6 +271,12 @@ function formatTime(sec: number): string {
   const r = s % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
   return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+function mediaLabel(kind: PodcastViewT['source']['kind']): string {
+  if (kind === 'youtube') return 'YouTube';
+  if (kind === 'video') return 'Video';
+  return 'Podcast';
 }
 
 function formatDuration(sec: number): string {

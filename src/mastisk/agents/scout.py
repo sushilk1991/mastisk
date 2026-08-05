@@ -17,13 +17,15 @@ import httpx
 import trafilatura
 
 from mastisk.agents.base import Agent, enqueue
-from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.integrations.article import (
     extract_inline_images as _extract_inline_images,
+)
+from mastisk.integrations.article import (
     first_img_in_html as _first_img_in_html,
 )
 from mastisk.paths import raw_dir, self_dir
+from mastisk.vault_io import read_vault_text
 
 log = logging.getLogger("mastisk.scout")
 
@@ -225,14 +227,14 @@ class Scout(Agent):
         p = self_dir() / "interests.md"
         if not p.exists():
             return []
-        return [re.sub(r"^[-*•\d.\s]+", "", line).strip() for line in p.read_text().splitlines()
+        return [re.sub(r"^[-*•\d.\s]+", "", line).strip() for line in read_vault_text(p).splitlines()
                 if line.strip() and not line.lstrip().startswith("#")]
 
     def _load_dislikes(self) -> list[str]:
         p = self_dir() / "dislikes.md"
         words: list[str] = []
         if p.exists():
-            for line in p.read_text().splitlines():
+            for line in read_vault_text(p).splitlines():
                 if line.strip() and not line.lstrip().startswith("#"):
                     cleaned = re.sub(r"^[-*•\d.\s]+", "", line).strip().lower()
                     if cleaned:
@@ -251,7 +253,7 @@ class Scout(Agent):
         if not p.exists():
             return []
         words: list[str] = []
-        for line in p.read_text().splitlines():
+        for line in read_vault_text(p).splitlines():
             cleaned = re.sub(r"^[-*•\d.\s]+", "", line).strip()
             cleaned = re.sub(r"^\(\d{4}-\d{2}-\d{2}\)\s*", "", cleaned)
             if cleaned.lower().startswith("avoid:"):

@@ -57,6 +57,8 @@ def test_list_returns_podcast_articles(client, db):
     _seed_source_and_article(db, article_id="a1", source_id="s1", kind="podcast")
     _seed_source_and_article(db, article_id="a2", source_id="s2", kind="youtube",
                              audio_url="https://youtube.com/watch?v=foo")
+    _seed_source_and_article(db, article_id="a3", source_id="s3", kind="video",
+                             audio_url="https://vimeo.com/123")
     # An article with no podcast source — should NOT appear in the list.
     db.execute(
         """INSERT INTO articles (id, kind, title, slug, aka_json, summary,
@@ -69,7 +71,7 @@ def test_list_returns_podcast_articles(client, db):
     assert r.status_code == 200
     items = r.json()["items"]
     ids = [i["article_id"] for i in items]
-    assert set(ids) == {"a1", "a2"}
+    assert set(ids) == {"a1", "a2", "a3"}
     assert "plain" not in ids
 
 

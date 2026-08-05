@@ -38,6 +38,7 @@ from mastisk.db.queries import connect
 from mastisk.memory_conventions import DATED_FACTS_PROMPT
 from mastisk.paths import self_dir
 from mastisk.settings import get_settings
+from mastisk.vault_io import read_vault_text, write_vault_text
 
 log = logging.getLogger("mastisk.gardener")
 
@@ -463,7 +464,7 @@ class Gardener(Agent):
         path = self_dir() / "learnings.md"
         if not path.exists():
             return "(none yet)"
-        text = path.read_text()
+        text = read_vault_text(path)
         idx = text.find(PREFERENCE_RULES_HEADING)
         if idx == -1:
             return "(none yet)"
@@ -479,7 +480,7 @@ class Gardener(Agent):
         today = datetime.now(tz).date().isoformat()
         path = self_dir() / "learnings.md"
         path.parent.mkdir(parents=True, exist_ok=True)
-        text = path.read_text() if path.exists() else "# Learnings\n"
+        text = read_vault_text(path) if path.exists() else "# Learnings\n"
         block = "".join(f"- ({today}) {rule}\n" for rule in rules)
         if PREFERENCE_RULES_HEADING in text:
             # Append at the end of the existing section.
@@ -490,13 +491,13 @@ class Gardener(Agent):
             text = text[:insert_at].rstrip("\n") + "\n" + block + text[insert_at:].lstrip("\n")
         else:
             text = text.rstrip("\n") + f"\n\n{PREFERENCE_RULES_HEADING}\n\n" + block
-        path.write_text(text)
+        write_vault_text(path, text)
 
     def _learnings_tail(self, *, max_lines: int = 30) -> str:
         path = self_dir() / "learnings.md"
         if not path.exists():
             return "(learnings.md does not exist yet)"
-        tail = path.read_text().splitlines()[-max_lines:]
+        tail = read_vault_text(path).splitlines()[-max_lines:]
         return "\n".join(tail) or "(empty)"
 
     def _append_learnings(self, learnings: list[str]) -> None:
@@ -504,9 +505,9 @@ class Gardener(Agent):
         today = datetime.now(tz).date().isoformat()
         path = self_dir() / "learnings.md"
         path.parent.mkdir(parents=True, exist_ok=True)
-        existing = path.read_text() if path.exists() else "# Learnings\n"
+        existing = read_vault_text(path) if path.exists() else "# Learnings\n"
         block = "".join(f"- ({today}) {entry}\n" for entry in learnings)
-        path.write_text(existing.rstrip("\n") + "\n" + block)
+        write_vault_text(path, existing.rstrip("\n") + "\n" + block)
 
 
 def _strip_tags(html: str) -> str:

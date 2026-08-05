@@ -20,6 +20,7 @@ async def fetch_metadata(url: str) -> dict:
         info = await asyncio.to_thread(_extract_info, url, False)
     except Exception as e:
         raise RuntimeError(f"yt-dlp: {e}") from e
+    _require_single_media(info)
     upload = info.get("upload_date") or ""
     upload_iso = f"{upload[:4]}-{upload[4:6]}-{upload[6:8]}" if len(upload) == 8 else None
     return {
@@ -71,9 +72,23 @@ async def download_audio(url: str, out_dir: Path) -> Path:
 
 def _extract_info(url: str, download: bool) -> dict:
     from yt_dlp import YoutubeDL
-    opts = {"quiet": True, "no_warnings": True, "skip_download": not download}
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": not download,
+        "noplaylist": True,
+        "playlist_items": "1",
+    }
     with YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=download) or {}
+
+
+def _require_single_media(info: dict) -> None:
+    if info.get("_type") in {"playlist", "multi_video"}:
+        raise RuntimeError(
+            "yt-dlp: playlists and channel pages are not supported; "
+            "use a single video or episode URL"
+        )
 
 
 def _download_subs(url: str, out_dir: Path) -> Path | None:
@@ -88,11 +103,14 @@ def _download_subs(url: str, out_dir: Path) -> Path | None:
         "subtitleslangs": ["en", "en-US", "en-GB"],
         "subtitlesformat": "vtt",
         "outtmpl": outtmpl,
+        "noplaylist": True,
+        "playlist_items": "1",
     }
     # First pass: human subs only.
     opts_human = {**base_opts, "writesubtitles": True, "writeautomaticsub": False}
     with YoutubeDL(opts_human) as ydl:
         info = ydl.extract_info(url, download=True) or {}
+    _require_single_media(info)
     vid = info.get("id") or ""
     found = _find_vtt(out_dir, vid)
     if found:
@@ -101,6 +119,7 @@ def _download_subs(url: str, out_dir: Path) -> Path | None:
     opts_auto = {**base_opts, "writesubtitles": False, "writeautomaticsub": True}
     with YoutubeDL(opts_auto) as ydl:
         info = ydl.extract_info(url, download=True) or {}
+    _require_single_media(info)
     vid = info.get("id") or vid
     return _find_vtt(out_dir, vid)
 
@@ -127,12 +146,15 @@ def _download_audio(url: str, out_dir: Path) -> str | None:
         "no_warnings": True,
         "format": "bestaudio/best",
         "outtmpl": outtmpl,
+        "noplaylist": True,
+        "playlist_items": "1",
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "m4a"},
         ],
     }
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True) or {}
+    _require_single_media(info)
     vid = info.get("id") or ""
     # After postprocessing the file should be <id>.m4a. Fall back to any file.
     cand = out_dir / f"{vid}.m4a"

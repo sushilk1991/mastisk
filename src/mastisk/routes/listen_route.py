@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -16,6 +17,8 @@ router = APIRouter(tags=["listener"])
 
 class ListenIn(BaseModel):
     url: str
+    media_type: Literal["video", "podcast"] | None = None
+    media_scope: Literal["episode", "show"] | None = None
 
 
 @router.post("/listen")
@@ -28,12 +31,19 @@ async def listen(body: ListenIn) -> dict:
     # classification. Rejecting on "unknown" from the route would wrongly 400
     # on transient network failures during classify.
     #
-    # classify_and_resolve also auto-discovers RSS feeds inside HTML pages
-    # (e.g. https://www.founderspodcast.com/episodes → its Megaphone feed),
-    # so the user can paste a podcast show page and it Just Works. We pass
-    # the *resolved* URL into the job so the Listener doesn't repeat discovery.
+    # Podcast show hints use classify_and_resolve so an advertised RSS feed is
+    # preferred over scraping/transcribing the show page itself. Episode hints
+    # keep the exact page: replacing one with a show feed would transcribe the
+    # newest episode instead. Video hints likewise keep the original page rather
+    # than following an unrelated site-wide RSS link.
     try:
-        cls, resolved_url = await podcasts.classify_and_resolve(url)
+        if body.media_type == "video" or (
+            body.media_type == "podcast" and body.media_scope == "episode"
+        ):
+            cls = await podcasts.classify(url)
+            resolved_url = url
+        else:
+            cls, resolved_url = await podcasts.classify_and_resolve(url)
     except Exception as e:
         log.info("classify failed for %s: %s", url, e)
         cls, resolved_url = "unknown", url
@@ -45,8 +55,13 @@ async def listen(body: ListenIn) -> dict:
             "Try the podcast's RSS feed URL or Apple Podcasts link.",
         )
 
-    job_id = enqueue("listener", "transcribe", {"url": resolved_url})
-    kind_label = cls if cls != "unknown" else "source"
+    payload = {"url": resolved_url}
+    if body.media_type:
+        payload["media_type"] = body.media_type
+    if body.media_type == "podcast" and body.media_scope:
+        payload["media_scope"] = body.media_scope
+    job_id = enqueue("listener", "transcribe", payload)
+    kind_label = body.media_type or (cls if cls != "unknown" else "source")
     discovered_note = (
         f" (auto-discovered feed: {resolved_url})"
         if resolved_url != url else ""

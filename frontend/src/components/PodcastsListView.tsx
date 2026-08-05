@@ -54,13 +54,13 @@ export function PodcastsListView({ onNavigate }: Props) {
                 />
               ) : (
                 <div className="podcast-card-fallback">
-                  {item.source_kind === 'youtube' ? Icon.video : Icon.podcast}
+                  {item.source_kind === 'podcast' ? Icon.podcast : Icon.video}
                 </div>
               )}
             </div>
             <div className="podcast-card-body">
               <div className="podcast-card-tag">
-                {item.source_kind === 'youtube' ? 'YouTube' : 'Podcast'}
+                {mediaLabel(item.source_kind)}
               </div>
               <h3 className="podcast-card-title">{item.article_title}</h3>
               {item.source_author && (
@@ -97,6 +97,12 @@ function formatDuration(sec: number): string {
   const h = Math.floor(m / 60);
   const rm = m % 60;
   return rm === 0 ? `${h}h` : `${h}h ${rm}m`;
+}
+
+function mediaLabel(kind: PodcastListItem['source_kind']): string {
+  if (kind === 'youtube') return 'YouTube';
+  if (kind === 'video') return 'Video';
+  return 'Podcast';
 }
 
 function formatDate(iso: string): string {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mastisk Clipper",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Clip pages, selections, and links to your local Mastisk personal knowledge wiki, and chat with the wiki plus the current page.",
   "permissions": [
     "alarms",

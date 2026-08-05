@@ -43,6 +43,7 @@ from mastisk.bridges import intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import vault_dir
+from mastisk.vault_io import write_vault_text
 
 log = logging.getLogger("mastisk.synthesizer")
 
@@ -761,7 +762,7 @@ class Synthesizer(Agent):
             q.set_related(conn, article_id, data.get("related", []))
 
         vault_path.parent.mkdir(parents=True, exist_ok=True)
-        vault_path.write_text(_render_markdown(data))
+        write_vault_text(vault_path, _render_markdown(data))
         return article_id
 
 

@@ -9,9 +9,11 @@ No build step — load the folder as-is.
 ## Features
 
 - **Right-click → Send to Mastisk**
-  - *Send page to Mastisk* — extracts readable content (Defuddle) and indexes the page.
+  - *Send page to Mastisk* — routes primary video/podcast pages to the Listener;
+    ordinary pages are extracted as Markdown with Defuddle and indexed by the Compiler.
   - *Send selection to Mastisk* — clips the highlighted text.
-  - *Send link to Mastisk* — opens the link in a background tab, extracts it, indexes it, closes the tab.
+  - *Send link to Mastisk* — routes recognizable media URLs directly; otherwise opens the
+    link in a background tab, detects media or extracts text, indexes it, then closes the tab.
 - **Indexing feedback** — a desktop notification when the clip is sent, the toolbar badge shows `…`
   while indexing, and you get an *Indexed: <title>* notification when it lands. Click it to open the
   compiled wiki article.
@@ -40,6 +42,7 @@ The extension talks to the Mastisk daemon over these endpoints:
 - `GET /api/health` — connection test.
 - `POST /api/ingest/web` — submit a clip; returns a `source_id` and queued status.
 - `GET /api/ingest/web/{source_id}` — poll indexing status.
+- `POST /api/listen` — queue detected YouTube/video/podcast media for transcription.
 - `POST /api/ask` — RAG question answering across the wiki (+ the current page).
 
 All requests are made from the background service worker, which holds the host permissions.
@@ -54,9 +57,11 @@ uv run --with pillow python scripts/generate-icons.py
 
 - `manifest.json` — MV3 manifest.
 - `background.js` — context menus, extraction, ingest + polling, notifications, badge, message routing.
-- `chat-content.js` — page-type-aware content extraction (injected into the page).
+- `media-content.js` — lightweight primary-video/podcast detection.
+- `chat-content.js` — Defuddle Markdown extraction for textual page/chat context.
 - `sidepanel.{html,css,js}` — the chat UI.
 - `popup.{html,js}` — quick actions + connection status.
 - `options.{html,js}` — server URL configuration.
-- `lib/defuddle.js` — bundled Defuddle reader (vendored).
+- `lib/defuddle.js` — vendored Defuddle 0.19.2 full browser bundle
+  (`defuddle/dist/index.full.js`).
 - `lib/markdown.js` — markdown → HTML renderer for chat answers.

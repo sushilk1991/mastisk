@@ -1,7 +1,7 @@
-"""Listener — ingests YouTube videos and podcast audio.
+"""Listener — ingests remote video, YouTube, and podcast audio.
 
 Pipeline per job:
-  1. classify URL (youtube | rss | direct_audio | spotify | unknown)
+  1. classify URL (youtube | rss | direct_audio | article | spotify | unknown)
   2. obtain transcript (yt-dlp subs → mlx-whisper fallback, or direct whisper)
   3. extract entities via Claude (summary, books, people, concepts)
   4. enrich books via OpenLibrary, pre-create Entity articles for each resolved book
@@ -42,6 +42,7 @@ from mastisk.integrations import (
 )
 from mastisk.integrations.podcasts import UnsupportedPlatformError
 from mastisk.paths import raw_dir, tmp_dir, vault_dir
+from mastisk.vault_io import write_vault_text
 
 log = logging.getLogger("mastisk.listener")
 
@@ -60,25 +61,66 @@ class Listener(Agent):
         url = (payload.get("url") or "").strip()
         if not url:
             raise RuntimeError("listener: no url in job payload")
-        await self._handle_transcribe(url)
+        media_type = payload.get("media_type")
+        if media_type not in ("video", "podcast"):
+            media_type = None
+        media_scope = payload.get("media_scope")
+        if media_scope not in ("episode", "show"):
+            media_scope = None
+        await self._handle_transcribe(
+            url,
+            media_type=media_type,
+            media_scope=media_scope,
+        )
 
-    # ───── transcribe (YouTube / direct audio / rss) ─────
+    # ───── transcribe (remote video / YouTube / direct audio / rss) ─────
 
-    async def _handle_transcribe(self, url: str) -> None:
-        # classify_and_resolve auto-discovers RSS feeds inside HTML pages, so
-        # a "podcast show page" URL like https://www.founderspodcast.com/episodes
-        # gets resolved to its Megaphone feed before we make routing decisions.
-        # The route layer also calls this and stores the resolved URL in the job
-        # payload — we re-run here to handle the rare case where a job was queued
-        # by some path that didn't pre-resolve (CLI, direct DB insert, retries).
-        cls, url = await podcasts.classify_and_resolve(url)
-        log.info("listener: classified %s as %s", url, cls)
+    async def _handle_transcribe(
+        self,
+        url: str,
+        *,
+        media_type: str | None = None,
+        media_scope: str | None = None,
+    ) -> None:
+        # Show pages may resolve to an advertised RSS feed. Episode pages keep
+        # their exact URL so a show feed cannot silently substitute its newest
+        # entry. The route normally pre-resolves too; we repeat classification
+        # for jobs queued through other paths or retried from older payloads.
+        original_url = url
+        if media_type == "podcast" and media_scope == "episode":
+            cls = await podcasts.classify(url)
+            resolved_url = url
+        else:
+            cls, resolved_url = await podcasts.classify_and_resolve(url)
+        log.info(
+            "listener: classified %s as %s (media_type=%s, media_scope=%s)",
+            resolved_url,
+            cls,
+            media_type,
+            media_scope,
+        )
 
         if cls == "spotify":
             raise UnsupportedPlatformError(
                 "Spotify podcasts are DRM-protected and can't be ingested. "
                 "Try the podcast's RSS feed URL or Apple Podcasts link."
             )
+
+        # The browser can observe the rendered DOM, so its primary-media hint is
+        # stronger evidence than a server-side HEAD/HTML sniff. yt-dlp supports
+        # far more than YouTube (Vimeo, Loom, Apple Podcasts, direct media, etc.),
+        # and the existing YouTube integration is already a thin yt-dlp adapter.
+        # Keep the original page URL for video: an unrelated site-wide RSS link
+        # may have changed resolved_url above.
+        if media_type == "video":
+            source_kind = "youtube" if cls == "youtube" else "video"
+            await self._ingest_youtube(original_url, source_kind=source_kind)
+            return
+        if media_type == "podcast" and cls not in ("rss", "direct_audio", "youtube"):
+            await self._ingest_youtube(original_url, source_kind="podcast")
+            return
+
+        url = resolved_url
         if cls == "unknown":
             raise RuntimeError(f"can't ingest {url} — unknown type")
 
@@ -111,27 +153,33 @@ class Listener(Agent):
             return
 
         if cls == "youtube":
-            await self._ingest_youtube(url)
+            await self._ingest_youtube(url, source_kind="youtube")
             return
 
         if cls == "direct_audio":
             await self._ingest_direct_audio(url)
             return
 
-    async def _ingest_youtube(self, url: str) -> None:
+    async def _ingest_youtube(self, url: str, *, source_kind: str = "youtube") -> None:
+        """Ingest any yt-dlp-supported media page.
+
+        The historical name stays private to avoid a noisy module rename, but
+        ``source_kind`` preserves whether the input was YouTube, another video,
+        or a podcast page.
+        """
         meta = await youtube.fetch_metadata(url)
         canonical_url = meta.get("webpage_url") or url
         src_id = _hash16(canonical_url or meta.get("title") or "")
         if self._source_exists(src_id):
-            log.info("listener: youtube %s already ingested, skipping", canonical_url)
+            log.info("listener: %s %s already ingested, skipping", source_kind, canonical_url)
             self.emit_feed(
                 verb="duplicate",
                 obj=(meta.get("title") or canonical_url)[:80],
-                kind="youtube",
+                kind=source_kind,
                 payload={"source_id": src_id, "url": canonical_url},
             )
             return
-        work_dir = tmp_dir() / f"yt-{meta['id'] or _hash16(url)}"
+        work_dir = tmp_dir() / f"media-{meta['id'] or _hash16(url)}"
         work_dir.mkdir(parents=True, exist_ok=True)
         try:
             transcript = ""
@@ -143,7 +191,7 @@ class Listener(Agent):
                 # Fall back to whisper. Fail loud with a useful hint if it's missing.
                 if not whisper.is_available():
                     raise RuntimeError(
-                        f"no subtitles on {url} and mlx-whisper is not installed. "
+                        f"no subtitles or transcript on {url} and mlx-whisper is not installed. "
                         "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
                     )
                 audio_path = await youtube.download_audio(url, work_dir)
@@ -155,7 +203,7 @@ class Listener(Agent):
                 "title": meta["title"],
                 "author": meta.get("uploader") or meta.get("channel"),
                 "published_at": meta.get("upload_date"),
-                "source_kind": "youtube",
+                "source_kind": source_kind,
                 "url": meta.get("webpage_url") or url,
                 "duration_sec": meta.get("duration_sec"),
                 "hero_image_url": meta.get("thumbnail") or None,
@@ -163,7 +211,7 @@ class Listener(Agent):
             await self._finalize_ingest(
                 transcript=transcript,
                 source_context=src_context,
-                source_kind="youtube",
+                source_kind=source_kind,
                 segments=segments,
             )
         finally:
@@ -605,7 +653,8 @@ class Listener(Agent):
         # Mirror to vault. Mirrors Compiler._render_markdown shape lightly —
         # full rendering is the Compiler's job if it later writes over us.
         vault_path.parent.mkdir(parents=True, exist_ok=True)
-        vault_path.write_text(
+        write_vault_text(
+            vault_path,
             "\n".join([
                 "---",
                 f"id: {slug}",

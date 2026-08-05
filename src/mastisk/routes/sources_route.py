@@ -167,7 +167,11 @@ def list_jobs(limit: int = 50):
                         "SELECT title, kind FROM sources WHERE id=?", (source_id,),
                     ).fetchone()
                     title = (src["title"] if src and src["title"] else None) or _hostname(url) or url
-                    source_kind = (src["kind"] if src else None) or _classify_url_cheap(url)
+                    source_kind = (
+                        (src["kind"] if src else None)
+                        or payload.get("media_type")
+                        or _classify_url_cheap(url)
+                    )
                     subtitle = _hostname(url)
                 elif r["kind"] == "transcribe_audio":
                     audio_url = payload.get("audio_url") or ""
@@ -238,6 +242,8 @@ def _classify_url_cheap(url: str) -> str | None:
     lower = url.lower().split("?", 1)[0]
     if any(lower.endswith(ext) for ext in (".mp3", ".m4a", ".ogg", ".opus", ".wav")):
         return "podcast"
+    if any(lower.endswith(ext) for ext in (".mp4", ".m4v", ".mov", ".webm", ".mkv", ".m3u8")):
+        return "video"
     return None
 
 

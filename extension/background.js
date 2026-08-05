@@ -37,6 +37,9 @@ const FIELD_LIMITS = {
   selection: 400000,
 };
 
+const AUDIO_EXT_RE = /\.(?:mp3|m4a|ogg|opus|wav|aac|flac)(?:$|[?#])/i;
+const VIDEO_EXT_RE = /\.(?:mp4|m4v|mov|webm|mkv|m3u8)(?:$|[?#])/i;
+
 function clampField(value, max) {
   return typeof value === 'string' && value.length > max ? value.slice(0, max) : value;
 }
@@ -285,6 +288,58 @@ async function getIngestStatus(sourceId) {
   return resp.json();
 }
 
+// Queue a media URL for the Listener. Unlike a textual web clip, Listener work
+// may include a long download/transcription before it hands a source to the
+// Compiler, so the extension confirms durable queue acceptance and leaves the
+// downstream agents visible in Mastisk's queue instead of timing out a badge.
+async function enqueueMedia(media, feedbackTab, title) {
+  const feedbackTabId = feedbackTab?.id;
+  if (!media?.url || media.url.length > FIELD_LIMITS.url) {
+    await feedback(feedbackTabId, 'error', "Can't add media", 'The media URL is missing or too long.');
+    return false;
+  }
+
+  const label = media.media_type === 'podcast' ? 'Podcast' : 'Video';
+  await showToast(feedbackTabId, `Sending ${label.toLowerCase()} to the Listener…`, 'info');
+  const server = await getServerUrl();
+  let resp;
+  try {
+    resp = await fetch(`${server}/api/listen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: media.url,
+        media_type: media.media_type,
+        ...(media.media_scope ? { media_scope: media.media_scope } : {}),
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch {
+    await feedback(feedbackTabId, 'error', 'Media handoff failed',
+      `Mastisk daemon unreachable at ${server}`);
+    return false;
+  }
+
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (data?.detail) detail = typeof data.detail === 'string'
+        ? data.detail
+        : JSON.stringify(data.detail);
+    } catch { /* non-JSON error body */ }
+    await feedback(feedbackTabId, 'error', 'Media handoff failed', detail);
+    return false;
+  }
+
+  const data = await resp.json();
+  const displayTitle = title || label;
+  const jobNote = data?.job_id ? ` Listener job ${data.job_id}.` : '';
+  await feedback(feedbackTabId, 'success', `Sent ${displayTitle} to Mastisk`,
+    `${label} queued for transcription.${jobNote}`);
+  return true;
+}
+
 function articleUrl(server, id) {
   return `${server}/a/${id}`;
 }
@@ -476,6 +531,60 @@ function mapKind(type) {
   return 'web';
 }
 
+// URL-only detection handles direct media links without loading or scripting a
+// background tab. Rendered-page detection below covers embedded/native media
+// and podcast metadata on otherwise generic domains.
+function classifyMediaUrl(rawUrl) {
+  if (!rawUrl) return null;
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(parsed.protocol)) return null;
+
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  const url = parsed.href;
+  const onHost = (domain) => host === domain || host.endsWith(`.${domain}`);
+  const youtubePath = parsed.pathname.replace(/\/+$/, '');
+  const isYouTubeMedia = (host === 'youtu.be' && youtubePath.length > 1)
+    || ((onHost('youtube.com') || onHost('youtube-nocookie.com'))
+      && ((youtubePath === '/watch' && parsed.searchParams.has('v'))
+        || /^\/(?:shorts|live|embed)\/[^/]+$/i.test(youtubePath)));
+  if (isYouTubeMedia) {
+    return { media_type: 'video', url, reason: 'video-url' };
+  }
+  if (AUDIO_EXT_RE.test(parsed.pathname)) {
+    return { media_type: 'podcast', media_scope: 'episode', url, reason: 'audio-url' };
+  }
+  if (VIDEO_EXT_RE.test(parsed.pathname)) {
+    return { media_type: 'video', url, reason: 'video-url' };
+  }
+
+  const isVideoPlatformMedia = (onHost('vimeo.com') && /^\/(?:video\/)?\d+(?:\/|$)/.test(parsed.pathname))
+    || (onHost('loom.com') && /^\/(?:share|embed)\/[^/]+/.test(parsed.pathname))
+    || (onHost('tiktok.com') && /\/video\/\d+/.test(parsed.pathname))
+    || (onHost('dailymotion.com') && /\/(?:embed\/)?video\/[^/]+/.test(parsed.pathname));
+  if (isVideoPlatformMedia) {
+    return { media_type: 'video', url, reason: 'video-platform' };
+  }
+
+  const podcastHost = /(^|\.)(podcasts\.apple\.com|podcasts\.google\.com|pca\.st|podbean\.com|buzzsprout\.com|simplecast\.com|transistor\.fm|captivate\.fm|spreaker\.com|libsyn\.com|megaphone\.fm|overcast\.fm|castbox\.fm)$/.test(host)
+    || (host === 'open.spotify.com' && /^\/(episode|show)\//.test(parsed.pathname));
+  if (podcastHost) {
+    const episodeUrl = /\/(?:episodes?|e)\/[^/]+/i.test(parsed.pathname)
+      || parsed.searchParams.has('i');
+    return {
+      media_type: 'podcast',
+      media_scope: episodeUrl ? 'episode' : 'show',
+      url,
+      reason: 'podcast-platform',
+    };
+  }
+  return null;
+}
+
 // A page we cannot script into (chrome://, Web Store, PDF viewer, etc.)
 function isRestrictedUrl(url) {
   if (!url) return true;
@@ -519,12 +628,40 @@ async function extractFromTab(tabId) {
   }
 }
 
+async function detectMediaFromTab(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'ISOLATED',
+      files: ['media-content.js'],
+    });
+    const media = results?.[0]?.result;
+    return media?.url && (media.media_type === 'video' || media.media_type === 'podcast')
+      ? media
+      : null;
+  } catch (err) {
+    console.warn('[Mastisk] Media detection failed:', err.message);
+    return null;
+  }
+}
+
+async function mediaForTab(tab) {
+  return (tab?.id ? await detectMediaFromTab(tab.id) : null)
+    || classifyMediaUrl(tab?.url);
+}
+
 // Send the whole current page.
 async function sendPage(tab) {
   if (!tab?.id || isRestrictedUrl(tab.url)) {
     notify("Can't clip this page", 'This browser page cannot be read by extensions.');
     return;
   }
+  const media = await mediaForTab(tab);
+  if (media) {
+    await enqueueMedia(media, tab, tab.title || 'media');
+    return;
+  }
+
   showToast(tab.id, 'Sending page to Mastisk…', 'info');
   const data = await extractFromTab(tab.id);
   if (!data || !data.content) {
@@ -585,6 +722,12 @@ async function sendLink(linkUrl, srcTab) {
     await feedback(srcTabId, 'error', "Can't clip this link", 'This link cannot be opened for clipping.');
     return;
   }
+  const directMedia = classifyMediaUrl(linkUrl);
+  if (directMedia && directMedia.reason !== 'podcast-platform') {
+    await enqueueMedia(directMedia, srcTab, 'media');
+    return;
+  }
+
   showToast(srcTabId, 'Fetching link for Mastisk…', 'info');
 
   let bgTab;
@@ -599,6 +742,11 @@ async function sendLink(linkUrl, srcTab) {
     await waitForTabComplete(bgTab.id, LINK_LOAD_TIMEOUT_MS);
     // Small settle delay for client-rendered pages.
     await sleep(1200);
+    const media = await detectMediaFromTab(bgTab.id) || directMedia;
+    if (media) {
+      await enqueueMedia(media, srcTab, bgTab.title || 'media');
+      return;
+    }
     const data = await extractFromTab(bgTab.id);
     if (!data || !data.content) {
       await feedback(srcTabId, 'error', "Can't clip this link", 'Could not extract readable content from the link.');

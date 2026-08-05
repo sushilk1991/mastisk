@@ -37,6 +37,16 @@ def test_done_tasks_have_their_own_bucket():
     assert "if (task.status !== 'open') return 'done';" in source
 
 
+def test_task_due_date_editor_uses_native_date_picker():
+    source = _dashboard_source()
+
+    task_editor = source.split('<div className="task-edit">', 1)[1].split("</div>", 1)[0]
+    assert 'type="date"' in task_editor
+    assert 'placeholder="due"' not in task_editor
+    assert "useState(datePart(task.due))" in source
+    assert "`${due}${task.due.slice(10)}`" in task_editor
+
+
 def test_slipping_muted_items_have_unmute_action():
     source = _dashboard_source()
 

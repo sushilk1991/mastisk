@@ -970,7 +970,7 @@ export interface PodcastListItem {
   article_updated_at: string;
   article_hero: string | null;
   source_id: string;
-  source_kind: 'podcast' | 'youtube';
+  source_kind: 'podcast' | 'youtube' | 'video';
   source_title: string;
   source_url: string;
   source_author: string | null;
@@ -1006,7 +1006,7 @@ export interface PodcastView {
   article: Article;
   source: {
     id: string;
-    kind: 'podcast' | 'youtube';
+    kind: 'podcast' | 'youtube' | 'video';
     title: string;
     url: string;
     author: string;

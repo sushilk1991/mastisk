@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import self_dir, vault_dir
+from mastisk.vault_io import read_vault_text
 
 router = APIRouter(tags=["ask"])
 log = logging.getLogger("mastisk.ask")
@@ -578,7 +579,7 @@ def _identity_sources() -> list[dict]:
         path: Path = self_dir() / f"{name}.md"
         if not path.exists():
             continue
-        content = path.read_text(encoding="utf-8").strip()
+        content = read_vault_text(path).strip()
         if content:
             rows.append({
                 "id": f"self:{name}",

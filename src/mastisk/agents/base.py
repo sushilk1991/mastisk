@@ -4,12 +4,12 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import ClassVar
 
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import self_dir
+from mastisk.vault_io import read_vault_text
 
 log = logging.getLogger("mastisk.agent")
 
@@ -88,7 +88,7 @@ class Agent(ABC):
         for fname in ("identity", "interests", "dislikes", "style", "learnings"):
             p = self_dir() / f"{fname}.md"
             if p.exists():
-                txt = p.read_text().strip()
+                txt = read_vault_text(p).strip()
                 if txt:
                     parts.append(f"## {fname}\n{txt}")
         if not parts:

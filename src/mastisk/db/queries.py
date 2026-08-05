@@ -722,7 +722,7 @@ def list_podcast_articles(
     *,
     limit: int = 100,
 ) -> list[dict]:
-    """List articles whose attached source is a podcast or YouTube video.
+    """List articles whose attached source is a podcast or remote video.
 
     Returns one row per (article, source) pair — typically 1:1 since the
     Listener writes a single source per ingest. Ordered by source.published_at
@@ -750,7 +750,7 @@ def list_podcast_articles(
            FROM article_sources a_s
            JOIN sources  s ON s.id = a_s.source_id
            JOIN articles a ON a.id = a_s.article_id
-           WHERE s.kind IN ('podcast', 'youtube')
+           WHERE s.kind IN ('podcast', 'youtube', 'video')
            ORDER BY COALESCE(s.published_at, a.updated_at) DESC
            LIMIT ?""",
         (limit,),
@@ -763,7 +763,7 @@ def get_podcast_view(
 ) -> dict | None:
     """Return the joined article + source + transcript payload for the
     podcast detail page. Returns None if the article doesn't exist or has
-    no podcast/youtube source attached.
+    no podcast/video source attached.
 
     The transcript text is read from sources.raw_path. When
     source_transcript_segments has rows for this source, they are returned
@@ -776,7 +776,7 @@ def get_podcast_view(
     src = conn.execute(
         """SELECT s.* FROM article_sources a_s
            JOIN sources s ON s.id = a_s.source_id
-           WHERE a_s.article_id = ? AND s.kind IN ('podcast', 'youtube')
+           WHERE a_s.article_id = ? AND s.kind IN ('podcast', 'youtube', 'video')
            ORDER BY s.fetched_at DESC LIMIT 1""",
         (article_id,),
     ).fetchone()
@@ -915,12 +915,13 @@ def user_info(conn: sqlite3.Connection) -> dict:
     import re
 
     from mastisk.paths import self_dir
+    from mastisk.vault_io import read_vault_text
 
     # Name: prefer first bullet under `## Role` in identity.md, else OS user, else "You".
     name = (getpass.getuser() or "you").capitalize()
     p = self_dir() / "identity.md"
     if p.exists():
-        text = p.read_text()
+        text = read_vault_text(p)
         m = re.search(r"^##\s*Role\s*\n([^\n]*\n){0,8}", text, flags=re.M)
         if m:
             for line in m.group(0).splitlines()[1:]:
