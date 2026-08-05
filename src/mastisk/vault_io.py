@@ -184,13 +184,19 @@ def _atomic_replace_text(
     )
     tmp_path = Path(tmp_name)
     try:
-        with os.fdopen(fd, "w", encoding=encoding, errors=errors) as handle:
+        handle = os.fdopen(fd, "w", encoding=encoding, errors=errors)
+    except Exception:
+        with suppress(OSError):
+            os.close(fd)
+        with suppress(FileNotFoundError):
+            tmp_path.unlink()
+        raise
+    try:
+        with handle:
             written = handle.write(content)
         os.replace(tmp_path, path)
         return written
     except Exception:
-        with suppress(OSError):
-            os.close(fd)
         with suppress(FileNotFoundError):
             tmp_path.unlink()
         raise

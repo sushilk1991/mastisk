@@ -114,6 +114,31 @@ def test_write_vault_text_atomically_replaces_icloud_placeholder(
     assert writes == 2
 
 
+def test_atomic_replace_failure_does_not_double_close_owned_descriptor(
+    vault_tmp: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = vault_tmp / "sources" / "replace-fails.md"
+    close_calls: list[int] = []
+    real_close = vault_io.os.close
+
+    def record_close(fd: int) -> None:
+        close_calls.append(fd)
+        real_close(fd)
+
+    def fail_replace(_source: Path, _target: Path) -> None:
+        raise OSError(errno.EIO, "replace failed")
+
+    monkeypatch.setattr(vault_io.os, "close", record_close)
+    monkeypatch.setattr(vault_io.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        vault_io._atomic_replace_text(path, "content", encoding="utf-8")
+
+    assert close_calls == []
+    assert list(path.parent.glob(f".{path.name}.*.tmp")) == []
+
+
 def test_self_write_refreshes_cache(
     vault_tmp: Path,
     data_tmp: Path,
@@ -257,3 +282,31 @@ def test_compiler_mirror_uses_resilient_vault_writer(
 
     assert writes[0][0] == vault_tmp / "sources" / "icloud-write-test.md"
     assert "# iCloud write test" in writes[0][1]
+
+
+def test_suggestions_mirror_replaces_unreadable_icloud_placeholder(
+    db,
+    vault_tmp: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mastisk import wiki_suggestions
+
+    path = wiki_suggestions.suggestions_file()
+    path.parent.mkdir(parents=True)
+    path.write_text("stale")
+    writes: list[tuple[Path, str]] = []
+
+    def fail_read(_path: Path) -> str:
+        raise _deadlock_error()
+
+    def fake_write(target: Path, content: str) -> int:
+        writes.append((target, content))
+        return len(content)
+
+    monkeypatch.setattr(wiki_suggestions, "read_vault_text", fail_read)
+    monkeypatch.setattr(wiki_suggestions, "write_vault_text", fake_write)
+
+    assert wiki_suggestions.render_vault_file() == path
+    assert len(writes) == 1
+    assert writes[0][0] == path
+    assert "# Suggested topics" in writes[0][1]

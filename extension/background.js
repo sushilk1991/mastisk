@@ -35,6 +35,7 @@ const FIELD_LIMITS = {
   hero_image_url: 2000,
   content: 400000,
   selection: 400000,
+  page_content: 20000,
 };
 
 const AUDIO_EXT_RE = /\.(?:mp3|m4a|ogg|opus|wav|aac|flac)(?:$|[?#])/i;
@@ -935,7 +936,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           messages: msg.messages || [],
           page_url: msg.page_url || undefined,
           page_title: msg.page_title || undefined,
-          page_content: msg.page_content || undefined,
+          page_content: clampField(msg.page_content, FIELD_LIMITS.page_content) || undefined,
         }),
         signal: AbortSignal.timeout(120000),
       });

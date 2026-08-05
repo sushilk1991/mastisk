@@ -11,6 +11,7 @@ overwritten on the next render.
 """
 from __future__ import annotations
 
+import errno
 import logging
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.file_locks import host_file_lock
 from mastisk.paths import vault_dir
-from mastisk.routes.notes import atomic_write
+from mastisk.vault_io import read_vault_text, write_vault_text
 
 log = logging.getLogger("mastisk.wiki_suggestions")
 
@@ -61,10 +62,18 @@ def render_vault_file() -> Path | None:
     path = suggestions_file()
     try:
         with host_file_lock(path):
-            if path.exists() and path.read_text() == content:
-                return path
+            if path.exists():
+                try:
+                    if read_vault_text(path) == content:
+                        return path
+                except OSError as exc:
+                    # An evicted iCloud placeholder cannot be compared, but
+                    # the DB-rendered mirror is authoritative and safe to
+                    # replace through the resilient writer below.
+                    if exc.errno != errno.EDEADLK:
+                        raise
             path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write(path, content)
+            write_vault_text(path, content)
     except OSError as e:
         log.warning("wiki_suggestions: vault mirror write failed: %s", e)
         return None

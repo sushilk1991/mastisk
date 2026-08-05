@@ -241,6 +241,11 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
         const vm = require('vm');
 
         const event = { addListener() {}, removeListener() {} };
+        let runtimeMessageListener = null;
+        const runtimeMessageEvent = {
+          addListener(listener) { runtimeMessageListener = listener; },
+          removeListener() {},
+        };
         const fetchCalls = [];
         const scriptCalls = [];
         const tabCreates = [];
@@ -253,7 +258,7 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
             lastError: null,
             onInstalled: event,
             onStartup: event,
-            onMessage: event,
+            onMessage: runtimeMessageEvent,
           },
           contextMenus: {
             onClicked: event,
@@ -343,6 +348,13 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
               async json() { return { article: { id: 'a1', title: 'An Essay' } }; },
             };
           }
+          if (url.endsWith('/api/ask')) {
+            return {
+              ok: true,
+              status: 200,
+              async json() { return { answer: 'bounded context', cites: [], hits: [] }; },
+            };
+          }
           throw new Error(`unexpected fetch ${url}`);
         }
 
@@ -399,6 +411,15 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
           await context.sendLink('https://youtu.be/xyz', articleTab);
           phase = 'podcast-link';
           await context.sendLink('https://example.podbean.com/e/exact-episode', articleTab);
+          phase = 'ask-long-page';
+          const askResponse = await new Promise((resolve, reject) => {
+            const keepAlive = runtimeMessageListener({
+              action: 'ask',
+              question: 'What matters here?',
+              page_content: 'x'.repeat(25000),
+            }, { id: 'mastisk-test' }, resolve);
+            if (keepAlive !== true) reject(new Error('ask listener did not stay alive'));
+          });
           await new Promise((resolve) => setTimeout(resolve, 0));
 
           const classifications = [
@@ -415,7 +436,9 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
             'https://evilyoutube.com/watch?v=abc',
             'https://example.com/essay',
           ].map((url) => [url, context.classifyMediaUrl(url)]);
-          console.log(JSON.stringify({ fetchCalls, scriptCalls, tabCreates, classifications }));
+          console.log(JSON.stringify({
+            fetchCalls, scriptCalls, tabCreates, classifications, askResponse,
+          }));
         })().catch((error) => {
           console.error(error);
           process.exit(2);
@@ -452,6 +475,10 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
     assert observed["tabCreates"] == [
         {"url": "https://example.podbean.com/e/exact-episode", "active": False}
     ]
+    ask_calls = [c for c in observed["fetchCalls"] if c["url"].endswith("/api/ask")]
+    assert len(ask_calls) == 1
+    assert len(ask_calls[0]["body"]["page_content"]) == 20_000
+    assert observed["askResponse"]["ok"] is True
 
     chat_phases = {
         c["phase"] for c in observed["scriptCalls"] if c["file"] == "chat-content.js"

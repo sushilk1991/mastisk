@@ -1,11 +1,11 @@
 """Tests for podcasts.classify_and_resolve — RSS auto-discovery in HTML pages."""
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
-
 
 # A trimmed-down approximation of what real podcast SPA shells (Vercel/Next.js,
 # Megaphone, Substack) put in their <head>. Includes attribute-order variations
@@ -120,3 +120,47 @@ async def test_classify_and_resolve_passes_through_known_kinds():
         kind, resolved = await podcasts.classify_and_resolve(audio_url)
     assert kind == "direct_audio"
     assert resolved == audio_url
+
+
+@pytest.mark.asyncio
+async def test_rss_sniff_stops_after_first_four_kilobytes():
+    from mastisk.integrations import podcasts
+
+    observed: dict[str, object] = {}
+
+    class _StreamResponse:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def aiter_bytes(self, *, chunk_size: int):
+            observed["chunk_size"] = chunk_size
+            yield b'<?xml version="1.0"?><rss>' + (b"x" * 5000)
+            observed["read_second_chunk"] = True
+            yield b"should-not-be-read"
+
+    class _StreamingClient:
+        def __init__(self, *_, **__):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        def stream(self, method, url, *, headers):
+            observed.update(method=method, url=url, headers=headers)
+            return _StreamResponse()
+
+    with patch("mastisk.integrations.podcasts.httpx.AsyncClient", _StreamingClient):
+        kind = await podcasts._sniff_xml_for_rss("https://cdn.example.com/large.mp4")
+
+    assert kind == "rss"
+    assert observed["chunk_size"] == 4096
+    assert observed["headers"] == {"Range": "bytes=0-4095"}
+    assert "read_second_chunk" not in observed

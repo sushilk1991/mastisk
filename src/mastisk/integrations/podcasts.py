@@ -68,12 +68,25 @@ async def classify(url: str) -> str:
 async def _sniff_xml_for_rss(url: str) -> str:
     """GET the first ~4KB and look for <rss or <feed roots."""
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=8.0) as c:
-            resp = await c.get(url, headers={"Range": "bytes=0-4095"})
+        async with (
+            httpx.AsyncClient(follow_redirects=True, timeout=8.0) as c,
+            c.stream(
+                "GET",
+                url,
+                headers={"Range": "bytes=0-4095"},
+            ) as resp,
+        ):
+            if resp.status_code >= 400:
+                return "unknown"
+            head = bytearray()
+            async for chunk in resp.aiter_bytes(chunk_size=4096):
+                head.extend(chunk[: 4096 - len(head)])
+                if len(head) >= 4096:
+                    break
     except Exception:
         return "unknown"
-    head = (resp.text or "")[:4096].lower()
-    if "<rss" in head or "<feed" in head:
+    prefix = bytes(head).decode("utf-8", errors="ignore").lower()
+    if "<rss" in prefix or "<feed" in prefix:
         return "rss"
     return "unknown"
 
