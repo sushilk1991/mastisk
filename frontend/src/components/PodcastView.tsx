@@ -4,6 +4,7 @@ import 'react-h5-audio-player/lib/styles.css';
 import { api, ApiError } from '../api';
 import type { PodcastView as PodcastViewT, View, TranscriptAnchor, TranscriptSegment } from '../types';
 import { Icon } from './icons';
+import { MermaidBlock } from './MermaidBlock';
 import { NoteCaptureModal, type CaptureContext } from './NoteCaptureModal';
 
 interface Props {
@@ -170,7 +171,9 @@ export function PodcastView({ articleId, onAsk, onNavigate }: Props) {
           data.article.sections.map((s) => (
             <div key={s.idx} className={`pod-takeaway pod-takeaway-${s.kind}`}>
               <h3>{s.h}</h3>
-              <div dangerouslySetInnerHTML={{ __html: s.body }} />
+              {s.kind === 'diagram'
+                ? <MermaidBlock source={s.body} />
+                : <div dangerouslySetInnerHTML={{ __html: s.body }} />}
             </div>
           ))
         )}

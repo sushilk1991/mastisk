@@ -94,6 +94,28 @@ def test_detail_returns_joined_view_with_transcript(client, db, tmp_path):
     assert body["anchored_notes"] == []
 
 
+def test_detail_preserves_diagram_section_kind(client, db, tmp_path):
+    """The podcast renderer needs the section kind to distinguish raw Mermaid from HTML."""
+    raw = tmp_path / "ep.txt"
+    _seed_source_and_article(
+        db, article_id="ep-diagram", source_id="src-diagram", raw_path=raw,
+    )
+    db.execute(
+        """INSERT INTO article_sections (article_id, idx, heading, body, kind)
+           VALUES ('ep-diagram', 0, 'Flow', 'flowchart TD\n  A --> B', 'diagram')""",
+    )
+
+    r = client.get("/api/podcasts/ep-diagram")
+
+    assert r.status_code == 200
+    assert r.json()["article"]["sections"] == [{
+        "idx": 0,
+        "h": "Flow",
+        "body": "flowchart TD\n  A --> B",
+        "kind": "diagram",
+    }]
+
+
 def test_detail_404s_for_non_podcast_article(client, db):
     """Articles without an attached podcast/youtube source should 404 at this
     endpoint so the frontend can fall back to the generic ArticleView."""
