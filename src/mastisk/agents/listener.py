@@ -67,10 +67,12 @@ class Listener(Agent):
         media_scope = payload.get("media_scope")
         if media_scope not in ("episode", "show"):
             media_scope = None
+        exact_url = payload.get("exact_url") is True
         await self._handle_transcribe(
             url,
             media_type=media_type,
             media_scope=media_scope,
+            exact_url=exact_url,
         )
 
     # ───── transcribe (remote video / YouTube / direct audio / rss) ─────
@@ -81,13 +83,14 @@ class Listener(Agent):
         *,
         media_type: str | None = None,
         media_scope: str | None = None,
+        exact_url: bool = False,
     ) -> None:
         # Show pages may resolve to an advertised RSS feed. Episode pages keep
         # their exact URL so a show feed cannot silently substitute its newest
         # entry. The route normally pre-resolves too; we repeat classification
         # for jobs queued through other paths or retried from older payloads.
         original_url = url
-        if media_type == "podcast" and media_scope == "episode":
+        if exact_url or (media_type == "podcast" and media_scope == "episode"):
             cls = await podcasts.classify(url)
             resolved_url = url
         else:

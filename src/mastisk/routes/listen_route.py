@@ -21,6 +21,7 @@ class ListenIn(BaseModel):
     title: str | None = Field(default=None, max_length=500)
     media_type: Literal["video", "podcast"] | None = None
     media_scope: Literal["episode", "show"] | None = None
+    exact_url: bool = False
 
 
 @router.post("/listen")
@@ -39,7 +40,7 @@ async def listen(body: ListenIn) -> dict:
     # newest episode instead. Video hints likewise keep the original page rather
     # than following an unrelated site-wide RSS link.
     try:
-        if body.media_type == "video" or (
+        if body.exact_url or body.media_type == "video" or (
             body.media_type == "podcast" and body.media_scope == "episode"
         ):
             cls = await podcasts.classify(url)
@@ -63,6 +64,8 @@ async def listen(body: ListenIn) -> dict:
         payload["media_type"] = body.media_type
     if body.media_type == "podcast" and body.media_scope:
         payload["media_scope"] = body.media_scope
+    if body.exact_url:
+        payload["exact_url"] = True
     title = (body.title or "").strip()
     if title:
         payload["title"] = title
@@ -71,7 +74,8 @@ async def listen(body: ListenIn) -> dict:
     # discover a newer episode. A video URL, by contrast, names one immutable
     # media item, so reuse its completed job/source as well as active work.
     reuse_done = (
-        body.media_type == "video"
+        (body.exact_url and cls != "rss")
+        or body.media_type == "video"
         or body.media_scope == "episode"
         or cls in {"youtube", "direct_audio"}
     )
@@ -112,6 +116,7 @@ def enqueue_listener_once(payload: dict, *, reuse_done: bool) -> dict:
     refreshes.
     """
     url = str(payload["url"])
+    exact_url = payload.get("exact_url") is True
     conn = connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -137,6 +142,7 @@ def enqueue_listener_once(payload: dict, *, reuse_done: bool) -> dict:
                   AND status IN ({placeholders})
                   AND json_valid(payload_json)
                   AND json_extract(payload_json, '$.url') = ?
+                  AND COALESCE(json_extract(payload_json, '$.exact_url'), 0) = ?
                 ORDER BY CASE status
                            WHEN 'running' THEN 0
                            WHEN 'queued' THEN 1
@@ -144,7 +150,7 @@ def enqueue_listener_once(payload: dict, *, reuse_done: bool) -> dict:
                          END,
                          id ASC
                 LIMIT 1""",
-            (*statuses, url),
+            (*statuses, url, 1 if exact_url else 0),
         ).fetchone()
         if existing is None and reuse_done:
             # Upgrade safety: jobs queued by older extension/CLI versions may
@@ -164,6 +170,8 @@ def enqueue_listener_once(payload: dict, *, reuse_done: bool) -> dict:
                 except json.JSONDecodeError:
                     continue
                 if not isinstance(candidate_payload, dict):
+                    continue
+                if (candidate_payload.get("exact_url") is True) != exact_url:
                     continue
                 candidate_url = youtube.canonicalize_url(candidate_payload.get("url") or "")
                 if candidate_url == url:

@@ -394,6 +394,10 @@ export interface AskSource {
   href: string | null;
   excerpt: string;
   cited: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  source_dates?: string[];
+  retrieved_at?: string | null;
 }
 
 export type SearchResultKind =

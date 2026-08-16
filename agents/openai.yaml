@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mastisk Memory"
+  short_description: "Recall and preserve intelligent personal memory"
+  default_prompt: "Use $mastisk to recall relevant prior knowledge and preserve durable learnings."

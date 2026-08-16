@@ -19,8 +19,16 @@ from rich.table import Table
 
 from mastisk import __version__
 from mastisk.paths import (
-    APP_SUPPORT, ICLOUD_ROOT, config_path, data_dir, db_path,
-    ensure_dirs, log_dir, self_dir, vault_dir, vault_is_icloud,
+    APP_SUPPORT,
+    ICLOUD_ROOT,
+    config_path,
+    data_dir,
+    db_path,
+    ensure_dirs,
+    log_dir,
+    self_dir,
+    vault_dir,
+    vault_is_icloud,
 )
 
 app = typer.Typer(
@@ -30,6 +38,38 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+def _api_client():
+    import httpx
+
+    from mastisk.settings import get_settings
+
+    default_url = f"http://127.0.0.1:{get_settings().port}"
+    base_url = os.environ.get("MASTISK_URL", default_url).rstrip("/")
+    return httpx.Client(base_url=base_url, timeout=420.0)
+
+
+def _api_failure(exc: Exception) -> None:
+    import httpx
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            payload = exc.response.json()
+            detail = payload.get("detail") or payload
+        except Exception:
+            detail = exc.response.text or str(exc)
+        typer.secho(f"Mastisk rejected the request: {detail}", fg="red", err=True)
+    elif isinstance(exc, httpx.RequestError):
+        typer.secho(
+            "Mastisk daemon is unavailable. Expected it at "
+            f"{exc.request.url.scheme}://{exc.request.url.host}:{exc.request.url.port}.",
+            fg="red",
+            err=True,
+        )
+    else:
+        typer.secho(f"Mastisk request failed: {exc}", fg="red", err=True)
+    raise typer.Exit(code=1)
 
 
 def _version_callback(value: bool):
@@ -58,6 +98,103 @@ def _main(
     ),
 ):
     pass
+
+
+@app.command()
+def ask(
+    question: str = typer.Argument(..., help="Question or task to recall from Mastisk."),
+    json_output: bool = typer.Option(False, "--json", help="Emit the complete API response as JSON."),
+) -> None:
+    """Use Mastisk's intelligence to recall and assess relevant knowledge."""
+    if question == "-":
+        question = typer.get_text_stream("stdin").read().strip()
+        if not question:
+            typer.secho("nothing to ask (stdin was empty)", fg="yellow", err=True)
+            raise typer.Exit(code=1)
+    try:
+        with _api_client() as client:
+            response = client.post(
+                "/api/ask",
+                json={"question": question, "intelligent": True},
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        _api_failure(exc)
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False))
+        return
+
+    typer.echo(str(payload.get("answer") or ""))
+    sources = payload.get("sources") or []
+    source_heading = "Sources:"
+    if not sources:
+        sources = payload.get("retrieved_sources") or []
+        source_heading = "Retrieved sources (not explicitly cited):"
+    if sources:
+        typer.echo(f"\n{source_heading}")
+        for source in sources:
+            typer.echo(f"- {source.get('id')}: {source.get('title')}")
+
+
+@app.command()
+def ingest(
+    source: str = typer.Argument(..., help="Text, a local file path, a URL, or '-' for stdin."),
+    json_output: bool = typer.Option(False, "--json", help="Emit the complete API response as JSON."),
+) -> None:
+    """Submit material to Mastisk's compounding ingestion pipeline."""
+    from urllib.parse import urlparse
+
+    if source == "-":
+        source = typer.get_text_stream("stdin").read().strip()
+        if not source:
+            typer.secho("nothing to ingest (stdin was empty)", fg="yellow", err=True)
+            raise typer.Exit(code=1)
+    candidate = Path(source).expanduser()
+    try:
+        is_file = candidate.is_file()
+    except OSError:
+        is_file = False
+    parsed = urlparse(source)
+    is_url = parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    try:
+        with _api_client() as client:
+            if is_file:
+                with candidate.open("rb") as handle:
+                    response = client.post(
+                        "/api/ingest/document",
+                        files={"file": (candidate.name, handle)},
+                    )
+            elif is_url:
+                response = client.post(
+                    "/api/listen",
+                    json={"url": source, "exact_url": True},
+                )
+            else:
+                response = client.post(
+                    "/api/notes",
+                    json={"text": source, "source": "cli"},
+                )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        _api_failure(exc)
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False))
+        return
+    if payload.get("id") is not None:
+        typer.echo(f"Ingested note #{payload['id']} into Mastisk.")
+    elif payload.get("job_id") is not None:
+        status = payload.get("status") or "accepted"
+        duplicate = ", duplicate" if payload.get("duplicate") else ""
+        typer.echo(f"Accepted Mastisk job {payload['job_id']} ({status}{duplicate}).")
+    elif payload.get("source_id") is not None:
+        status = payload.get("status") or "accepted"
+        typer.echo(f"Accepted source {payload['source_id']} ({status}).")
+    else:
+        typer.echo("Accepted by Mastisk.")
 
 
 # ═════════════════════════════════ start / dev ═════════════════════════════════

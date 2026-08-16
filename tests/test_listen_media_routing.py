@@ -32,6 +32,85 @@ async def test_video_hint_queues_original_page_for_listener(db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_exact_url_hint_queues_requested_article_not_advertised_feed(
+    db, monkeypatch,
+):
+    from mastisk.routes import listen_route
+
+    page_url = "https://example.com/specific-article"
+    classify = AsyncMock(return_value="article")
+    resolve = AsyncMock(return_value=("rss", "https://example.com/feed.xml"))
+    monkeypatch.setattr(listen_route.podcasts, "classify", classify)
+    monkeypatch.setattr(listen_route.podcasts, "classify_and_resolve", resolve)
+
+    result = await listen_route.listen(
+        listen_route.ListenIn(url=page_url, exact_url=True)
+    )
+
+    classify.assert_awaited_once_with(page_url)
+    resolve.assert_not_awaited()
+    row = db.execute(
+        "SELECT payload_json FROM jobs WHERE id=?", (result["job_id"],)
+    ).fetchone()
+    assert json.loads(row["payload_json"]) == {
+        "url": page_url,
+        "exact_url": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_exact_url_does_not_reuse_active_legacy_nonexact_job(db, monkeypatch):
+    from mastisk.routes import listen_route
+
+    page_url = "https://example.com/specific-article"
+    monkeypatch.setattr(
+        listen_route.podcasts,
+        "classify_and_resolve",
+        AsyncMock(return_value=("article", page_url)),
+    )
+    legacy = await listen_route.listen(listen_route.ListenIn(url=page_url))
+
+    monkeypatch.setattr(
+        listen_route.podcasts,
+        "classify",
+        AsyncMock(return_value="article"),
+    )
+    exact = await listen_route.listen(
+        listen_route.ListenIn(url=page_url, exact_url=True)
+    )
+
+    assert exact["job_id"] != legacy["job_id"]
+    assert exact["duplicate"] is False
+    payload = db.execute(
+        "SELECT payload_json FROM jobs WHERE id=?", (exact["job_id"],)
+    ).fetchone()["payload_json"]
+    assert json.loads(payload)["exact_url"] is True
+
+
+@pytest.mark.asyncio
+async def test_exact_rss_url_can_refresh_after_completed_job(db, monkeypatch):
+    from mastisk.routes import listen_route
+
+    feed_url = "https://feeds.example.com/show.rss"
+    monkeypatch.setattr(
+        listen_route.podcasts,
+        "classify",
+        AsyncMock(return_value="rss"),
+    )
+    first = await listen_route.listen(
+        listen_route.ListenIn(url=feed_url, exact_url=True)
+    )
+    db.execute("UPDATE jobs SET status='done' WHERE id=?", (first["job_id"],))
+
+    refreshed = await listen_route.listen(
+        listen_route.ListenIn(url=feed_url, exact_url=True)
+    )
+
+    assert refreshed["job_id"] != first["job_id"]
+    assert refreshed["duplicate"] is False
+
+
+@pytest.mark.asyncio
 async def test_repeated_youtube_saves_reuse_one_canonical_job(db, monkeypatch):
     from mastisk.routes import listen_route
     from mastisk.routes.sources_route import list_jobs
@@ -416,6 +495,30 @@ async def test_listener_video_hint_overrides_unrelated_discovered_rss(monkeypatc
     await listener._handle_transcribe(page_url, media_type="video")
 
     ingest.assert_awaited_once_with(page_url, source_kind="video")
+
+
+@pytest.mark.asyncio
+async def test_listener_exact_url_ingests_requested_article_not_discovered_feed(
+    monkeypatch,
+):
+    from mastisk.agents.listener import Listener
+
+    page_url = "https://example.com/specific-article"
+    listener = Listener()
+    classify = AsyncMock(return_value="article")
+    resolve = AsyncMock(return_value=("rss", "https://example.com/feed.xml"))
+    ingest = AsyncMock()
+    monkeypatch.setattr("mastisk.agents.listener.podcasts.classify", classify)
+    monkeypatch.setattr(
+        "mastisk.agents.listener.podcasts.classify_and_resolve", resolve,
+    )
+    monkeypatch.setattr(listener, "_ingest_article", ingest)
+
+    await listener._handle_transcribe(page_url, exact_url=True)
+
+    classify.assert_awaited_once_with(page_url)
+    resolve.assert_not_awaited()
+    ingest.assert_awaited_once_with(page_url, source_kind="blog")
 
 
 @pytest.mark.asyncio

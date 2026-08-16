@@ -10,6 +10,17 @@ on this Mac (`com.mastisk.agents`), exposes an HTTP API at
 **You can read it. Prefer the API over scraping the vault directly so the
 user's signals, links, and graph stay coherent.**
 
+## Agent memory contract
+
+Use the global `mastisk` skill and CLI on this machine. Recall with
+`mastisk ask "<complete task context>" --json` before work that could benefit
+from prior knowledge. After verified work produces a durable reusable learning,
+proactively preserve it with `mastisk ingest`, including its scope, evidence,
+current date/version, and recheck conditions. Treat old knowledge as dated
+evidence: retain durable lessons but re-verify fast-moving claims. Never ingest
+routine status, guesses, hidden reasoning, credentials, or secrets, and never
+write Mastisk's database or vault directly.
+
 ### Pre-flight check
 
 ```bash
@@ -79,7 +90,7 @@ should approve).
 
 **Search & Ask**
 - `GET  /api/search?q_param=QUERY&limit=20` — unified FTS over articles/notes/blog. **Param name is `q_param`, not `q`.**
-- `POST /api/ask` — RAG-backed Q&A over the wiki, grounded in identity. Body: `{question, selection?, article_id?}` → `{answer, cites, hits}`. **Best surface for "what does my wiki say about X".**
+- `POST /api/ask` — intelligent, cited recall over the corpus. Body includes `{question, intelligent?, mode?, messages?, selection?, article_id?}`; response includes `{answer, sources, retrieved_sources, coverage, research_status, conversation_id}`. Agent CLI calls should set `intelligent=true` through `mastisk ask`.
 
 **Notes**
 - `POST /api/notes` — capture. Body: `{text, source: "pwa"|"cli", context?}`. Field is `text`, not `body`.
@@ -88,6 +99,10 @@ should approve).
 - `GET  /api/notes/{id}/file` — raw markdown
 - `POST /api/notes/{id}/escalate` — manual promotion (bypass auto-rule)
 - `DELETE /api/notes/{id}` — soft delete
+
+**Ingestion**
+- `POST /api/ingest/document` — multipart document upload through the converter/compiler pipeline.
+- `POST /api/listen` — URL ingestion. Agent CLI writes send `{url, exact_url: true}` so an article is not silently replaced by an advertised RSS feed.
 
 **Vault & identity**
 - `GET  /api/vault/info` — `{vault_path, icloud, self_files}`

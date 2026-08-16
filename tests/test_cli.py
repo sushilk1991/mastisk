@@ -9,6 +9,7 @@ import json
 import tomllib
 from datetime import datetime
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -189,3 +190,379 @@ def test_calendar_oauth_loopback_waits_past_speculative_request():
 
     assert server.calls == 2
     assert result["code"] == "oauth-code"
+
+
+def test_ask_command_uses_intelligent_api_and_emits_json(cli, monkeypatch):
+    runner, app = cli
+    observed: dict = {}
+    monkeypatch.delenv("MASTISK_URL", raising=False)
+    monkeypatch.delenv("MASTISK_PORT", raising=False)
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            observed["client"] = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **kwargs):
+            observed["path"] = path
+            observed["request"] = kwargs
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", f"http://mastisk.test{path}"),
+                json={
+                    "answer": "The durable rule still applies. [S1]",
+                    "provider": "test",
+                    "mode": "wiki",
+                    "research_status": "not_requested",
+                    "sources": [{"id": "rule-1", "title": "Durable rule"}],
+                },
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = runner.invoke(
+        app,
+        ["ask", "What have I learned about retry safety?", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed["client"]["base_url"] == "http://127.0.0.1:5555"
+    assert observed["path"] == "/api/ask"
+    assert observed["request"]["json"] == {
+        "question": "What have I learned about retry safety?",
+        "intelligent": True,
+    }
+    assert json.loads(result.output)["answer"] == "The durable rule still applies. [S1]"
+
+
+def test_ask_command_reads_complete_task_from_stdin(cli, monkeypatch):
+    runner, app = cli
+    observed: dict = {}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **kwargs):
+            observed["path"] = path
+            observed["request"] = kwargs
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", f"http://mastisk.test{path}"),
+                json={"answer": "Use the verified retry receipt.", "sources": []},
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = runner.invoke(
+        app,
+        ["ask", "-", "--json"],
+        input="Review the current retry design against prior incidents.\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed["request"]["json"] == {
+        "question": "Review the current retry design against prior incidents.",
+        "intelligent": True,
+    }
+
+
+def test_ask_command_reports_daemon_unavailable_without_local_db_fallback(
+    cli, monkeypatch,
+):
+    runner, app = cli
+
+    class OfflineClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **_kwargs):
+            request = httpx.Request("POST", f"http://127.0.0.1:5555{path}")
+            raise httpx.ConnectError("connection refused", request=request)
+
+    monkeypatch.setattr("httpx.Client", OfflineClient)
+
+    result = runner.invoke(app, ["ask", "What matters?"])
+
+    assert result.exit_code == 1
+    assert "daemon is unavailable" in result.output.lower()
+    assert "127.0.0.1:5555" in result.output
+
+
+def test_ingest_command_sends_text_through_notes_api(cli, monkeypatch):
+    runner, app = cli
+    observed: dict = {}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **kwargs):
+            observed["path"] = path
+            observed["request"] = kwargs
+            return httpx.Response(
+                201,
+                request=httpx.Request("POST", f"http://mastisk.test{path}"),
+                json={"id": 42, "slug": "durable-learning", "created_at": "2026-08-09"},
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = runner.invoke(
+        app,
+        ["ingest", "Retry receipts must be checked end to end.", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed["path"] == "/api/notes"
+    assert observed["request"]["json"] == {
+        "text": "Retry receipts must be checked end to end.",
+        "source": "cli",
+    }
+    assert json.loads(result.output)["id"] == 42
+
+
+def test_ingest_command_uploads_existing_file_to_document_pipeline(
+    cli, monkeypatch, tmp_path,
+):
+    runner, app = cli
+    document = tmp_path / "architecture.pdf"
+    document.write_bytes(b"%PDF-intelligent-memory")
+    observed: dict = {}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **kwargs):
+            observed["path"] = path
+            upload = kwargs["files"]["file"]
+            observed["filename"] = upload[0]
+            observed["body"] = upload[1].read()
+            return httpx.Response(
+                202,
+                request=httpx.Request("POST", f"http://mastisk.test{path}"),
+                json={"job_id": 77, "status": "queued", "queued": True},
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = runner.invoke(app, ["ingest", str(document), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert observed == {
+        "path": "/api/ingest/document",
+        "filename": "architecture.pdf",
+        "body": b"%PDF-intelligent-memory",
+    }
+    assert json.loads(result.output)["job_id"] == 77
+
+
+def test_ingest_command_queues_exact_url_through_listener_pipeline(cli, monkeypatch):
+    runner, app = cli
+    observed: dict = {}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **kwargs):
+            observed["path"] = path
+            observed["request"] = kwargs
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", f"http://mastisk.test{path}"),
+                json={"job_id": 91, "status": "queued", "kind": "transcribe"},
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = runner.invoke(
+        app,
+        ["ingest", "https://example.com/current-agent-guidance", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed["path"] == "/api/listen"
+    assert observed["request"]["json"] == {
+        "url": "https://example.com/current-agent-guidance",
+        "exact_url": True,
+    }
+    assert json.loads(result.output)["job_id"] == 91
+
+
+def test_ask_command_human_output_shows_retrieved_sources_when_none_were_cited(
+    cli, monkeypatch,
+):
+    runner, app = cli
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **_kwargs):
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", f"http://mastisk.test{path}"),
+                json={
+                    "answer": "The provider omitted citation markers.",
+                    "sources": [],
+                    "retrieved_sources": [
+                        {"id": "memory-7", "title": "Retry incident"},
+                    ],
+                },
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = runner.invoke(app, ["ask", "What matters?"])
+
+    assert result.exit_code == 0, result.output
+    assert "Retrieved sources (not explicitly cited):" in result.output
+    assert "memory-7: Retry incident" in result.output
+
+
+def test_ingest_command_human_output_preserves_job_receipt(cli, monkeypatch):
+    runner, app = cli
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **_kwargs):
+            return httpx.Response(
+                202,
+                request=httpx.Request("POST", f"http://mastisk.test{path}"),
+                json={"job_id": 91, "status": "queued", "duplicate": False},
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = runner.invoke(
+        app,
+        ["ingest", "https://example.com/current-agent-guidance"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "job 91" in result.output
+    assert "queued" in result.output
+
+
+def test_ingest_command_reads_stdin(cli, monkeypatch):
+    runner, app = cli
+    observed: dict = {}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **kwargs):
+            observed["path"] = path
+            observed["request"] = kwargs
+            return httpx.Response(
+                201,
+                request=httpx.Request("POST", f"http://mastisk.test{path}"),
+                json={"id": 52, "slug": "stdin-learning"},
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = runner.invoke(
+        app,
+        ["ingest", "-", "--json"],
+        input="The API changed in version 4; recheck before reuse.\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed["path"] == "/api/notes"
+    assert observed["request"]["json"]["text"] == (
+        "The API changed in version 4; recheck before reuse."
+    )
+
+
+def test_ingest_command_does_not_treat_long_learning_as_a_file_path(
+    cli, monkeypatch,
+):
+    runner, app = cli
+    learning = "A" * 600
+    observed: dict = {}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, path: str, **kwargs):
+            observed["path"] = path
+            observed["request"] = kwargs
+            return httpx.Response(
+                201,
+                request=httpx.Request("POST", f"http://mastisk.test{path}"),
+                json={"id": 53, "slug": "long-learning"},
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = runner.invoke(app, ["ingest", learning, "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert observed["path"] == "/api/notes"
+    assert observed["request"]["json"]["text"] == learning
