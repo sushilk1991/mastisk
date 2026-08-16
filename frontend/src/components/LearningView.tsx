@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, api } from '../api';
 import type {
-  LearningAnswerResult, LearningGoal, LearningToday, Lesson, LessonChatMessage,
-  LessonQuestion, View,
+  LearningAnswerResult, LearningGoal, LearningGoalDetail, LearningToday, Lesson,
+  LessonChatMessage, LessonQuestion, View,
 } from '../types';
 import { MermaidBlock } from './MermaidBlock';
 
@@ -111,7 +111,7 @@ export function LearningView({ onNavigate }: NavProps) {
       {goals.length > 0 && (
         <div className="learn-goals">
           {goals.map((g) => (
-            <GoalCard key={g.id} goal={g} onChanged={load} />
+            <GoalCard key={g.id} goal={g} onChanged={load} onNavigate={onNavigate} />
           ))}
         </div>
       )}
@@ -172,7 +172,9 @@ function NewGoalForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-function GoalCard({ goal, onChanged }: { goal: LearningGoal; onChanged: () => void }) {
+function GoalCard({ goal, onChanged, onNavigate }: {
+  goal: LearningGoal; onChanged: () => void;
+} & NavProps) {
   const pct = goal.total_concepts > 0
     ? Math.round((goal.taught_concepts / goal.total_concepts) * 100)
     : 0;
@@ -180,7 +182,12 @@ function GoalCard({ goal, onChanged }: { goal: LearningGoal; onChanged: () => vo
   return (
     <div className="learn-goal-card">
       <div className="learn-goal-head">
-        <span className="learn-goal-topic">{goal.topic}</span>
+        <button
+          className="learn-goal-topic learn-goal-link"
+          onClick={() => onNavigate('learning_goal', String(goal.id))}
+        >
+          {goal.topic}
+        </button>
         <span className={`learn-status-chip ${goal.status}`}>{goal.status}</span>
       </div>
       <div className="learn-goal-meta">
@@ -196,6 +203,9 @@ function GoalCard({ goal, onChanged }: { goal: LearningGoal; onChanged: () => vo
         <div className="learn-progress"><div className="learn-progress-fill" style={{ width: `${pct}%` }} /></div>
       )}
       <div className="learn-goal-actions">
+        <button className="chip" onClick={() => onNavigate('learning_goal', String(goal.id))}>
+          Open
+        </button>
         {goal.status === 'paused'
           ? <button className="chip" onClick={() => act(api.learning.resumeGoal(goal.id))}>Resume</button>
           : goal.status !== 'archived' && (
@@ -215,6 +225,167 @@ function GoalCard({ goal, onChanged }: { goal: LearningGoal; onChanged: () => vo
           Archive
         </button>
       </div>
+    </div>
+  );
+}
+
+// ───────────────────────────── Goal view ─────────────────────────────
+
+const CONCEPT_STATUS_LABELS: Record<string, string> = {
+  pending: 'upcoming', taught: 'learning', mastered: 'mastered',
+};
+
+export function GoalView({ goalId, onNavigate }: { goalId: number | null } & NavProps) {
+  const [goal, setGoal] = useState<LearningGoalDetail | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    if (!goalId) { setErr('goal not found'); return; }
+    api.learning.goal(goalId)
+      .then((g) => { setGoal(g); setErr(null); })
+      .catch((e: Error) => setErr(
+        // Archived goals drop out of the API — say so instead of a raw 404.
+        e.message.includes('not found') ? 'This goal was archived or removed.' : e.message,
+      ));
+  }, [goalId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (err) {
+    return (
+      <div className="view">
+        <div className="view-h">
+          <button className="chip" onClick={() => onNavigate('learning')}>← Learning</button>
+        </div>
+        <p style={{ color: 'var(--fg-faint)', fontFamily: 'var(--mono)', fontSize: 12 }}>
+          couldn't load goal: {err}
+        </p>
+      </div>
+    );
+  }
+  if (!goal) {
+    return (
+      <div className="view">
+        <div className="view-h">
+          <button className="chip" onClick={() => onNavigate('learning')}>← Learning</button>
+        </div>
+        <p style={{ color: 'var(--fg-faint)', fontFamily: 'var(--mono)', fontSize: 12 }}>loading…</p>
+      </div>
+    );
+  }
+
+  const pct = goal.total_concepts > 0
+    ? Math.round((goal.taught_concepts / goal.total_concepts) * 100)
+    : 0;
+  const act = (fn: Promise<void>) => fn.then(load).catch(() => load());
+
+  return (
+    <div className="view">
+      <div className="view-h">
+        <button className="chip" onClick={() => onNavigate('learning')}>← Learning</button>
+      </div>
+      <div className="learn-today-meta">
+        {goal.taught_concepts}/{goal.total_concepts || '?'} concepts taught
+        · {goal.mastered_concepts} mastered
+        {goal.due_reviews > 0 && <> · {goal.due_reviews} due for review</>}
+        {goal.target_date && <> · target {goal.target_date}</>}
+        {goal.level && <> · level: {goal.level}</>}
+        <span className={`learn-status-chip ${goal.status}`} style={{ marginLeft: 8 }}>{goal.status}</span>
+      </div>
+      <h1 className="view-title">{goal.topic}</h1>
+      {goal.description && <p className="view-sub">{goal.description}</p>}
+
+      {goal.total_concepts > 0 && (
+        <div className="learn-progress"><div className="learn-progress-fill" style={{ width: `${pct}%` }} /></div>
+      )}
+
+      <div className="learn-goal-actions" style={{ marginTop: 10 }}>
+        {goal.status === 'paused'
+          ? <button className="chip" onClick={() => act(api.learning.resumeGoal(goal.id))}>Resume</button>
+          : goal.status !== 'archived' && (
+              <button className="chip" onClick={() => act(api.learning.pauseGoal(goal.id))}>Pause</button>
+            )}
+        {goal.syllabus_error && (
+          <button className="chip" onClick={() => act(api.learning.regenerateSyllabus(goal.id))}>Retry syllabus</button>
+        )}
+        <button
+          className="chip"
+          onClick={() => {
+            if (window.confirm(`Archive "${goal.topic}"? Lessons and progress are kept.`)) {
+              api.learning.archiveGoal(goal.id)
+                .then(() => onNavigate('learning'))
+                .catch(() => load());
+            }
+          }}
+        >
+          Archive
+        </button>
+      </div>
+
+      {goal.syllabus_error && (
+        <p style={{ color: 'var(--danger)', fontFamily: 'var(--mono)', fontSize: 12 }}>
+          syllabus failed: {goal.syllabus_error}
+        </p>
+      )}
+
+      <section className="learn-quiz-block">
+        <h2 className="learn-sec-heading">Lessons</h2>
+        {goal.lessons.length === 0 ? (
+          <p style={{ color: 'var(--fg-mute)', fontSize: 13 }}>
+            No lessons yet — Guru writes one lesson a day across your active goals.
+          </p>
+        ) : (
+          <div className="learn-lesson-list">
+            {goal.lessons.map((l) => (
+              <button
+                key={l.id}
+                className="learn-lesson-row"
+                onClick={() => onNavigate('learning_lesson', String(l.id))}
+              >
+                <span className="learn-lesson-day">Day {l.day_number}</span>
+                <span className="learn-lesson-title">{l.title}</span>
+                <span className="learn-lesson-date">{l.lesson_date}</span>
+                {l.status === 'completed' && <span className="learn-status-chip done">completed</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="learn-quiz-block">
+        <h2 className="learn-sec-heading">Syllabus</h2>
+        {goal.syllabus.length === 0 ? (
+          <p style={{ color: 'var(--fg-mute)', fontSize: 13 }}>
+            {goal.syllabus_error ? 'Syllabus generation failed — retry above.' : 'Guru is planning the syllabus…'}
+          </p>
+        ) : (
+          <ol className="learn-syllabus">
+            {goal.syllabus.map((item) => (
+              <li key={item.id} className={`learn-syllabus-item ${item.status}`}>
+                <div className="learn-syllabus-head">
+                  <span className="learn-syllabus-title">{item.title}</span>
+                  <span className={`learn-status-chip ${
+                    // Distinct concept-level classes: the goal-level 'pending'
+                    // chip is warn-orange, wrong for ordinary upcoming concepts.
+                    item.status === 'mastered' ? 'done'
+                      : item.status === 'taught' ? 'learning' : 'upcoming'
+                  }`}>
+                    {CONCEPT_STATUS_LABELS[item.status] ?? item.status}
+                  </span>
+                  {item.status === 'taught' && (
+                    <span className="learn-recall-dots" title={`${item.recall_successes ?? 0}/3 recalls toward mastery`}>
+                      {[1, 2, 3].map((n) => (
+                        <span key={n} className={`learn-recall-dot ${(item.recall_successes ?? 0) >= n ? 'on' : ''}`} />
+                      ))}
+                    </span>
+                  )}
+                </div>
+                {item.definition && <div className="learn-syllabus-def">{item.definition}</div>}
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
     </div>
   );
 }
@@ -262,6 +433,11 @@ export function LessonView({ lessonId, onNavigate }: { lessonId: number | null }
     <div className="view learn-lesson">
       <div className="view-h">
         <button className="chip" onClick={() => onNavigate('learning')}>← Learning</button>
+        {lesson.goal_topic && (
+          <button className="chip" onClick={() => onNavigate('learning_goal', String(lesson.goal_id))}>
+            {lesson.goal_topic}
+          </button>
+        )}
       </div>
       <div className="learn-today-meta">
         Day {lesson.day_number} · {lesson.goal_topic} · {lesson.lesson_date}

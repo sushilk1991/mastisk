@@ -12,6 +12,7 @@ export interface Route {
   tweetThreadId: number | null;
   libraryBookSlug: string | null;
   libraryQuoteId: string | null;
+  goalId: number | null;
   lessonId: number | null;
   date: string | null;
 }
@@ -90,6 +91,7 @@ const PATH_FOR_VIEW: Record<View, string> = {
   podcast: '/p/',
   suggestions: '/suggestions',
   learning: '/learning',
+  learning_goal: '/learning/goal/',
   learning_lesson: '/learning/lesson/',
   automations: '/automations',
 };
@@ -100,7 +102,7 @@ function emptyRoute(view: View): Route {
   return {
     view, articleId: null, agentId: null, noteId: null, roundtableId: null, repoSlug: null,
     blogPostId: null, tweetThreadId: null, libraryBookSlug: null, libraryQuoteId: null,
-    lessonId: null, date: null,
+    goalId: null, lessonId: null, date: null,
   };
 }
 
@@ -178,6 +180,14 @@ export function parseRoute(pathname: string): Route {
     }
     return emptyRoute('tweets');
   }
+  if (pathname.startsWith('/learning/goal/')) {
+    const raw = pathname.slice('/learning/goal/'.length).split('/')[0];
+    const id = Number(raw);
+    if (raw && Number.isFinite(id) && id > 0) {
+      return { ...emptyRoute('learning_goal'), goalId: id };
+    }
+    return emptyRoute('learning');
+  }
   if (pathname.startsWith('/learning/lesson/')) {
     const raw = pathname.slice('/learning/lesson/'.length).split('/')[0];
     const id = Number(raw);
@@ -208,6 +218,7 @@ export function routeToPath(view: View, arg?: string | null): string {
   if (view === 'repo' && arg) return `/repos/${arg}`;
   if (view === 'blog_post' && arg) return `/blog/${arg}`;
   if (view === 'tweet_thread' && arg) return `/tweets/${arg}`;
+  if (view === 'learning_goal' && arg) return `/learning/goal/${arg}`;
   if (view === 'learning_lesson' && arg) return `/learning/lesson/${arg}`;
   return PATH_FOR_VIEW[view] ?? '/';
 }
@@ -235,6 +246,7 @@ export function useRoute() {
     else if (view === 'repo' && arg) next.repoSlug = arg;
     else if (view === 'blog_post' && arg) next.blogPostId = Number(arg);
     else if (view === 'tweet_thread' && arg) next.tweetThreadId = Number(arg);
+    else if (view === 'learning_goal' && arg) next.goalId = Number(arg);
     else if (view === 'learning_lesson' && arg) next.lessonId = Number(arg);
     return next;
   };

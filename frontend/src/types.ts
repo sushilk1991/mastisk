@@ -464,7 +464,7 @@ export type View =
   | 'tweets' | 'tweet_thread'
   | 'podcasts' | 'podcast'
   | 'suggestions' | 'automations'
-  | 'learning' | 'learning_lesson';
+  | 'learning' | 'learning_goal' | 'learning_lesson';
 
 // ───── Learning (Guru) ─────
 
@@ -484,6 +484,32 @@ export interface LearningGoal {
   mastered_concepts: number;
   due_reviews: number;
   created_at: string | null;
+}
+
+export interface SyllabusItem {
+  id: number;
+  slug: string;
+  title: string;
+  definition: string | null;
+  tier: number;
+  position: number;
+  prereqs: string[];
+  status: 'pending' | 'taught' | 'mastered';
+  due_at: string | null;
+  recall_successes: number | null;
+}
+
+export interface GoalLessonRow {
+  id: number;
+  lesson_date: string;
+  day_number: number;
+  title: string;
+  status: 'generated' | 'completed';
+}
+
+export interface LearningGoalDetail extends LearningGoal {
+  syllabus: SyllabusItem[];
+  lessons: GoalLessonRow[];
 }
 
 export interface LessonSection {

@@ -6690,3 +6690,41 @@ button.dash-card:active,
   .learn-chat-panel { right: 8px; left: 8px; width: auto; }
   .learn-chat-fab { right: 16px; }
 }
+
+/* ───── Learning: goal detail ───── */
+.learn-goal-link {
+  border: none; background: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--fg); text-align: left;
+}
+.learn-goal-link:hover { color: var(--accent); text-decoration: underline; }
+.learn-lesson-list { display: flex; flex-direction: column; gap: 6px; }
+.learn-lesson-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px;
+  background: var(--bg-card); cursor: pointer; font: inherit; color: var(--fg);
+  text-align: left;
+}
+.learn-lesson-row:hover { border-color: var(--accent); }
+.learn-lesson-day {
+  font-family: var(--mono); font-size: 11px; color: var(--fg-mute);
+  flex: 0 0 auto; min-width: 44px;
+}
+.learn-lesson-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.learn-lesson-date { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); flex: 0 0 auto; }
+.learn-syllabus { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.learn-syllabus-item {
+  padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px;
+  background: var(--bg-card);
+}
+.learn-syllabus-item.mastered { opacity: 0.75; }
+.learn-syllabus-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.learn-syllabus-title { font-weight: 600; }
+.learn-syllabus-def { color: var(--fg-mute); font-size: 13px; margin-top: 4px; }
+.learn-recall-dots { display: inline-flex; gap: 3px; align-items: center; }
+.learn-recall-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--line); display: inline-block;
+}
+.learn-recall-dot.on { background: var(--accent); }
+.learn-status-chip.upcoming { color: var(--fg-faint); border-color: var(--line-soft); }
+.learn-status-chip.learning { color: var(--accent); background: var(--accent-soft); border-color: transparent; }

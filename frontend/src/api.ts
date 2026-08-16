@@ -10,7 +10,7 @@ import type {
   Automation, AutomationDetail, AutomationRun, AutomationTriggers,
   SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem, WikiSuggestion,
   NeedsReviewItem,
-  LearningAnswerResult, LearningGoal, LearningToday, Lesson, LessonChatMessage,
+  LearningAnswerResult, LearningGoal, LearningGoalDetail, LearningToday, Lesson, LessonChatMessage,
 } from './types';
 
 const BASE = '/api';
@@ -1053,7 +1053,7 @@ export const api = {
   learning: {
     today: () => j<LearningToday>(`${BASE}/learning/today`),
     goals: () => j<{ goals: LearningGoal[]; streak: number }>(`${BASE}/learning/goals`),
-    goal: (id: number) => j<LearningGoal & { syllabus: unknown[]; lessons: unknown[] }>(`${BASE}/learning/goals/${id}`),
+    goal: (id: number) => j<LearningGoalDetail>(`${BASE}/learning/goals/${id}`),
     createGoal: (body: {
       topic: string; description?: string; level?: string;
       timeline_days?: number; minutes_per_day?: number;
