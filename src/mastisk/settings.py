@@ -171,6 +171,23 @@ class ServerSettings(BaseSettings):
     )
 
 
+class LearningSettings(BaseSettings):
+    """Guru daily-tutor config."""
+    # Local time (HH:MM) after which the day's lesson generates on the next
+    # agent tick. The reminder fires as soon as the lesson is ready.
+    lesson_time: str = "07:00"
+    # Density ceiling: even the tightest timeline never packs more than this
+    # many new concepts into one lesson.
+    max_concepts_per_lesson: int = 5
+    # Retrieval warmups (due FSRS reviews) pulled into each lesson.
+    max_warmups_per_lesson: int = 3
+    # FSRS target recall probability (0.9 = desirable-difficulty zone).
+    desired_retention: float = 0.9
+    # LLM timeouts: lessons/syllabi are long generations; grading is short.
+    timeout_s: int = 300
+    grade_timeout_s: int = 120
+
+
 class RemindersSettings(BaseSettings):
     """Config for reminder defaults and reminder engine cadence."""
     default_lead_minutes: int = 15
@@ -406,6 +423,8 @@ class Settings(BaseSettings):
     github: GithubSettings = Field(default_factory=GithubSettings)
 
     blog: BlogSettings = Field(default_factory=BlogSettings)
+
+    learning: LearningSettings = Field(default_factory=LearningSettings)
 
     tweet: TweetSettings = Field(default_factory=TweetSettings)
 

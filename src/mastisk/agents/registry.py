@@ -256,6 +256,19 @@ _AGENT_SPECS: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "id": "guru",
+        "name": "Guru",
+        "role": "Teaches daily lessons with spaced-repetition quizzes",
+        "color": "emerald",
+        "module": "mastisk.agents.guru",
+        "load_cap": 10,
+        "slots": (
+            {"slot_id": "syllabus", "label": "Syllabus prompt", "module_attr": "SYLLABUS_PROMPT_TEMPLATE", "primary": True},
+            {"slot_id": "lesson", "label": "Lesson prompt", "module_attr": "LESSON_PROMPT_TEMPLATE"},
+            {"slot_id": "grade", "label": "Grading prompt", "module_attr": "GRADE_PROMPT_TEMPLATE"},
+        ),
+    },
+    {
         "id": "roundtable",
         "name": "Roundtable",
         "role": "Runs multi-LLM perspectives on a prompt",

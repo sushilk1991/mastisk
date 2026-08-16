@@ -62,3 +62,4 @@ Icon?
 *.swo
 .cursor/
 .mastisk-vault/
+.gstack/

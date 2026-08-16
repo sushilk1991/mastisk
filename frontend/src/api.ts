@@ -10,6 +10,7 @@ import type {
   Automation, AutomationDetail, AutomationRun, AutomationTriggers,
   SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem, WikiSuggestion,
   NeedsReviewItem,
+  LearningAnswerResult, LearningGoal, LearningToday, Lesson,
 } from './types';
 
 const BASE = '/api';
@@ -1047,6 +1048,66 @@ export const api = {
     dismiss: (id: number): Promise<void> =>
       fetch(`${BASE}/topic-suggestions/${id}/dismiss`, { method: 'POST' })
         .then((r) => { if (!r.ok) throw new Error(`dismiss → ${r.status}`); }),
+  },
+
+  learning: {
+    today: () => j<LearningToday>(`${BASE}/learning/today`),
+    goals: () => j<{ goals: LearningGoal[]; streak: number }>(`${BASE}/learning/goals`),
+    goal: (id: number) => j<LearningGoal & { syllabus: unknown[]; lessons: unknown[] }>(`${BASE}/learning/goals/${id}`),
+    createGoal: (body: {
+      topic: string; description?: string; level?: string;
+      timeline_days?: number; minutes_per_day?: number;
+    }) =>
+      fetch(`${BASE}/learning/goals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(async (r) => {
+        if (!r.ok) await throwApiError(r);
+        return r.json() as Promise<{ id: number; slug: string; status: string; target_date: string | null }>;
+      }),
+    pauseGoal: (id: number): Promise<void> =>
+      fetch(`${BASE}/learning/goals/${id}/pause`, { method: 'POST' })
+        .then(async (r) => { if (!r.ok) await throwApiError(r); }),
+    resumeGoal: (id: number): Promise<void> =>
+      fetch(`${BASE}/learning/goals/${id}/resume`, { method: 'POST' })
+        .then(async (r) => { if (!r.ok) await throwApiError(r); }),
+    archiveGoal: (id: number): Promise<void> =>
+      fetch(`${BASE}/learning/goals/${id}`, { method: 'DELETE' })
+        .then(async (r) => { if (!r.ok) await throwApiError(r); }),
+    regenerateSyllabus: (id: number): Promise<void> =>
+      fetch(`${BASE}/learning/goals/${id}/regenerate-syllabus`, { method: 'POST' })
+        .then(async (r) => { if (!r.ok) await throwApiError(r); }),
+    lesson: (id: number) => j<Lesson>(`${BASE}/learning/lessons/${id}`),
+    completeLesson: (id: number): Promise<void> =>
+      fetch(`${BASE}/learning/lessons/${id}/complete`, { method: 'POST' })
+        .then(async (r) => { if (!r.ok) await throwApiError(r); }),
+    generateNow: () =>
+      fetch(`${BASE}/learning/generate-now`, { method: 'POST' })
+        .then(async (r) => {
+          if (!r.ok) await throwApiError(r);
+          return r.json() as Promise<{ job_id: number; status: string }>;
+        }),
+    answer: (questionId: number, body: {
+      answer: string; confidence?: number; self_rating?: number;
+    }) =>
+      fetch(`${BASE}/learning/questions/${questionId}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(async (r) => {
+        if (!r.ok) await throwApiError(r);
+        return r.json() as Promise<LearningAnswerResult>;
+      }),
+    override: (questionId: number, rating: number) =>
+      fetch(`${BASE}/learning/questions/${questionId}/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating }),
+      }).then(async (r) => {
+        if (!r.ok) await throwApiError(r);
+        return r.json() as Promise<{ rating: number; recall_successes: number; mastered: boolean }>;
+      }),
   },
 
   automations: {

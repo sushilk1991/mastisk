@@ -155,6 +155,7 @@ def ensure_dirs() -> None:
         vault_dir() / "entities",
         vault_dir() / "sources",
         vault_dir() / "synthesis",
+        vault_dir() / "learning",
         self_dir(),
         notes_dir(),
         notes_inbox_dir(),

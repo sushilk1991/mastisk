@@ -434,6 +434,22 @@ async def start_scheduler():
         log.warning("scheduler: topic_suggester registration failed: %s", e)
 
     try:
+        from mastisk.agents.guru import Guru
+        # Guru drains syllabus/lesson jobs and self-gates the daily lesson
+        # on learning.lesson_time + the one-lesson-per-day unique index, so
+        # a plain interval tick catches up after sleep/wake with no cron.
+        sched.add_job(
+            Guru().run_once, "interval",
+            seconds=Guru.tick_seconds, id="guru",
+            max_instances=1,
+            next_run_time=datetime.now(UTC) + timedelta(seconds=75),
+            coalesce=True,
+        )
+        log.info("scheduler: guru registered (10min tick)")
+    except Exception as e:
+        log.warning("scheduler: guru registration failed: %s", e)
+
+    try:
         from mastisk.agents.gardener import Gardener
         # Gardener is timer-driven: hourly tick, self-gating on per-page
         # curated_at cooldowns, the daily weave cap, and a 22h reflection

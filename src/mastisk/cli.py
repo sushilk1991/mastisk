@@ -197,6 +197,47 @@ def ingest(
         typer.echo("Accepted by Mastisk.")
 
 
+@app.command()
+def learn(
+    topic: str = typer.Argument(..., help="What you want to learn."),
+    days: int | None = typer.Option(
+        None, "--days", min=1, max=365,
+        help="Timeline in days. Shorter timelines pack more concepts into each lesson.",
+    ),
+    level: str | None = typer.Option(
+        None, "--level", help="Your starting level, e.g. 'complete beginner'.",
+    ),
+    minutes: int | None = typer.Option(
+        None, "--minutes", min=5, max=240, help="Minutes per day you can spend.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the complete API response as JSON."),
+) -> None:
+    """Start learning a topic — Guru plans a syllabus and teaches a daily lesson."""
+    body: dict = {"topic": topic}
+    if days is not None:
+        body["timeline_days"] = days
+    if level is not None:
+        body["level"] = level
+    if minutes is not None:
+        body["minutes_per_day"] = minutes
+    try:
+        with _api_client() as client:
+            response = client.post("/api/learning/goals", json=body)
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        _api_failure(exc)
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False))
+        return
+    line = f"Learning goal #{payload['id']} created ({payload['slug']})."
+    if payload.get("target_date"):
+        line += f" Target: {payload['target_date']}."
+    typer.echo(line)
+    typer.echo("Guru is planning the syllabus; the first lesson lands on the next daily tick.")
+
+
 # ═════════════════════════════════ start / dev ═════════════════════════════════
 
 @app.command()

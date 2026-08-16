@@ -6523,3 +6523,91 @@ button.dash-card:active,
     min-height: 260px;
   }
 }
+
+/* ───────────────────────────── Learning (Guru) ───────────────────────────── */
+
+.learn-today-card {
+  border: 1px solid var(--line); border-radius: var(--rad-lg);
+  background: var(--bg-card); padding: 16px 18px; margin: 18px 0;
+}
+.learn-today-meta {
+  font-family: var(--mono); font-size: 11px; color: var(--fg-faint);
+  text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px;
+}
+.learn-today-title { font-family: var(--serif); font-size: 20px; margin-bottom: 10px; }
+.learn-today-actions { display: flex; gap: 8px; align-items: center; }
+
+.learn-new-goal { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 14px 0 20px; }
+.learn-input {
+  border: 1px solid var(--line); border-radius: var(--rad); background: var(--bg-card);
+  color: var(--fg); padding: 8px 10px; font-size: 13px; flex: 1 1 260px; min-width: 200px;
+}
+.learn-input-days { flex: 0 1 120px; min-width: 100px; }
+.learn-input-level { flex: 0 1 180px; min-width: 140px; }
+
+.learn-goals { display: flex; flex-direction: column; gap: 12px; }
+.learn-goal-card {
+  border: 1px solid var(--line); border-radius: var(--rad-lg);
+  background: var(--bg-card); padding: 14px 16px;
+}
+.learn-goal-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.learn-goal-topic { font-weight: 600; font-size: 15px; }
+.learn-goal-meta { font-size: 12px; color: var(--fg-mute); margin: 4px 0 8px; }
+.learn-goal-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+.learn-status-chip {
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--fg-mute); white-space: nowrap;
+}
+.learn-status-chip.active, .learn-status-chip.done { color: var(--ok); border-color: var(--ok-soft); background: var(--ok-soft); }
+.learn-status-chip.pending { color: var(--warn); border-color: var(--warn-soft); background: var(--warn-soft); }
+.learn-status-chip.paused { color: var(--fg-faint); }
+
+.learn-progress {
+  height: 5px; border-radius: 999px; background: var(--bg-sunk); overflow: hidden;
+}
+.learn-progress-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+.learn-lesson .view-title { margin-bottom: 18px; }
+.learn-sec-heading { font-family: var(--serif); font-size: 17px; margin: 22px 0 8px; }
+.learn-callout {
+  border-left: 3px solid var(--warn); background: var(--warn-soft);
+  border-radius: 0 var(--rad) var(--rad) 0; padding: 10px 14px; margin: 14px 0;
+}
+.learn-callout .learn-sec-heading { margin-top: 0; }
+
+.learn-quiz-block { margin: 18px 0; }
+.learn-question {
+  border: 1px solid var(--line); border-radius: var(--rad-lg);
+  background: var(--bg-card); padding: 14px 16px; margin: 10px 0;
+}
+.learn-q-text { font-weight: 600; margin-bottom: 10px; }
+.learn-q-input {
+  width: 100%; box-sizing: border-box; border: 1px solid var(--line);
+  border-radius: var(--rad); background: var(--bg); color: var(--fg);
+  padding: 8px 10px; font-size: 13px; font-family: var(--sans); resize: vertical;
+}
+.learn-q-foot { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.learn-q-conf-label { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); }
+.learn-conf-active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.learn-q-answer {
+  font-size: 13px; color: var(--fg-mute); border-left: 2px solid var(--line);
+  padding-left: 10px; margin-bottom: 10px; white-space: pre-wrap;
+}
+
+.learn-grade { border-top: 1px dashed var(--line); padding-top: 10px; }
+.learn-grade-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.learn-rating {
+  font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 10px; border-radius: 999px;
+}
+.learn-rating.r1 { background: var(--danger-soft); color: var(--danger); }
+.learn-rating.r2 { background: var(--warn-soft); color: var(--warn); }
+.learn-rating.r3, .learn-rating.r4 { background: var(--ok-soft); color: var(--ok); }
+.learn-grade-feedback { font-size: 13px; margin: 6px 0; }
+.learn-evidence { list-style: none; padding: 0; margin: 6px 0; font-size: 12px; }
+.learn-evidence .met { color: var(--ok); }
+.learn-evidence .missed { color: var(--danger); }
+.learn-evidence-quote { color: var(--fg-faint); font-style: italic; }
+.learn-model-answer { font-size: 12px; color: var(--fg-mute); margin: 6px 0; }

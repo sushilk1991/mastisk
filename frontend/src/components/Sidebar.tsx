@@ -67,6 +67,7 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
       <SideNavRow currentView={currentView} view="tasks" glyph="☑" label="Tasks" onNavigate={onNavigate}/>
       <SideNavRow currentView={currentView} view="projects" glyph="▣" label="Projects" onNavigate={onNavigate}/>
       <SideNavRow currentView={currentView} view="routines" glyph="↻" label="Routines" onNavigate={onNavigate}/>
+      <SideNavRow currentView={currentView} view="learning" glyph="◈" label="Learning" onNavigate={onNavigate}/>
       <SideNavRow currentView={currentView} view="journal" glyph="◷" label="Journal" onNavigate={onNavigate}/>
       <SideNavRow currentView={currentView} view="people" glyph="@" label="People" onNavigate={onNavigate}/>
       <SideNavRow currentView={currentView} view="inventory" glyph="▤" label="Inventory" onNavigate={onNavigate}/>

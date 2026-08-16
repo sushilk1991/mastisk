@@ -37,6 +37,7 @@ dependencies = [
   "pyyaml>=6.0",
   "tomli-w>=1.0",
   "python-multipart>=0.0.20",
+  "fsrs>=6.0",
 ]
 
 [project.optional-dependencies]

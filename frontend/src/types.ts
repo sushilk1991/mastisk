@@ -463,7 +463,100 @@ export type View =
   | 'blog' | 'blog_post'
   | 'tweets' | 'tweet_thread'
   | 'podcasts' | 'podcast'
-  | 'suggestions' | 'automations';
+  | 'suggestions' | 'automations'
+  | 'learning' | 'learning_lesson';
+
+// ───── Learning (Guru) ─────
+
+export interface LearningGoal {
+  id: number;
+  slug: string;
+  topic: string;
+  description: string | null;
+  level: string | null;
+  timeline_days: number | null;
+  target_date: string | null;
+  minutes_per_day: number | null;
+  status: 'pending' | 'active' | 'paused' | 'completed' | 'archived';
+  syllabus_error: string | null;
+  total_concepts: number;
+  taught_concepts: number;
+  mastered_concepts: number;
+  due_reviews: number;
+  created_at: string | null;
+}
+
+export interface LessonSection {
+  kind: 'section' | 'diagram' | 'callout';
+  heading: string;
+  body_md: string;
+  body_html: string;
+}
+
+export interface LessonQuestionGrade {
+  rating?: number;
+  feedback?: string;
+  evidence?: { key_point: string; met: boolean; quote: string | null }[];
+  source?: string;
+}
+
+export interface LessonQuestionRubric {
+  key_points: string[];
+  common_mistakes: string[];
+  model_answer: string;
+}
+
+export interface LessonQuestion {
+  id: number;
+  kind: 'warmup' | 'check';
+  position: number;
+  question: string;
+  concept_slug: string | null;
+  concept_title: string | null;
+  answered: boolean;
+  rating: number | null;
+  confidence: number | null;
+  answer_text: string | null;
+  rubric?: LessonQuestionRubric;
+  grade?: LessonQuestionGrade;
+}
+
+export interface Lesson {
+  id: number;
+  goal_id: number;
+  goal_topic: string | null;
+  goal_slug: string | null;
+  lesson_date: string;
+  day_number: number;
+  title: string;
+  status: 'generated' | 'completed';
+  sections: LessonSection[];
+  concept_slugs: string[];
+  questions: LessonQuestion[];
+  created_at: string | null;
+  completed_at: string | null;
+}
+
+export interface LearningToday {
+  date: string;
+  lesson: Lesson | null;
+  due_reviews: number;
+  active_goals: number;
+  streak: number;
+}
+
+export interface LearningAnswerResult {
+  rating: number;
+  feedback: string;
+  evidence: { key_point: string; met: boolean; quote: string | null }[];
+  rubric: LessonQuestionRubric;
+  graded_by: string;
+  due_at: string;
+  recall_successes: number;
+  mastered: boolean;
+  concept_slug: string;
+  concept_title: string;
+}
 
 export interface WikiSuggestion {
   slug: string;

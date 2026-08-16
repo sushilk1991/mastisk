@@ -1182,3 +1182,101 @@ CREATE TABLE IF NOT EXISTS bg_task_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bg_task_runs_slug ON bg_task_runs(slug, id DESC);
+
+-- ─────────────────────────────── Learning (Guru) ───────────────────────────────
+-- Guru teaches one lesson per local day across all active goals. A goal's
+-- syllabus is a prerequisite DAG of atomic concepts; lesson density (concepts
+-- per lesson) scales with the goal's timeline so short timelines cover more
+-- per day. Each taught concept carries FSRS card state for spaced review.
+
+CREATE TABLE IF NOT EXISTS learning_goals (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug            TEXT NOT NULL UNIQUE,
+  topic           TEXT NOT NULL,
+  description     TEXT,
+  level           TEXT,                              -- learner's self-described starting level
+  timeline_days   INTEGER,                           -- NULL = open-ended; drives lesson density
+  target_date     TEXT,                              -- ISO date derived from timeline_days at creation
+  minutes_per_day INTEGER,
+  status          TEXT NOT NULL DEFAULT 'pending',   -- pending | active | paused | completed | archived
+  syllabus_error  TEXT,                              -- last syllabus-generation failure, NULL when ok
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  archived_at     DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS syllabus_items (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal_id            INTEGER NOT NULL REFERENCES learning_goals(id) ON DELETE CASCADE,
+  slug               TEXT NOT NULL,
+  title              TEXT NOT NULL,
+  definition         TEXT,
+  tier               INTEGER NOT NULL DEFAULT 1,     -- 1 easy .. 3 hard; edge pass only links adjacent tiers
+  position           INTEGER NOT NULL DEFAULT 0,     -- topological order within the goal
+  prereqs_json       TEXT NOT NULL DEFAULT '[]',     -- list of sibling slugs (direct prerequisites)
+  status             TEXT NOT NULL DEFAULT 'pending',-- pending | taught | mastered
+  card_json          TEXT,                           -- py-fsrs Card state; NULL until taught
+  due_at             DATETIME,                       -- next FSRS review (mirrors card_json for querying)
+  recall_successes   INTEGER NOT NULL DEFAULT 0,     -- successive-relearning counter; mastered at 3
+  taught_lesson_id   INTEGER REFERENCES lessons(id) ON DELETE SET NULL,
+  concept_article_id TEXT,                           -- wiki Concept article this graduated into
+  created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(goal_id, slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_syllabus_items_goal ON syllabus_items(goal_id, position);
+CREATE INDEX IF NOT EXISTS idx_syllabus_items_due ON syllabus_items(due_at)
+  WHERE card_json IS NOT NULL AND status != 'mastered';
+
+CREATE TABLE IF NOT EXISTS lessons (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal_id            INTEGER NOT NULL REFERENCES learning_goals(id) ON DELETE CASCADE,
+  lesson_date        TEXT NOT NULL,                  -- local ISO date
+  day_number         INTEGER NOT NULL,               -- 1-based per goal
+  title              TEXT NOT NULL,
+  sections_json      TEXT NOT NULL DEFAULT '[]',     -- [{kind:'section'|'diagram'|'callout', heading, body_md}]
+  concept_slugs_json TEXT NOT NULL DEFAULT '[]',     -- syllabus slugs taught in this lesson
+  status             TEXT NOT NULL DEFAULT 'generated', -- generated | completed
+  vault_path         TEXT,
+  created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+  completed_at       DATETIME
+);
+
+-- One lesson per local day across ALL goals: protects the streak and keeps
+-- the daily budget fixed; multi-goal users interleave by rotation.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lessons_one_per_day ON lessons(lesson_date);
+CREATE INDEX IF NOT EXISTS idx_lessons_goal ON lessons(goal_id, day_number);
+
+CREATE TABLE IF NOT EXISTS lesson_questions (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  lesson_id        INTEGER NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  syllabus_item_id INTEGER NOT NULL REFERENCES syllabus_items(id) ON DELETE CASCADE,
+  kind             TEXT NOT NULL,                    -- warmup (retrieval of prior concept) | check (new concept)
+  position         INTEGER NOT NULL DEFAULT 0,
+  question         TEXT NOT NULL,
+  rubric_json      TEXT NOT NULL DEFAULT '{}',       -- {key_points, common_mistakes, model_answer} authored with the question
+  answer_text      TEXT,
+  confidence       INTEGER,                          -- 1-4 user-stated before reveal (hypercorrection signal)
+  rating           INTEGER,                          -- FSRS rating 1-4 (Again/Hard/Good/Easy)
+  grade_json       TEXT,                             -- grader output incl. evidence quotes + prev_card_json for override
+  graded_at        DATETIME,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_questions_lesson ON lesson_questions(lesson_id, position);
+
+CREATE TABLE IF NOT EXISTS review_logs (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  syllabus_item_id INTEGER NOT NULL REFERENCES syllabus_items(id) ON DELETE CASCADE,
+  question_id      INTEGER REFERENCES lesson_questions(id) ON DELETE SET NULL,
+  rating           INTEGER NOT NULL,                 -- 1-4
+  source           TEXT NOT NULL DEFAULT 'quiz',     -- quiz | override | skill
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_logs_item ON review_logs(syllabus_item_id, id DESC);
+
+-- Daily-lesson push dedup: one lesson_due reminder per local date.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_lesson_due_date
+  ON reminders(kind, entity_id)
+  WHERE kind = 'lesson_due' AND deleted_at IS NULL;
