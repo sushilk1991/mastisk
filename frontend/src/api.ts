@@ -10,7 +10,7 @@ import type {
   Automation, AutomationDetail, AutomationRun, AutomationTriggers,
   SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem, WikiSuggestion,
   NeedsReviewItem,
-  LearningAnswerResult, LearningGoal, LearningToday, Lesson,
+  LearningAnswerResult, LearningGoal, LearningToday, Lesson, LessonChatMessage,
 } from './types';
 
 const BASE = '/api';
@@ -1079,6 +1079,14 @@ export const api = {
       fetch(`${BASE}/learning/goals/${id}/regenerate-syllabus`, { method: 'POST' })
         .then(async (r) => { if (!r.ok) await throwApiError(r); }),
     lesson: (id: number) => j<Lesson>(`${BASE}/learning/lessons/${id}`),
+    chat: (lessonId: number) =>
+      j<{ messages: LessonChatMessage[] }>(`${BASE}/learning/lessons/${lessonId}/chat`),
+    sendChat: (lessonId: number, message: string) =>
+      j<{ messages: LessonChatMessage[] }>(`${BASE}/learning/lessons/${lessonId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      }),
     completeLesson: (id: number): Promise<void> =>
       fetch(`${BASE}/learning/lessons/${id}/complete`, { method: 'POST' })
         .then(async (r) => { if (!r.ok) await throwApiError(r); }),

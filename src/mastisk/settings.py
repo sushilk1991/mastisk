@@ -183,9 +183,11 @@ class LearningSettings(BaseSettings):
     max_warmups_per_lesson: int = 3
     # FSRS target recall probability (0.9 = desirable-difficulty zone).
     desired_retention: float = 0.9
-    # LLM timeouts: lessons/syllabi are long generations; grading is short.
+    # LLM timeouts: lessons/syllabi are long generations; grading and chat
+    # turns are short.
     timeout_s: int = 300
     grade_timeout_s: int = 120
+    chat_timeout_s: int = 120
 
 
 class RemindersSettings(BaseSettings):

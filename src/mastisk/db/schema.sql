@@ -1280,3 +1280,15 @@ CREATE INDEX IF NOT EXISTS idx_review_logs_item ON review_logs(syllabus_item_id,
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_lesson_due_date
   ON reminders(kind, entity_id)
   WHERE kind = 'lesson_due' AND deleted_at IS NULL;
+
+-- Per-lesson tutor chat: the web UI's conversational surface over a lesson.
+-- The daemon renders assistant markdown server-side at read time.
+CREATE TABLE IF NOT EXISTS lesson_chat_messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  lesson_id  INTEGER NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  role       TEXT NOT NULL,                          -- user | assistant
+  content    TEXT NOT NULL,                          -- markdown (assistant) / plain text (user)
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_chat_lesson ON lesson_chat_messages(lesson_id, id);

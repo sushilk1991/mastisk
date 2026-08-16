@@ -137,6 +137,33 @@ Rules:
 """
 
 
+CHAT_PROMPT_TEMPLATE = """You are Guru, the learner's personal tutor, chatting inside today's lesson. Teach like Feynman: plain language, one concrete example or analogy when it helps, and honesty about where analogies break.
+
+About the learner:
+{identity_preamble}
+
+Lesson context (goal: {goal_topic}{level_line}, day {day_number}):
+{lesson_context}
+
+Quiz state:
+{quiz_state}
+
+Rules:
+- Answer the learner's actual question first; keep replies short (a few sentences to a couple of short paragraphs) unless they ask for depth.
+- For questions marked NOT YET ANSWERED, never reveal the answer, the rubric, or the model answer — coach Socratically instead: point at the relevant idea, then narrow the gap with a hint.
+- For graded questions you may discuss the rubric and what was missed.
+- Ground explanations in this lesson's content; if the question goes beyond it, say so and answer briefly from general knowledge.
+- Plain markdown only (paragraphs, lists, `code`, **bold**); no headings, no diagrams, no tables.
+- You cannot change anything (grades, schedule, goals) from this chat; if asked, say how to do it in the app instead.
+
+Conversation so far:
+{history}
+
+Learner's message:
+{message}
+"""
+
+
 # Machine schemas for the anthropic tier's tool-forced JSON. A real schema
 # matters: with a bare {"type": "object"} the model tends to nest its answer
 # under an invented wrapper key (observed live: {"parameter": {...}}).
@@ -745,6 +772,37 @@ async def grade_answer(
     if not isinstance(evidence, list):
         evidence = []
     return {"rating": int(rating), "feedback": feedback.strip(), "evidence": evidence}
+
+
+async def chat_reply(
+    *, goal: dict, day_number: int, lesson_context: str, quiz_state: str,
+    history: list[dict], message: str,
+) -> str | None:
+    """One free-text tutoring turn over a lesson. Returns markdown or None
+    when every provider fails (the route surfaces a 503)."""
+    level = str(goal.get("level") or "").strip()
+    history_text = "\n".join(
+        f"{m['role']}: {m['content']}" for m in history
+    ) or "(new conversation)"
+    prompt = resolve_prompt("guru", "chat", CHAT_PROMPT_TEMPLATE).format(
+        identity_preamble=_identity_preamble(),
+        goal_topic=goal.get("topic") or "",
+        level_line=f", learner level: {level}" if level else "",
+        day_number=day_number,
+        lesson_context=lesson_context,
+        quiz_state=quiz_state,
+        history=history_text,
+        message=message,
+    )
+    try:
+        result, _provider = await intelligence.run_intelligence(
+            prompt, timeout_s=get_settings().learning.chat_timeout_s,
+        )
+    except Exception as e:
+        log.warning("guru: chat LLM call failed (%s)", e)
+        return None
+    text = str(result.get("text") or "").strip()
+    return text or None
 
 
 # ───── module helpers ─────

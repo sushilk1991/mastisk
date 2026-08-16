@@ -58,6 +58,10 @@ class OverrideIn(BaseModel):
     rating: int = Field(ge=1, le=4)
 
 
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
 # ───── goals ─────
 
 
@@ -278,6 +282,168 @@ async def generate_now_endpoint() -> dict:
         raise HTTPException(status_code=409, detail="today's lesson already exists")
     job_id = enqueue("guru", "lesson", {})
     return {"job_id": job_id, "status": "queued"}
+
+
+# ───── lesson chat ─────
+
+
+_CHAT_HISTORY_MESSAGES = 12
+_CHAT_CONTEXT_CHARS = 16_000
+
+
+@router.get("/lessons/{lesson_id}/chat")
+async def get_lesson_chat_endpoint(lesson_id: int) -> dict:
+    with connect() as conn:
+        if conn.execute(
+            "SELECT 1 FROM lessons WHERE id = ?", (lesson_id,),
+        ).fetchone() is None:
+            raise HTTPException(status_code=404, detail="lesson not found")
+        rows = conn.execute(
+            """SELECT id, role, content, created_at FROM lesson_chat_messages
+               WHERE lesson_id = ? ORDER BY id ASC""",
+            (lesson_id,),
+        ).fetchall()
+    return {"messages": [_chat_message_row(dict(r)) for r in rows]}
+
+
+@router.post("/lessons/{lesson_id}/chat")
+async def lesson_chat_endpoint(lesson_id: int, body: ChatIn) -> dict:
+    # Preserve newlines — learners paste code — but trim the edges.
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="message must not be blank")
+    with connect() as conn:
+        row = conn.execute(
+            """SELECT l.*, g.topic AS goal_topic, g.level AS goal_level
+               FROM lessons l JOIN learning_goals g ON g.id = l.goal_id
+               WHERE l.id = ?""",
+            (lesson_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="lesson not found")
+        lesson = dict(row)
+        history = [
+            dict(r)
+            for r in conn.execute(
+                """SELECT role, content FROM lesson_chat_messages
+                   WHERE lesson_id = ? ORDER BY id DESC LIMIT ?""",
+                (lesson_id, _CHAT_HISTORY_MESSAGES),
+            )
+        ][::-1]
+        questions = [
+            dict(q)
+            for q in conn.execute(
+                """SELECT lq.*, s.title AS concept_title
+                   FROM lesson_questions lq
+                   JOIN syllabus_items s ON s.id = lq.syllabus_item_id
+                   WHERE lq.lesson_id = ? ORDER BY lq.position ASC""",
+                (lesson_id,),
+            )
+        ]
+
+    reply = await guru.chat_reply(
+        goal={"topic": lesson.get("goal_topic"), "level": lesson.get("goal_level")},
+        day_number=int(lesson.get("day_number") or 1),
+        lesson_context=_chat_lesson_context(lesson),
+        quiz_state=_chat_quiz_state(questions),
+        history=history,
+        message=message,
+    )
+    if reply is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Guru is unavailable (all LLM providers failed); try again shortly",
+        )
+
+    # Persist the turn only after a successful reply so a failed call can be
+    # retried without duplicate user messages in the transcript. The lesson
+    # may have been deleted during the (slow) LLM call — FK violation → 404.
+    import sqlite3
+
+    try:
+        stored = _persist_chat_turn(lesson_id, message, reply)
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=404, detail="lesson not found") from None
+    return {"messages": [_chat_message_row(dict(r)) for r in stored]}
+
+
+def _persist_chat_turn(lesson_id: int, message: str, reply: str) -> list:
+    with connect() as conn, txn(conn):
+        cur = conn.execute(
+            """INSERT INTO lesson_chat_messages (lesson_id, role, content)
+               VALUES (?, 'user', ?)""",
+            (lesson_id, message),
+        )
+        user_id = int(cur.lastrowid)
+        cur = conn.execute(
+            """INSERT INTO lesson_chat_messages (lesson_id, role, content)
+               VALUES (?, 'assistant', ?)""",
+            (lesson_id, reply),
+        )
+        assistant_id = int(cur.lastrowid)
+        return conn.execute(
+            """SELECT id, role, content, created_at FROM lesson_chat_messages
+               WHERE id IN (?, ?) ORDER BY id ASC""",
+            (user_id, assistant_id),
+        ).fetchall()
+
+
+def _chat_lesson_context(lesson: dict) -> str:
+    parts = [f"Lesson title: {lesson.get('title') or ''}"]
+    for s in _loads_list(lesson.get("sections_json")):
+        if not isinstance(s, dict):
+            continue
+        heading = str(s.get("heading") or "").strip()
+        body = str(s.get("body_md") or "").strip()
+        if heading:
+            parts.append(f"## {heading}\n{body}")
+        elif body:
+            parts.append(body)
+    return "\n\n".join(parts)[:_CHAT_CONTEXT_CHARS]
+
+
+def _chat_quiz_state(questions: list[dict]) -> str:
+    """Per-question state for the tutor prompt. Rubrics and model answers are
+    the answer key — they enter the prompt only after the question is graded,
+    so a chat turn can never leak an ungraded answer."""
+    lines = []
+    for q in questions:
+        label = f"[{q['kind']}] {q['question']}"
+        if q["rating"] is None:
+            lines.append(f"- {label}\n  NOT YET ANSWERED — do not reveal the answer.")
+            continue
+        rubric = _loads_dict(q.get("rubric_json"))
+        raw_points = rubric.get("key_points")
+        key_points = "; ".join(
+            str(p) for p in (raw_points if isinstance(raw_points, list) else [])
+        )
+        lines.append(
+            f"- {label}\n  Graded {q['rating']}/4."
+            f" Learner answered: {str(q.get('answer_text') or '')[:400]}\n"
+            f"  Rubric key points: {key_points[:800]}\n"
+            f"  Model answer: {str(rubric.get('model_answer') or '')[:800]}"
+        )
+    return "\n".join(lines) or "(no quiz questions in this lesson)"
+
+
+_chat_md = None
+
+
+def _chat_message_row(m: dict) -> dict:
+    global _chat_md
+    out = {
+        "id": m["id"],
+        "role": m["role"],
+        "content": m["content"],
+        "created_at": m.get("created_at"),
+    }
+    if m["role"] == "assistant":
+        if _chat_md is None:
+            from markdown_it import MarkdownIt
+
+            _chat_md = MarkdownIt()
+        out["content_html"] = _chat_md.render(m["content"])
+    return out
 
 
 # ───── answering / grading ─────

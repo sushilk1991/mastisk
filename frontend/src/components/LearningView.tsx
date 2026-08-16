@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiError, api } from '../api';
 import type {
-  LearningAnswerResult, LearningGoal, LearningToday, Lesson, LessonQuestion, View,
+  LearningAnswerResult, LearningGoal, LearningToday, Lesson, LessonChatMessage,
+  LessonQuestion, View,
 } from '../types';
 import { MermaidBlock } from './MermaidBlock';
 
@@ -312,6 +313,106 @@ export function LessonView({ lessonId, onNavigate }: { lessonId: number | null }
           )}
         </div>
       )}
+
+      <GuruChat key={lesson.id} lessonId={lesson.id} />
+    </div>
+  );
+}
+
+// ───────────────────────────── Lesson chat ─────────────────────────────
+
+function GuruChat({ lessonId }: { lessonId: number }) {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<LessonChatMessage[]>([]);
+  const [draft, setDraft] = useState('');
+  const [pending, setPending] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open || loaded) return;
+    api.learning.chat(lessonId)
+      .then((r) => { setMessages(r.messages); setLoaded(true); setErr(null); })
+      .catch((e: Error) => setErr(e.message));
+  }, [open, loaded, lessonId]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, pending, open]);
+
+  const send = () => {
+    const text = draft.trim();
+    if (!text || busy || !loaded) return;
+    setBusy(true);
+    setErr(null);
+    setDraft('');
+    setPending(text);
+    api.learning.sendChat(lessonId, text)
+      .then((r) => setMessages((prev) => [...prev, ...r.messages]))
+      .catch((e: Error) => {
+        // Give the failed message back for a one-click retry, but never
+        // clobber text the user typed while waiting.
+        setDraft((d) => d || text);
+        const offline = e instanceof ApiError && e.status === 503;
+        setErr(offline ? 'Guru is offline right now — try again in a moment.' : e.message);
+      })
+      .finally(() => { setPending(null); setBusy(false); });
+  };
+
+  if (!open) {
+    return (
+      <button className="learn-chat-fab" onClick={() => setOpen(true)} title="Chat with Guru about this lesson">
+        ◈ Ask Guru
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="learn-chat-panel"
+      role="dialog"
+      aria-label="Chat with Guru about this lesson"
+      onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}
+    >
+      <div className="learn-chat-head">
+        <span className="learn-chat-title">◈ Guru</span>
+        <button className="learn-chat-close" onClick={() => setOpen(false)} aria-label="Close chat">×</button>
+      </div>
+      <div className="learn-chat-scroll" ref={scrollRef} aria-live="polite">
+        {messages.length === 0 && !pending && loaded && (
+          <p className="learn-chat-empty">
+            Ask anything about this lesson — a fuzzy concept, a “why”, or a tangent.
+            Guru knows the lesson but won't spoil unanswered quiz questions.
+          </p>
+        )}
+        {messages.map((m) => (
+          m.role === 'assistant' && m.content_html
+            ? <div key={m.id} className="learn-chat-msg guru sec-body" dangerouslySetInnerHTML={{ __html: m.content_html }} />
+            : <div key={m.id} className={`learn-chat-msg ${m.role === 'user' ? 'me' : 'guru'}`}>{m.content}</div>
+        ))}
+        {pending && <div className="learn-chat-msg me">{pending}</div>}
+        {busy && <div className="learn-chat-msg guru learn-chat-thinking">thinking…</div>}
+        {err && <div className="learn-chat-err">{err}</div>}
+      </div>
+      <div className="learn-chat-input-row">
+        <textarea
+          className="learn-chat-input"
+          placeholder={loaded ? 'Ask Guru… (Enter to send)' : 'loading chat…'}
+          aria-label="Message to Guru"
+          value={draft}
+          rows={2}
+          autoFocus
+          disabled={!loaded}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+          }}
+        />
+        <button className="chip" disabled={busy || !loaded || !draft.trim()} onClick={send}>Send</button>
+      </div>
     </div>
   );
 }

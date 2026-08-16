@@ -552,3 +552,110 @@ def test_syllabus_completion_does_not_resurrect_paused_goal(
     detail = client.get(f"/api/learning/goals/{goal['id']}").json()
     assert detail["status"] == "paused"          # the pause survives the job
     assert detail["total_concepts"] == 3         # syllabus still landed
+
+
+# ───── lesson chat ─────
+
+
+def test_lesson_chat_roundtrip_persists_and_renders(vault_tmp, data_tmp, db) -> None:
+    client = _client(vault_tmp, data_tmp, db)
+    from mastisk.db.queries import connect
+
+    with connect() as conn:
+        goal_id, item_id = _mk_goal_with_item(conn)
+        lesson_id, _qid = _mk_lesson_with_question(conn, goal_id, item_id)
+
+    assert client.get(f"/api/learning/lessons/{lesson_id}/chat").json() == {
+        "messages": [],
+    }
+
+    with patch(
+        "mastisk.bridges.intelligence.run_intelligence",
+        new=AsyncMock(return_value=({"text": "A future is **lazy**."}, "anthropic")),
+    ):
+        r = client.post(
+            f"/api/learning/lessons/{lesson_id}/chat",
+            json={"message": "Why is this lazy?\n\nfn main() { async {} }  "},
+        )
+    assert r.status_code == 200
+    msgs = r.json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    # Newlines survive (learners paste code); only the edges are trimmed.
+    assert msgs[0]["content"] == "Why is this lazy?\n\nfn main() { async {} }"
+    # Assistant markdown arrives rendered server-side; the user turn does not.
+    assert "<strong>lazy</strong>" in msgs[1]["content_html"]
+    assert "content_html" not in msgs[0]
+
+    stored = client.get(f"/api/learning/lessons/{lesson_id}/chat").json()["messages"]
+    assert [m["role"] for m in stored] == ["user", "assistant"]
+
+
+def test_lesson_chat_prompt_gates_rubric_on_grading(vault_tmp, data_tmp, db) -> None:
+    """The rubric/model answer must never enter the chat prompt while the
+    question is ungraded (it's the answer key), and must appear once graded."""
+    client = _client(vault_tmp, data_tmp, db)
+    from mastisk.db.queries import connect
+
+    with connect() as conn:
+        goal_id, item_id = _mk_goal_with_item(conn)
+        lesson_id, qid = _mk_lesson_with_question(conn, goal_id, item_id)
+        conn.execute(
+            """UPDATE lessons SET sections_json =
+                 '[{"kind":"section","heading":"Polling","body_md":"An executor drives futures by polling."}]'
+               WHERE id = ?""",
+            (lesson_id,),
+        )
+
+    fake = AsyncMock(return_value=({"text": "hint"}, "anthropic"))
+    with patch("mastisk.bridges.intelligence.run_intelligence", new=fake):
+        client.post(f"/api/learning/lessons/{lesson_id}/chat", json={"message": "help"})
+    prompt = fake.call_args.args[0]
+    # The rules section always mentions the marker; assert on the quiz-state
+    # line itself so the check discriminates.
+    assert "NOT YET ANSWERED \u2014 do not reveal" in prompt
+    assert "Futures are polled." not in prompt  # model answer withheld
+    assert "Explain futures." in prompt         # question itself is fine
+    assert "An executor drives futures by polling." in prompt  # section body
+
+    with connect() as conn:
+        conn.execute(
+            "UPDATE lesson_questions SET rating = 3, answer_text = 'polled' WHERE id = ?",
+            (qid,),
+        )
+    fake.reset_mock()
+    with patch("mastisk.bridges.intelligence.run_intelligence", new=fake):
+        client.post(f"/api/learning/lessons/{lesson_id}/chat", json={"message": "what did I miss?"})
+    prompt = fake.call_args.args[0]
+    assert "NOT YET ANSWERED \u2014 do not reveal" not in prompt
+    assert "Futures are polled." in prompt
+    assert "Graded 3/4" in prompt
+
+
+def test_lesson_chat_503_persists_nothing(vault_tmp, data_tmp, db) -> None:
+    client = _client(vault_tmp, data_tmp, db)
+    from mastisk.db.queries import connect
+
+    with connect() as conn:
+        goal_id, item_id = _mk_goal_with_item(conn)
+        lesson_id, _qid = _mk_lesson_with_question(conn, goal_id, item_id)
+
+    with patch(
+        "mastisk.bridges.intelligence.run_intelligence",
+        new=AsyncMock(side_effect=RuntimeError("all providers down")),
+    ):
+        r = client.post(
+            f"/api/learning/lessons/{lesson_id}/chat", json={"message": "hi"},
+        )
+    assert r.status_code == 503
+    # A failed turn leaves no transcript rows, so a retry can't duplicate.
+    assert client.get(f"/api/learning/lessons/{lesson_id}/chat").json() == {
+        "messages": [],
+    }
+
+
+def test_lesson_chat_unknown_lesson_404(vault_tmp, data_tmp, db) -> None:
+    client = _client(vault_tmp, data_tmp, db)
+    assert client.get("/api/learning/lessons/999/chat").status_code == 404
+    assert client.post(
+        "/api/learning/lessons/999/chat", json={"message": "hi"},
+    ).status_code == 404

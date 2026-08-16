@@ -266,6 +266,7 @@ _AGENT_SPECS: tuple[dict[str, Any], ...] = (
             {"slot_id": "syllabus", "label": "Syllabus prompt", "module_attr": "SYLLABUS_PROMPT_TEMPLATE", "primary": True},
             {"slot_id": "lesson", "label": "Lesson prompt", "module_attr": "LESSON_PROMPT_TEMPLATE"},
             {"slot_id": "grade", "label": "Grading prompt", "module_attr": "GRADE_PROMPT_TEMPLATE"},
+            {"slot_id": "chat", "label": "Lesson chat prompt", "module_attr": "CHAT_PROMPT_TEMPLATE"},
         ),
     },
     {

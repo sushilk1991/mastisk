@@ -558,6 +558,14 @@ export interface LearningAnswerResult {
   concept_title: string;
 }
 
+export interface LessonChatMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  content_html?: string;
+  created_at: string | null;
+}
+
 export interface WikiSuggestion {
   slug: string;
   title: string;
