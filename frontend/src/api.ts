@@ -1090,6 +1090,10 @@ export const api = {
     completeLesson: (id: number): Promise<void> =>
       fetch(`${BASE}/learning/lessons/${id}/complete`, { method: 'POST' })
         .then(async (r) => { if (!r.ok) await throwApiError(r); }),
+    visualize: (id: number) =>
+      j<{ job_id: number; status: string }>(`${BASE}/learning/lessons/${id}/visualize`, {
+        method: 'POST',
+      }),
     generateNow: () =>
       fetch(`${BASE}/learning/generate-now`, { method: 'POST' })
         .then(async (r) => {

@@ -659,3 +659,155 @@ def test_lesson_chat_unknown_lesson_404(vault_tmp, data_tmp, db) -> None:
     assert client.post(
         "/api/learning/lessons/999/chat", json={"message": "hi"},
     ).status_code == 404
+
+
+# ───── visualize + rich section rendering ─────
+
+
+def test_lesson_payload_renders_image_and_mnemonic_sections(vault_tmp, data_tmp, db) -> None:
+    client = _client(vault_tmp, data_tmp, db)
+    from mastisk.db.queries import connect
+
+    sections = [
+        {"kind": "section", "heading": "Idea", "body_md": "Plain **words**."},
+        {"kind": "image", "heading": "The loop",
+         "body_md": "Flat vector. No other text.",
+         "image_url": "/api/attachments/abc.png"},
+        {"kind": "mnemonic", "heading": "PEW", "body_md": "**P**oll first."},
+    ]
+    with connect() as conn:
+        goal_id, item_id = _mk_goal_with_item(conn)
+        lesson_id, _q = _mk_lesson_with_question(conn, goal_id, item_id)
+        conn.execute(
+            "UPDATE lessons SET sections_json = ? WHERE id = ?",
+            (json.dumps(sections), lesson_id),
+        )
+    r = client.get(f"/api/learning/lessons/{lesson_id}")
+    assert r.status_code == 200
+    got = r.json()["sections"]
+    image = next(s for s in got if s["kind"] == "image")
+    # The client renders image_url; the imagegen prompt never becomes HTML.
+    assert image["image_url"] == "/api/attachments/abc.png"
+    assert image["body_html"] == ""
+    mnemonic = next(s for s in got if s["kind"] == "mnemonic")
+    assert "<strong>P</strong>" in mnemonic["body_html"]
+
+
+def test_visualize_endpoint_queues_guru_job(vault_tmp, data_tmp, db) -> None:
+    client = _client(vault_tmp, data_tmp, db)
+    from mastisk.db.queries import connect
+
+    with connect() as conn:
+        goal_id, item_id = _mk_goal_with_item(conn)
+        lesson_id, _q = _mk_lesson_with_question(conn, goal_id, item_id)
+    with patch("mastisk.bridges.imagegen_bridge.available", return_value=True):
+        r = client.post(f"/api/learning/lessons/{lesson_id}/visualize")
+    assert r.status_code == 202
+    with connect() as conn:
+        job = dict(conn.execute(
+            "SELECT * FROM jobs WHERE agent = 'guru' AND kind = 'visual'",
+        ).fetchone())
+    assert json.loads(job["payload_json"]) == {"lesson_id": lesson_id}
+
+
+def test_visualize_endpoint_guards(vault_tmp, data_tmp, db) -> None:
+    client = _client(vault_tmp, data_tmp, db)
+    from mastisk.db.queries import connect
+
+    with connect() as conn:
+        goal_id, item_id = _mk_goal_with_item(conn)
+        lesson_id, _q = _mk_lesson_with_question(conn, goal_id, item_id)
+
+    # yoyo missing → 503 with an explanation, no job queued.
+    with patch("mastisk.bridges.imagegen_bridge.available", return_value=False):
+        r = client.post(f"/api/learning/lessons/{lesson_id}/visualize")
+    assert r.status_code == 503
+
+    # unknown lesson → 404.
+    with patch("mastisk.bridges.imagegen_bridge.available", return_value=True):
+        assert client.post("/api/learning/lessons/99999/visualize").status_code == 404
+
+    # already at the per-lesson image cap → 409.
+    full = [
+        {"kind": "image", "heading": "a", "body_md": "p", "image_url": "/api/attachments/1.png"},
+        {"kind": "image", "heading": "b", "body_md": "p", "image_url": "/api/attachments/2.png"},
+    ]
+    with connect() as conn:
+        conn.execute(
+            "UPDATE lessons SET sections_json = ? WHERE id = ?",
+            (json.dumps(full), lesson_id),
+        )
+    with patch("mastisk.bridges.imagegen_bridge.available", return_value=True):
+        r = client.post(f"/api/learning/lessons/{lesson_id}/visualize")
+    assert r.status_code == 409
+    with connect() as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE kind = 'visual'",
+        ).fetchone()["n"]
+    assert n == 0  # every guarded path refused to queue
+
+
+def test_visualize_endpoint_dedups_inflight_jobs(vault_tmp, data_tmp, db) -> None:
+    client = _client(vault_tmp, data_tmp, db)
+    from mastisk.db.queries import connect
+
+    with connect() as conn:
+        goal_id, item_id = _mk_goal_with_item(conn)
+        lesson_id, _q = _mk_lesson_with_question(conn, goal_id, item_id)
+    with patch("mastisk.bridges.imagegen_bridge.available", return_value=True):
+        first = client.post(f"/api/learning/lessons/{lesson_id}/visualize")
+        second = client.post(f"/api/learning/lessons/{lesson_id}/visualize")
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert second.json()["job_id"] == first.json()["job_id"]
+    assert second.json().get("duplicate") is True
+    with connect() as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE kind = 'visual'",
+        ).fetchone()["n"]
+    assert n == 1  # a double-click never pays for a second render
+
+
+def test_visualize_endpoint_409_when_images_disabled(vault_tmp, data_tmp, db) -> None:
+    client = _client(vault_tmp, data_tmp, db)
+    from mastisk.db.queries import connect
+    from mastisk.settings import get_settings
+
+    with connect() as conn:
+        goal_id, item_id = _mk_goal_with_item(conn)
+        lesson_id, _q = _mk_lesson_with_question(conn, goal_id, item_id)
+    get_settings().learning.lesson_images = "off"
+    try:
+        with patch("mastisk.bridges.imagegen_bridge.available", return_value=True):
+            r = client.post(f"/api/learning/lessons/{lesson_id}/visualize")
+    finally:
+        get_settings().learning.lesson_images = "auto"
+    assert r.status_code == 409
+    assert "disabled" in r.json()["detail"]
+
+
+def test_lesson_payload_exposes_can_visualize_and_blanks_prompts(vault_tmp, data_tmp, db) -> None:
+    client = _client(vault_tmp, data_tmp, db)
+    from mastisk.db.queries import connect
+
+    with connect() as conn:
+        goal_id, item_id = _mk_goal_with_item(conn)
+        lesson_id, _q = _mk_lesson_with_question(conn, goal_id, item_id)
+        conn.execute(
+            "UPDATE lessons SET sections_json = ? WHERE id = ?",
+            (json.dumps([
+                {"kind": "section", "heading": "h", "body_md": "text"},
+                {"kind": "image", "heading": "fig", "body_md": "SECRET PROMPT",
+                 "image_url": "/api/attachments/x.png"},
+            ]), lesson_id),
+        )
+    with patch("mastisk.bridges.imagegen_bridge.available", return_value=True):
+        r = client.get(f"/api/learning/lessons/{lesson_id}")
+    body = r.json()
+    assert body["can_visualize"] is True  # 1 image < cap of 2
+    image = next(s for s in body["sections"] if s["kind"] == "image")
+    assert "SECRET PROMPT" not in json.dumps(body)  # prompt never ships
+    assert image["image_url"] == "/api/attachments/x.png"
+    with patch("mastisk.bridges.imagegen_bridge.available", return_value=False):
+        r2 = client.get(f"/api/learning/lessons/{lesson_id}")
+    assert r2.json()["can_visualize"] is False

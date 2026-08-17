@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import ClassVar
 from zoneinfo import ZoneInfo
 
@@ -32,7 +33,7 @@ from slugify import slugify
 
 from mastisk.agents.base import Agent
 from mastisk.agents.registry import resolve_prompt
-from mastisk.bridges import intelligence
+from mastisk.bridges import imagegen_bridge, intelligence
 from mastisk.db.queries import connect, txn
 from mastisk.paths import vault_dir
 from mastisk.services import learning as learn_svc
@@ -89,6 +90,8 @@ Return JSON matching this schema exactly:
  "sections": [
   {{"kind": "section", "heading": "<heading>", "body_md": "<markdown>"}},
   {{"kind": "diagram", "heading": "<diagram caption>", "body_md": "<mermaid source, no fences>"}},
+  {{"kind": "image", "heading": "<figure caption>", "body_md": "<image-generation prompt — see rules>"}},
+  {{"kind": "mnemonic", "heading": "<name of the memory hook>", "body_md": "<the mnemonic and how it maps to the content>"}},
   {{"kind": "callout", "heading": "The trap", "body_md": "<the most common misconception and why smart people fall for it>"}}
  ],
  "warmup_questions": [
@@ -103,10 +106,30 @@ Return JSON matching this schema exactly:
 Rules:
 - Teach EVERY new concept: plain-language explanation first, then an analogy that maps structure (say explicitly where the analogy breaks), then a worked example with real numbers or runnable code.
 - Exactly one "diagram" section: valid Mermaid (flowchart or sequenceDiagram) that shows the mechanism, not decoration. No markdown fences inside body_md.
+- At most one "image" section, and only when a rendered picture would genuinely beat prose and Mermaid (spatial structure, physical mechanism, geometric intuition, architecture). Its body_md is an image-generation prompt, NOT lesson text: name every element and its relationship concretely; pick one named style (flat vector / hand-drawn black marker on whiteboard / isometric 3D / blueprint schematic); state a plain background; at most 5 short labels of three words or fewer; end the prompt with the sentence: No other text. The heading is the figure caption the learner reads.
+- When today's material is list-heavy, formula-heavy, or easy to confuse (and only then), add one "mnemonic" section: a vivid memory hook — acronym, absurd concrete image, story chain, or rhyme — followed by a one-line map from each part of the hook to the real content. Vivid and specific beats clever.
 - One "callout" section naming the most common misconception.
 - One warmup question per listed warmup concept (free recall — no hints in the question). One check question per NEW concept.
 - Rubrics are the grading contract: 2-4 key_points a correct answer must contain, in plain language.
 - Questions must never contain their own answers.
+- Strict JSON, no prose around it.
+"""
+
+
+VISUAL_PROMPT_TEMPLATE = """You are Guru, a personal tutor. The learner asked for a visual for today's lesson. Author ONE image-generation prompt whose rendered picture would genuinely help them understand the lesson's hardest idea — a mechanism, structure, or relationship, never decoration. Return STRICT JSON only.
+
+Lesson (goal: {topic}):
+{lesson_context}
+
+Return JSON matching this schema exactly:
+{{"caption": "<figure caption shown under the image, <=120 chars>",
+ "image_prompt": "<the image-generation prompt>"}}
+
+Rules for image_prompt:
+- Name every element that must appear and its relationship, concretely (three boxes left to right, each with a short label, connected by arrows), never merely: a diagram of X.
+- Pick one named style: flat vector, hand-drawn black marker on whiteboard, isometric 3D, or blueprint schematic.
+- State a plain background explicitly.
+- At most 5 short labels of three words or fewer; end the prompt with the sentence: No other text.
 - Strict JSON, no prose around it.
 """
 
@@ -153,6 +176,7 @@ Rules:
 - For questions marked NOT YET ANSWERED, never reveal the answer, the rubric, or the model answer — coach Socratically instead: point at the relevant idea, then narrow the gap with a hint.
 - For graded questions you may discuss the rubric and what was missed.
 - Ground explanations in this lesson's content; if the question goes beyond it, say so and answer briefly from general knowledge.
+- When the learner asks how to remember something (or is clearly drowning in detail), craft a vivid mnemonic — acronym, absurd concrete image, or story chain — and show how each part maps to the real content. Never build a mnemonic out of material that would answer a question marked NOT YET ANSWERED.
 - Plain markdown only (paragraphs, lists, `code`, **bold**); no headings, no diagrams, no tables.
 - You cannot change anything (grades, schedule, goals) from this chat; if asked, say how to do it in the app instead.
 
@@ -227,7 +251,10 @@ LESSON_JSON_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["section", "diagram", "callout"]},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["section", "diagram", "image", "mnemonic", "callout"],
+                    },
                     "heading": {"type": "string"},
                     "body_md": {"type": "string"},
                 },
@@ -238,6 +265,15 @@ LESSON_JSON_SCHEMA = {
         "check_questions": {"type": "array", "items": _QUESTION_SCHEMA},
     },
     "required": ["title", "sections", "warmup_questions", "check_questions"],
+}
+
+VISUAL_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "caption": {"type": "string"},
+        "image_prompt": {"type": "string"},
+    },
+    "required": ["caption", "image_prompt"],
 }
 
 GRADE_JSON_SCHEMA = {
@@ -297,6 +333,8 @@ class Guru(Agent):
             await self._generate_syllabus(int(payload["goal_id"]))
         elif job["kind"] == "lesson":
             await self._generate_lesson(_local_today_iso())
+        elif job["kind"] == "visual":
+            await self._generate_visual(int(payload["lesson_id"]))
         else:
             raise ValueError(f"guru: unknown job kind {job['kind']!r}")
 
@@ -535,7 +573,166 @@ class Guru(Agent):
             return
         self._lesson_retry_after = None
 
-        self._persist_lesson(goal, lesson, new_concepts, due_items, lesson_date)
+        # Persist the text lesson FIRST: image rendering takes minutes per
+        # figure and a restart inside that window must not lose the lesson
+        # (or delay its reminder). Figures are appended afterwards through
+        # the same guarded path the Visualize button uses.
+        image_specs = [s for s in lesson["sections"] if s["kind"] == "image"]
+        lesson["sections"] = [s for s in lesson["sections"] if s["kind"] != "image"]
+        lesson_id = self._persist_lesson(goal, lesson, new_concepts, due_items,
+                                         lesson_date)
+        if lesson_id is None:
+            return
+        await self._materialize_images(lesson_id, image_specs)
+
+    async def _materialize_images(self, lesson_id: int, specs: list[dict]) -> None:
+        """Render the lesson LLM's "image" sections (imagegen prompts) into
+        real attachments via the yoyo pipeline (same as wiki hero images) and
+        append them to the already-persisted lesson.
+
+        Best-effort: when images are off, yoyo is missing, or generation
+        fails, the figure is simply skipped — a broken image pipeline must
+        never block the lesson."""
+        if not specs:
+            return
+        settings = get_settings().learning
+        if settings.lesson_images != "auto" or not imagegen_bridge.available():
+            return
+        for spec in specs:
+            try:
+                url = await imagegen_bridge.generate_hero(
+                    spec["body_md"], timeout_s=settings.image_timeout_s,
+                )
+            except Exception as e:
+                log.warning("guru: lesson image generation failed (%s)", e)
+                continue
+            self._append_figure(lesson_id, {**spec, "image_url": url})
+
+    def _append_figure(self, lesson_id: int, figure: dict) -> bool:
+        """Append one rendered figure to a lesson's sections, re-checking the
+        cap and the lesson's existence inside the transaction (the render
+        that produced the figure took minutes). Mirrors to the vault by
+        appending, so user edits to the mirror file survive."""
+        settings = get_settings().learning
+        with connect() as conn, txn(conn):
+            fresh = conn.execute(
+                """SELECT l.*, g.topic AS goal_topic, g.slug AS goal_slug
+                   FROM lessons l JOIN learning_goals g ON g.id = l.goal_id
+                   WHERE l.id = ?""",
+                (lesson_id,),
+            ).fetchone()
+            if fresh is None:
+                log.warning("guru: lesson %s vanished before figure append", lesson_id)
+                return False
+            row = dict(fresh)
+            sections = _sections_of(row)
+            raw = str(row.get("sections_json") or "").strip()
+            if not sections and raw not in ("", "[]", "null"):
+                # Unparseable sections_json — never replace a lesson's content
+                # with a lone figure.
+                log.warning("guru: lesson %s sections_json unparseable; "
+                            "not appending figure", lesson_id)
+                return False
+            if _image_count(sections) >= settings.max_images_per_lesson:
+                return False
+            sections.append(figure)
+            conn.execute(
+                "UPDATE lessons SET sections_json = ? WHERE id = ?",
+                (json.dumps(sections), lesson_id),
+            )
+        self._mirror_figure(row, figure, sections)
+        return True
+
+    def _mirror_figure(self, row: dict, figure: dict, sections: list[dict]) -> None:
+        """Best-effort vault-mirror update: append the figure to the existing
+        mirror file (preserving any edits the user made there), or write a
+        fresh mirror if none exists yet; then record vault_path."""
+        try:
+            caption = str(figure.get("heading") or "figure")
+            block = f"\n![{caption}]({figure['image_url']})\n\n*{caption}*\n"
+            path = Path(row["vault_path"]) if row.get("vault_path") else None
+            if path is not None and path.exists():
+                write_vault_text(path, path.read_text() + block)
+                return
+            new_path = self._write_vault_mirror(
+                {"topic": row.get("goal_topic") or "",
+                 "slug": row.get("goal_slug") or "goal"},
+                {"title": row.get("title") or "", "sections": sections},
+                row["lesson_date"], int(row.get("day_number") or 1),
+            )
+            if new_path:
+                with connect() as conn:
+                    conn.execute(
+                        "UPDATE lessons SET vault_path = ? WHERE id = ?",
+                        (new_path, row["id"]),
+                    )
+        except Exception:
+            log.exception("guru: vault mirror figure append failed")
+
+    # ───── on-demand visual (Visualize button) ─────
+
+    async def _generate_visual(self, lesson_id: int) -> None:
+        """Author one explanatory figure for an existing lesson: an LLM turn
+        writes the imagegen prompt + caption, yoyo renders it, and the figure
+        is appended to the lesson's sections."""
+        settings = get_settings().learning
+        if settings.lesson_images != "auto":
+            raise ValueError("lesson images are disabled (learning.lesson_images)")
+        if not imagegen_bridge.available():
+            raise ValueError("image generation unavailable (yoyo not on PATH)")
+        with connect() as conn:
+            row = conn.execute(
+                """SELECT l.*, g.topic AS goal_topic, g.slug AS goal_slug
+                   FROM lessons l JOIN learning_goals g ON g.id = l.goal_id
+                   WHERE l.id = ?""",
+                (lesson_id,),
+            ).fetchone()
+        if row is None:
+            log.warning("guru: visual job for missing lesson %s", lesson_id)
+            return
+        lesson = dict(row)
+        sections = _sections_of(lesson)
+        if _image_count(sections) >= settings.max_images_per_lesson:
+            log.info("guru: lesson %s already at the visual cap; skipping", lesson_id)
+            return
+
+        context_parts = [f"Lesson title: {lesson.get('title') or ''}"]
+        for s in sections:
+            if s.get("kind") == "image":
+                continue  # imagegen prompts are not lesson content
+            heading = str(s.get("heading") or "").strip()
+            body = str(s.get("body_md") or "").strip()
+            context_parts.append(f"## {heading}\n{body}" if heading else body)
+        prompt = resolve_prompt("guru", "visual", VISUAL_PROMPT_TEMPLATE).format(
+            topic=lesson.get("goal_topic") or "",
+            lesson_context="\n\n".join(context_parts)[:12_000],
+        )
+        result, _provider = await intelligence.run_intelligence(
+            prompt, timeout_s=settings.timeout_s, json_object=True,
+            json_schema=VISUAL_JSON_SCHEMA,
+        )
+        parsed = _parse_json(result)
+        caption = str(parsed.get("caption") or "").strip()[:200]
+        image_prompt = str(parsed.get("image_prompt") or "").strip()
+        if not image_prompt:
+            raise ValueError("visual response had no image_prompt")
+
+        url = await imagegen_bridge.generate_hero(
+            image_prompt, timeout_s=settings.image_timeout_s,
+        )
+        figure = {
+            "kind": "image",
+            "heading": caption or "Visual explanation",
+            "body_md": image_prompt,
+            "image_url": url,
+        }
+        if not self._append_figure(lesson_id, figure):
+            return
+        self.emit_feed(
+            verb="illustrated", obj=str(lesson.get("title") or "")[:80], kind="learning",
+            payload={"lesson_id": lesson_id, "image_url": url},
+        )
+        log.info("guru: visual added to lesson %s (%s)", lesson_id, url)
 
     def _note_lesson_failure(self) -> None:
         """Hold daily-lesson retries for an hour after a failed generation."""
@@ -597,7 +794,7 @@ class Guru(Agent):
         new_concepts: list[dict],
         due_items: list[dict],
         lesson_date: str,
-    ) -> None:
+    ) -> int | None:
         item_by_slug = {c["slug"]: c for c in new_concepts}
         warmup_by_slug = {d["slug"]: d for d in due_items}
         with connect() as conn, txn(conn):
@@ -617,7 +814,7 @@ class Guru(Agent):
             if cur.rowcount == 0:
                 log.warning("guru: lesson for %s already exists (race); skipping",
                             lesson_date)
-                return
+                return None
             lesson_id = int(cur.lastrowid)
 
             position = 0
@@ -680,6 +877,7 @@ class Guru(Agent):
         log.info("guru: lesson day %s for goal %s (%d concepts, %d warmups)",
                  day_number, goal["id"], len(new_concepts),
                  len(lesson["warmup_questions"]))
+        return lesson_id
 
     def _write_vault_mirror(
         self, goal: dict, lesson: dict, lesson_date: str, day_number: int,
@@ -701,12 +899,18 @@ class Guru(Agent):
             for section in lesson["sections"]:
                 heading = section.get("heading") or ""
                 body = section.get("body_md") or ""
-                if heading:
+                kind = section.get("kind")
+                if heading and kind != "image":
                     lines.append(f"## {heading}")
-                if section.get("kind") == "diagram":
+                if kind == "diagram":
                     lines.append("```mermaid")
                     lines.append(body)
                     lines.append("```")
+                elif kind == "image":
+                    # body_md is the imagegen prompt — mirror the figure, not
+                    # the prompt.
+                    if section.get("image_url"):
+                        lines.append(f"![{heading or 'figure'}]({section['image_url']})")
                 else:
                     lines.append(body)
                 lines.append("")
@@ -919,7 +1123,20 @@ def _validate_edges(raw: object) -> list[tuple[str, str]]:
     return out
 
 
-_SECTION_KINDS = {"section", "diagram", "callout"}
+_SECTION_KINDS = {"section", "diagram", "image", "mnemonic", "callout"}
+
+
+def _sections_of(lesson_row: dict) -> list[dict]:
+    """Parse a lessons row's sections_json, keeping only dict entries."""
+    try:
+        raw = json.loads(str(lesson_row.get("sections_json") or "[]"))
+    except json.JSONDecodeError:
+        return []
+    return [s for s in raw if isinstance(s, dict)] if isinstance(raw, list) else []
+
+
+def _image_count(sections: list[dict]) -> int:
+    return sum(1 for s in sections if s.get("kind") == "image")
 
 
 def _validate_lesson(
@@ -943,12 +1160,19 @@ def _validate_lesson(
         body = str(s.get("body_md") or "").strip()
         if not body:
             continue
+        if kind == "image" and any(x["kind"] == "image" for x in sections):
+            # The prompt asks for at most one image; enforce it so a chatty
+            # model can't spend the whole per-lesson figure budget (and
+            # minutes of rendering) on the auto path.
+            continue
         sections.append({
             "kind": kind,
             "heading": str(s.get("heading") or "").strip()[:200],
             "body_md": body,
         })
-    if not sections:
+    # Image sections hold imagegen prompts, not teaching content, and may be
+    # dropped later — the lesson must stand without them.
+    if not any(s["kind"] != "image" for s in sections):
         return None
 
     warmup_slugs = {d["slug"] for d in warmup_items}

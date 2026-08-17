@@ -188,6 +188,12 @@ class LearningSettings(BaseSettings):
     timeout_s: int = 300
     grade_timeout_s: int = 120
     chat_timeout_s: int = 120
+    # Explanatory figures: "auto" lets Guru render `image` sections through
+    # the yoyo imagegen CLI (same pipeline as wiki hero images). Cap is total
+    # per lesson, shared between auto-generated and on-demand visuals.
+    lesson_images: Literal["auto", "off"] = "auto"
+    max_images_per_lesson: int = 2
+    image_timeout_s: int = 240
 
 
 class RemindersSettings(BaseSettings):

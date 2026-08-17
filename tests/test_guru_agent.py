@@ -346,3 +346,223 @@ def test_paused_goals_are_never_taught(db, vault_tmp) -> None:
     with connect() as conn:
         n = conn.execute("SELECT COUNT(*) AS n FROM lessons").fetchone()["n"]
     assert n == 0
+
+
+# ───── images + mnemonics ─────
+
+
+def _payload_with_visuals(check_slugs: list[str]) -> dict:
+    payload = _lesson_payload(check_slugs)
+    payload["sections"].insert(2, {
+        "kind": "image", "heading": "The polling loop",
+        "body_md": "Flat vector, plain white background. Two boxes labeled "
+                   "'FUTURE' and 'EXECUTOR' joined by a loop arrow. No other text.",
+    })
+    payload["sections"].append({
+        "kind": "mnemonic", "heading": "PEW",
+        "body_md": "**P**oll, **E**xecutor, **W**aker — the loop in firing order.",
+    })
+    return payload
+
+
+def test_lesson_image_section_materializes_and_mnemonic_persists(db, vault_tmp) -> None:
+    with connect() as conn:
+        goal_id = _mk_goal(conn)
+        _mk_items(conn, goal_id, ["futures"])
+    gen = AsyncMock(return_value="/api/attachments/deadbeef.png")
+    with patch("mastisk.bridges.intelligence.run_intelligence",
+               new=_llm(_payload_with_visuals(["futures"]))), \
+         patch("mastisk.bridges.imagegen_bridge.available", return_value=True), \
+         patch("mastisk.bridges.imagegen_bridge.generate_hero", new=gen):
+        asyncio.run(Guru()._generate_lesson("2026-08-16"))
+
+    with connect() as conn:
+        lesson = dict(conn.execute("SELECT * FROM lessons").fetchone())
+    sections = json.loads(lesson["sections_json"])
+    kinds = [s["kind"] for s in sections]
+    assert "mnemonic" in kinds
+    image = next(s for s in sections if s["kind"] == "image")
+    assert image["image_url"] == "/api/attachments/deadbeef.png"
+    gen.assert_awaited_once()
+    # The imagegen prompt was passed through verbatim.
+    assert "No other text" in gen.await_args.args[0]
+    # Vault mirror embeds the figure, never the raw imagegen prompt.
+    content = Path(lesson["vault_path"]).read_text()
+    assert "![The polling loop](/api/attachments/deadbeef.png)" in content
+    assert "Flat vector" not in content
+    assert "PEW" in content
+
+
+def test_lesson_image_dropped_when_imagegen_unavailable(db, vault_tmp) -> None:
+    with connect() as conn:
+        goal_id = _mk_goal(conn)
+        _mk_items(conn, goal_id, ["futures"])
+    with patch("mastisk.bridges.intelligence.run_intelligence",
+               new=_llm(_payload_with_visuals(["futures"]))), \
+         patch("mastisk.bridges.imagegen_bridge.available", return_value=False):
+        asyncio.run(Guru()._generate_lesson("2026-08-16"))
+    with connect() as conn:
+        lesson = dict(conn.execute("SELECT * FROM lessons").fetchone())
+    kinds = [s["kind"] for s in json.loads(lesson["sections_json"])]
+    assert "image" not in kinds          # dropped, never a broken figure
+    assert "mnemonic" in kinds           # the rest of the lesson is intact
+    assert "section" in kinds
+
+
+def test_lesson_image_dropped_when_generation_fails(db, vault_tmp) -> None:
+    with connect() as conn:
+        goal_id = _mk_goal(conn)
+        _mk_items(conn, goal_id, ["futures"])
+    gen = AsyncMock(side_effect=RuntimeError("yoyo exploded"))
+    with patch("mastisk.bridges.intelligence.run_intelligence",
+               new=_llm(_payload_with_visuals(["futures"]))), \
+         patch("mastisk.bridges.imagegen_bridge.available", return_value=True), \
+         patch("mastisk.bridges.imagegen_bridge.generate_hero", new=gen):
+        asyncio.run(Guru()._generate_lesson("2026-08-16"))
+    with connect() as conn:
+        lesson = dict(conn.execute("SELECT * FROM lessons").fetchone())
+    kinds = [s["kind"] for s in json.loads(lesson["sections_json"])]
+    assert "image" not in kinds
+    assert "section" in kinds  # the lesson itself still shipped
+
+
+# ───── on-demand visual job ─────
+
+
+def _mk_lesson(conn, goal_id: int, *, sections: list[dict] | None = None) -> int:
+    cur = conn.execute(
+        """INSERT INTO lessons (goal_id, lesson_date, day_number, title,
+                                sections_json, concept_slugs_json)
+           VALUES (?, '2026-08-16', 1, 'Futures and friends', ?, '[]')""",
+        (goal_id, json.dumps(sections if sections is not None else [
+            {"kind": "section", "heading": "The idea", "body_md": "Plain words."},
+        ])),
+    )
+    return int(cur.lastrowid)
+
+
+def test_visual_job_appends_generated_figure(db, vault_tmp) -> None:
+    with connect() as conn:
+        goal_id = _mk_goal(conn)
+        lesson_id = _mk_lesson(conn, goal_id)
+    llm = _llm({"caption": "How polling works",
+                "image_prompt": "Flat vector, white background. No other text."})
+    gen = AsyncMock(return_value="/api/attachments/cafe.png")
+    with patch("mastisk.bridges.intelligence.run_intelligence", new=llm), \
+         patch("mastisk.bridges.imagegen_bridge.available", return_value=True), \
+         patch("mastisk.bridges.imagegen_bridge.generate_hero", new=gen):
+        asyncio.run(Guru()._generate_visual(lesson_id))
+
+    with connect() as conn:
+        lesson = dict(conn.execute(
+            "SELECT * FROM lessons WHERE id = ?", (lesson_id,),
+        ).fetchone())
+    sections = json.loads(lesson["sections_json"])
+    assert sections[-1]["kind"] == "image"
+    assert sections[-1]["heading"] == "How polling works"
+    assert sections[-1]["image_url"] == "/api/attachments/cafe.png"
+    # The lesson prompt saw the lesson content, not an imagegen prompt.
+    prompt_sent = llm.await_args.args[0]
+    assert "Plain words." in prompt_sent
+
+
+def test_visual_job_respects_image_cap(db, vault_tmp) -> None:
+    figs = [
+        {"kind": "section", "heading": "x", "body_md": "y"},
+        {"kind": "image", "heading": "a", "body_md": "p", "image_url": "/api/attachments/1.png"},
+        {"kind": "image", "heading": "b", "body_md": "p", "image_url": "/api/attachments/2.png"},
+    ]
+    with connect() as conn:
+        goal_id = _mk_goal(conn)
+        lesson_id = _mk_lesson(conn, goal_id, sections=figs)
+    llm = _llm({"caption": "c", "image_prompt": "p"})
+    with patch("mastisk.bridges.intelligence.run_intelligence", new=llm), \
+         patch("mastisk.bridges.imagegen_bridge.available", return_value=True):
+        asyncio.run(Guru()._generate_visual(lesson_id))
+    llm.assert_not_awaited()  # cap reached before any LLM spend
+    with connect() as conn:
+        lesson = dict(conn.execute(
+            "SELECT * FROM lessons WHERE id = ?", (lesson_id,),
+        ).fetchone())
+    assert len(json.loads(lesson["sections_json"])) == 3
+
+
+def test_validate_lesson_rejects_all_image_lessons_and_caps_images() -> None:
+    from mastisk.agents.guru import _validate_lesson
+
+    # All-image lesson → no readable content → rejected.
+    only_images = {
+        "title": "T",
+        "sections": [
+            {"kind": "image", "heading": "a", "body_md": "p1"},
+        ],
+        "warmup_questions": [], "check_questions": [],
+    }
+    assert _validate_lesson(only_images, new_slugs=set(), warmup_items=[]) is None
+
+    # A chatty model emitting several image sections keeps only the first.
+    many = {
+        "title": "T",
+        "sections": [
+            {"kind": "section", "heading": "h", "body_md": "text"},
+            {"kind": "image", "heading": "a", "body_md": "p1"},
+            {"kind": "image", "heading": "b", "body_md": "p2"},
+            {"kind": "image", "heading": "c", "body_md": "p3"},
+        ],
+        "warmup_questions": [], "check_questions": [],
+    }
+    out = _validate_lesson(many, new_slugs=set(), warmup_items=[])
+    assert [s["kind"] for s in out["sections"]].count("image") == 1
+    assert next(s for s in out["sections"] if s["kind"] == "image")["heading"] == "a"
+
+
+def test_lesson_persists_before_image_render_and_appends_figure(db, vault_tmp) -> None:
+    """The text lesson (and its reminder) must exist before the slow image
+    render; the figure is appended afterwards."""
+    with connect() as conn:
+        goal_id = _mk_goal(conn)
+        _mk_items(conn, goal_id, ["futures"])
+
+    seen_at_render: dict = {}
+
+    async def slow_gen(prompt, *, timeout_s):
+        with connect() as conn:
+            row = conn.execute("SELECT id, vault_path FROM lessons").fetchone()
+        seen_at_render["lesson_exists"] = row is not None
+        return "/api/attachments/late.png"
+
+    with patch("mastisk.bridges.intelligence.run_intelligence",
+               new=_llm(_payload_with_visuals(["futures"]))), \
+         patch("mastisk.bridges.imagegen_bridge.available", return_value=True), \
+         patch("mastisk.bridges.imagegen_bridge.generate_hero", new=slow_gen):
+        asyncio.run(Guru()._generate_lesson("2026-08-16"))
+
+    assert seen_at_render["lesson_exists"] is True
+    with connect() as conn:
+        lesson = dict(conn.execute("SELECT * FROM lessons").fetchone())
+    sections = json.loads(lesson["sections_json"])
+    assert sections[-1]["kind"] == "image"
+    assert sections[-1]["image_url"] == "/api/attachments/late.png"
+
+
+def test_visual_job_appends_to_existing_mirror_preserving_edits(db, vault_tmp) -> None:
+    from mastisk.paths import vault_dir
+
+    folder = vault_dir() / "learning"
+    folder.mkdir(parents=True, exist_ok=True)
+    mirror = folder / "2026-08-16-rust-async-internals-day1.md"
+    mirror.write_text("# My lesson\n\nMY PERSONAL NOTES — do not lose.\n")
+    with connect() as conn:
+        goal_id = _mk_goal(conn)
+        lesson_id = _mk_lesson(conn, goal_id)
+        conn.execute("UPDATE lessons SET vault_path = ? WHERE id = ?",
+                     (str(mirror), lesson_id))
+    llm = _llm({"caption": "The loop", "image_prompt": "p"})
+    gen = AsyncMock(return_value="/api/attachments/keep.png")
+    with patch("mastisk.bridges.intelligence.run_intelligence", new=llm), \
+         patch("mastisk.bridges.imagegen_bridge.available", return_value=True), \
+         patch("mastisk.bridges.imagegen_bridge.generate_hero", new=gen):
+        asyncio.run(Guru()._generate_visual(lesson_id))
+    content = mirror.read_text()
+    assert "MY PERSONAL NOTES" in content              # user edits survive
+    assert "![The loop](/api/attachments/keep.png)" in content

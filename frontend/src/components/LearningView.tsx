@@ -16,6 +16,12 @@ const RATING_LABELS: Record<number, string> = {
 const CONFIDENCE_LABELS: Record<number, string> = {
   1: 'No idea', 2: 'Unsure', 3: 'Confident', 4: 'Certain',
 };
+const CHAT_SUGGESTIONS = [
+  'Explain this more simply',
+  'Give me a mnemonic to remember this',
+  'Walk me through a real-world example',
+  'Why does this actually matter?',
+];
 
 // ───────────────────────────── Learning home ─────────────────────────────
 
@@ -396,15 +402,89 @@ export function LessonView({ lessonId, onNavigate }: { lessonId: number | null }
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [completeErr, setCompleteErr] = useState<string | null>(null);
+  const [visualizing, setVisualizing] = useState(false);
+  const [visualNote, setVisualNote] = useState<string | null>(null);
+  const imageBaseline = useRef(0);
+  const visualJobId = useRef<number | null>(null);
 
-  const load = useCallback(() => {
+  const load = useCallback((background = false) => {
     if (!lessonId) return;
     api.learning.lesson(lessonId)
       .then((l) => { setLesson(l); setErr(null); })
-      .catch((e: Error) => setErr(e.message));
+      .catch((e: Error) => {
+        // Background polls must never unmount the lesson (that would
+        // discard in-progress quiz answers) — only surface foreground errors.
+        if (!background) setErr(e.message);
+      });
   }, [lessonId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const imageCount = lesson
+    ? lesson.sections.filter((s) => s.kind === 'image' && s.image_url).length
+    : 0;
+
+  // While Guru draws (LLM prompt + image render), poll the lesson until a
+  // new figure lands, watching the job so a failure surfaces immediately.
+  // Ceiling sits above the backend's own budget (LLM 300s + render 240s,
+  // plus queue wait).
+  useEffect(() => {
+    if (!visualizing) return;
+    if (imageCount > imageBaseline.current) {
+      setVisualizing(false);
+      setVisualNote(null);
+      return;
+    }
+    const tick = window.setInterval(() => {
+      load(true);
+      const jobId = visualJobId.current;
+      if (jobId != null) {
+        api.job(jobId)
+          .then((r) => {
+            if (r.job.status === 'failed') {
+              setVisualizing(false);
+              setVisualNote(r.job.error
+                ? `Guru couldn’t draw this one: ${r.job.error}`
+                : 'Guru couldn’t draw this one — try again later.');
+            } else if (r.job.status === 'done') {
+              // The figure commits before the job is marked done, so one
+              // more reload either shows it (the imageCount effect clears
+              // this state) or the job was a silent no-op.
+              load(true);
+              window.setTimeout(() => {
+                setVisualizing((still) => {
+                  if (still) setVisualNote('Guru finished without adding a figure — try again.');
+                  return false;
+                });
+              }, 3_000);
+            }
+          })
+          .catch(() => { /* transient; the next poll retries */ });
+      }
+    }, 12_000);
+    const stop = window.setTimeout(() => {
+      setVisualizing(false);
+      setVisualNote('Still drawing — reload the lesson in a few minutes to see it.');
+    }, 12 * 60_000);
+    return () => { window.clearInterval(tick); window.clearTimeout(stop); };
+  }, [visualizing, imageCount, load]);
+
+  const startVisualize = () => {
+    if (!lesson || visualizing) return;
+    imageBaseline.current = imageCount;
+    setVisualNote(null);
+    // Disable the button synchronously — a double-click must never queue twice.
+    setVisualizing(true);
+    api.learning.visualize(lesson.id)
+      .then((r) => { visualJobId.current = r.job_id; })
+      .catch((e: Error) => {
+        setVisualizing(false);
+        const unavailable = e instanceof ApiError && e.status === 503;
+        setVisualNote(unavailable
+          ? 'Image generation isn’t available on this machine.'
+          : e.message);
+      });
+  };
 
   if (err) {
     return (
@@ -453,15 +533,46 @@ export function LessonView({ lessonId, onNavigate }: { lessonId: number | null }
       )}
 
       <div className="art-body">
-        {lesson.sections.map((s, i) => (
-          <section key={i} className={s.kind === 'callout' ? 'learn-callout' : undefined}>
-            {s.heading && <h2 className="learn-sec-heading">{s.heading}</h2>}
-            {s.kind === 'diagram'
-              ? <MermaidBlock source={s.body_md} />
-              : <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body_html }} />}
-          </section>
-        ))}
+        {lesson.sections.map((s, i) => {
+          if (s.kind === 'image') {
+            if (!s.image_url) return null;
+            return <LessonFigure key={i} src={s.image_url} caption={s.heading} />;
+          }
+          if (s.kind === 'mnemonic') {
+            return (
+              <aside key={i} className="learn-mnemonic">
+                <div className="learn-mnemonic-label">◈ Memory hook</div>
+                {s.heading && <div className="learn-mnemonic-heading">{s.heading}</div>}
+                <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body_html }} />
+              </aside>
+            );
+          }
+          return (
+            <section key={i} className={s.kind === 'callout' ? 'learn-callout' : undefined}>
+              {s.heading && <h2 className="learn-sec-heading">{s.heading}</h2>}
+              {s.kind === 'diagram'
+                ? <MermaidBlock source={s.body_md} />
+                : <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body_html }} />}
+            </section>
+          );
+        })}
       </div>
+
+      {(lesson.can_visualize || visualizing || visualNote) && (
+        <div className="learn-visualize-row">
+          {(lesson.can_visualize || visualizing) && (
+            <button
+              className="chip"
+              disabled={visualizing}
+              title="Guru writes an image prompt from this lesson and renders it"
+              onClick={startVisualize}
+            >
+              {visualizing ? '✦ Guru is drawing… (a minute or two)' : '✦ Visualize this lesson'}
+            </button>
+          )}
+          {visualNote && <span className="learn-visualize-note" role="status">{visualNote}</span>}
+        </div>
+      )}
 
       {checks.length > 0 && (
         <section className="learn-quiz-block">
@@ -484,6 +595,11 @@ export function LessonView({ lessonId, onNavigate }: { lessonId: number | null }
           >
             Complete lesson
           </button>
+          {!allAnswered && lesson.questions.length > 0 && (
+            <span className="learn-q-conf-label" style={{ marginLeft: 8 }}>
+              {lesson.questions.filter((q) => q.answered).length}/{lesson.questions.length} answered
+            </span>
+          )}
           {completeErr && (
             <div style={{ color: 'var(--warn)', fontFamily: 'var(--mono)', fontSize: 12 }}>{completeErr}</div>
           )}
@@ -492,6 +608,22 @@ export function LessonView({ lessonId, onNavigate }: { lessonId: number | null }
 
       <GuruChat key={lesson.id} lessonId={lesson.id} />
     </div>
+  );
+}
+
+function LessonFigure({ src, caption }: { src: string; caption: string }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) return null;  // a vanished attachment renders nothing, not a broken glyph
+  return (
+    <figure className="learn-figure">
+      <img
+        src={src}
+        alt={caption ? '' : 'Lesson illustration'}
+        loading="lazy"
+        onError={() => setBroken(true)}
+      />
+      {caption && <figcaption>{caption}</figcaption>}
+    </figure>
   );
 }
 
@@ -519,12 +651,12 @@ function GuruChat({ lessonId }: { lessonId: number }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pending, open]);
 
-  const send = () => {
-    const text = draft.trim();
+  const send = (preset?: string) => {
+    const text = (preset ?? draft).trim();
     if (!text || busy || !loaded) return;
     setBusy(true);
     setErr(null);
-    setDraft('');
+    if (!preset) setDraft('');
     setPending(text);
     api.learning.sendChat(lessonId, text)
       .then((r) => setMessages((prev) => [...prev, ...r.messages]))
@@ -559,10 +691,17 @@ function GuruChat({ lessonId }: { lessonId: number }) {
       </div>
       <div className="learn-chat-scroll" ref={scrollRef} aria-live="polite">
         {messages.length === 0 && !pending && loaded && (
-          <p className="learn-chat-empty">
-            Ask anything about this lesson — a fuzzy concept, a “why”, or a tangent.
-            Guru knows the lesson but won't spoil unanswered quiz questions.
-          </p>
+          <div className="learn-chat-empty">
+            <p style={{ margin: '0 0 10px' }}>
+              Ask anything about this lesson — a fuzzy concept, a “why”, or a tangent.
+              Guru knows the lesson but won't spoil unanswered quiz questions.
+            </p>
+            <div className="learn-chat-suggest">
+              {CHAT_SUGGESTIONS.map((s) => (
+                <button key={s} className="chip" disabled={busy} onClick={() => send(s)}>{s}</button>
+              ))}
+            </div>
+          </div>
         )}
         {messages.map((m) => (
           m.role === 'assistant' && m.content_html
@@ -587,7 +726,7 @@ function GuruChat({ lessonId }: { lessonId: number }) {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
           }}
         />
-        <button className="chip" disabled={busy || !loaded || !draft.trim()} onClick={send}>Send</button>
+        <button className="chip" disabled={busy || !loaded || !draft.trim()} onClick={() => send()}>Send</button>
       </div>
     </div>
   );

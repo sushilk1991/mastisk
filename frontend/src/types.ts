@@ -513,10 +513,11 @@ export interface LearningGoalDetail extends LearningGoal {
 }
 
 export interface LessonSection {
-  kind: 'section' | 'diagram' | 'callout';
+  kind: 'section' | 'diagram' | 'callout' | 'mnemonic' | 'image';
   heading: string;
   body_md: string;
   body_html: string;
+  image_url?: string | null;
 }
 
 export interface LessonQuestionGrade {
@@ -557,6 +558,7 @@ export interface Lesson {
   title: string;
   status: 'generated' | 'completed';
   sections: LessonSection[];
+  can_visualize: boolean;
   concept_slugs: string[];
   questions: LessonQuestion[];
   created_at: string | null;

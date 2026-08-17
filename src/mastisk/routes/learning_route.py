@@ -284,6 +284,51 @@ async def generate_now_endpoint() -> dict:
     return {"job_id": job_id, "status": "queued"}
 
 
+@router.post("/lessons/{lesson_id}/visualize", status_code=202)
+async def visualize_lesson_endpoint(lesson_id: int) -> dict:
+    """Enqueue a Guru job that authors + renders one explanatory figure for
+    the lesson (LLM writes the image prompt, yoyo renders it)."""
+    from mastisk.bridges import imagegen_bridge
+
+    settings = get_settings().learning
+    if settings.lesson_images != "auto" or settings.max_images_per_lesson <= 0:
+        raise HTTPException(
+            status_code=409, detail="lesson images are disabled in settings",
+        )
+    if not imagegen_bridge.available():
+        raise HTTPException(
+            status_code=503,
+            detail="image generation is unavailable (yoyo CLI not found)",
+        )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT sections_json FROM lessons WHERE id = ?", (lesson_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="lesson not found")
+        # In-flight dedup: a visual job takes minutes, so double-clicks and
+        # impatient re-requests must reuse the pending job instead of paying
+        # for a second render (same bug class as the listener dedup fix).
+        pending = conn.execute(
+            """SELECT id, payload_json FROM jobs
+               WHERE agent = 'guru' AND kind = 'visual'
+                 AND status IN ('queued', 'running')""",
+        ).fetchall()
+    for p in pending:
+        if _loads_dict(p["payload_json"]).get("lesson_id") == lesson_id:
+            return {"job_id": p["id"], "status": "queued", "duplicate": True}
+    sections = _loads_list(row["sections_json"])
+    images = sum(
+        1 for s in sections if isinstance(s, dict) and s.get("kind") == "image"
+    )
+    if images >= settings.max_images_per_lesson:
+        raise HTTPException(
+            status_code=409, detail="this lesson already has its visuals",
+        )
+    job_id = enqueue("guru", "visual", {"lesson_id": lesson_id})
+    return {"job_id": job_id, "status": "queued"}
+
+
 # ───── lesson chat ─────
 
 
@@ -392,6 +437,12 @@ def _chat_lesson_context(lesson: dict) -> str:
     parts = [f"Lesson title: {lesson.get('title') or ''}"]
     for s in _loads_list(lesson.get("sections_json")):
         if not isinstance(s, dict):
+            continue
+        if s.get("kind") == "image":
+            # body_md is an imagegen prompt, not lesson content.
+            caption = str(s.get("heading") or "").strip()
+            if caption:
+                parts.append(f"(The lesson includes a figure: {caption})")
             continue
         heading = str(s.get("heading") or "").strip()
         body = str(s.get("body_md") or "").strip()
@@ -635,11 +686,34 @@ def _render_sections(raw_sections: list) -> list[dict]:
             "heading": s.get("heading") or "",
             "body_md": body_md,
         }
-        section["body_html"] = (
-            body_md if section["kind"] == "diagram" else md.render(body_md)
-        )
+        if section["kind"] == "image":
+            # body_md holds the imagegen prompt — blank it so no client-side
+            # markdown fallback ever shows the learner a prompt.
+            section["image_url"] = s.get("image_url")
+            section["body_md"] = ""
+            section["body_html"] = ""
+        elif section["kind"] == "diagram":
+            section["body_html"] = body_md
+        else:
+            section["body_html"] = md.render(body_md)
         out.append(section)
     return out
+
+
+def _can_visualize(sections: list[dict]) -> bool:
+    """Server-computed gate for the Visualize button, so the client never
+    hardcodes the image cap or probes for the yoyo CLI."""
+    from mastisk.bridges import imagegen_bridge
+
+    settings = get_settings().learning
+    images = sum(
+        1 for s in sections if isinstance(s, dict) and s.get("kind") == "image"
+    )
+    return (
+        settings.lesson_images == "auto"
+        and images < settings.max_images_per_lesson
+        and imagegen_bridge.available()
+    )
 
 
 def _lesson_payload(conn: Any, row: dict) -> dict:
@@ -664,6 +738,7 @@ def _lesson_payload(conn: Any, row: dict) -> dict:
         "title": row["title"],
         "status": row["status"],
         "sections": _render_sections(_loads_list(row.get("sections_json"))),
+        "can_visualize": _can_visualize(_loads_list(row.get("sections_json"))),
         "concept_slugs": _loads_list(row.get("concept_slugs_json")),
         "questions": questions,
         "created_at": row.get("created_at"),
