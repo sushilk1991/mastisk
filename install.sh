@@ -31,21 +31,15 @@ for arg in "$@"; do
 done
 
 # ─────────────────────────────────────────────────────── claude skills ──
-# Skills this repo owns. They install as symlinks into ~/.claude/skills/ so
-# they track the checkout instead of drifting as private copies.
+# Skills this repo owns, one directory each under skills/. They install as
+# symlinks into ~/.claude/skills/ so they track the checkout instead of
+# drifting as private copies.
 SKILL_NAMES=(mastisk guru)
-
-skill_source() {
-  case "$1" in
-    mastisk) printf '%s\n' "$REPO_ROOT/SKILL.md" ;;
-    guru)    printf '%s\n' "$REPO_ROOT/skills/guru/SKILL.md" ;;
-  esac
-}
 
 install_skills() {
   local name src dest dest_dir stamp
   for name in "${SKILL_NAMES[@]}"; do
-    src="$(skill_source "$name")"
+    src="$REPO_ROOT/skills/$name/SKILL.md"
     if [ ! -f "$src" ]; then
       echo "  ! $name skill missing at $src — skipped"
       continue
