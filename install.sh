@@ -30,6 +30,65 @@ for arg in "$@"; do
   esac
 done
 
+# ─────────────────────────────────────────────────────── claude skills ──
+# Skills this repo owns. They install as symlinks into ~/.claude/skills/ so
+# they track the checkout instead of drifting as private copies.
+SKILL_NAMES=(mastisk guru)
+
+skill_source() {
+  case "$1" in
+    mastisk) printf '%s\n' "$REPO_ROOT/SKILL.md" ;;
+    guru)    printf '%s\n' "$REPO_ROOT/skills/guru/SKILL.md" ;;
+  esac
+}
+
+install_skills() {
+  local name src dest dest_dir stamp
+  for name in "${SKILL_NAMES[@]}"; do
+    src="$(skill_source "$name")"
+    if [ ! -f "$src" ]; then
+      echo "  ! $name skill missing at $src — skipped"
+      continue
+    fi
+    dest_dir="$HOME/.claude/skills/$name"
+    dest="$dest_dir/SKILL.md"
+    mkdir -p "$dest_dir"
+    if [ -L "$dest" ]; then
+      ln -sfn "$src" "$dest"
+    elif [ -f "$dest" ]; then
+      # A real file is already there. Keep it if the user changed it.
+      if cmp -s "$dest" "$src"; then
+        rm -f "$dest"
+      else
+        stamp="$(date +%Y%m%d%H%M%S)"
+        mv "$dest" "$dest.local.$stamp"
+        echo "  ! $name/SKILL.md had local edits — saved as SKILL.md.local.$stamp"
+      fi
+      ln -s "$src" "$dest"
+    else
+      ln -s "$src" "$dest"
+    fi
+    echo "✓ /$name skill → $src"
+  done
+}
+
+remove_skills() {
+  local name dest target
+  for name in "${SKILL_NAMES[@]}"; do
+    dest="$HOME/.claude/skills/$name/SKILL.md"
+    [ -L "$dest" ] || continue
+    target="$(readlink "$dest")"
+    # Only unlink what this checkout installed.
+    case "$target" in
+      "$REPO_ROOT"/*)
+        rm -f "$dest"
+        rmdir "$HOME/.claude/skills/$name" 2>/dev/null || true
+        echo "✓ unlinked /$name skill"
+        ;;
+    esac
+  done
+}
+
 # ─────────────────────────────────────────────────────────── update ──
 if [ "$UPDATE" -eq 1 ]; then
   echo "== Updating Mastisk =="
@@ -43,6 +102,8 @@ if [ "$UPDATE" -eq 1 ]; then
   mkdir -p "$MASTISK_CFG_DIR"
   printf '%s\n' "$REPO_ROOT" > "$MASTISK_CFG_DIR/install_source"
   echo "✓ binary refreshed at $(command -v mastisk || echo '~/.local/bin/mastisk')"
+  echo "== Refreshing Claude Code skills =="
+  install_skills
   # Restart if launchd agent is loaded
   if launchctl list 2>/dev/null | grep -q 'com.mastisk.agents'; then
     echo "== Restarting via launchctl =="
@@ -59,6 +120,7 @@ fi
 if [ "$UNINSTALL" -eq 1 ]; then
   echo "uninstalling mastisk..."
   mastisk disable-autostart 2>/dev/null || true
+  remove_skills
   uv tool uninstall mastisk 2>/dev/null || true
   rm -rf "$HOME/Library/Application Support/Mastisk"
   echo "✓ gone."
@@ -125,6 +187,11 @@ MASTISK_CFG_DIR="$HOME/Library/Application Support/Mastisk"
 mkdir -p "$MASTISK_CFG_DIR"
 printf '%s\n' "$REPO_ROOT" > "$MASTISK_CFG_DIR/install_source"
 
+# ─────────────────────────────────────────────────────── claude skills ──
+echo ""
+echo "== Installing Claude Code skills =="
+install_skills
+
 # ─────────────────────────────────────────────────────────── embed model ──
 if command -v ollama >/dev/null 2>&1; then
   if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -q '^nomic-embed-text'; then
@@ -174,6 +241,10 @@ fi
 echo ""
 echo "URLs:"
 mastisk url 2>/dev/null || echo "  run 'mastisk start' first, then 'mastisk url'"
+echo ""
+echo "Claude Code skills:"
+echo "  /mastisk    recall and ingest from any session"
+echo "  /guru       today's lesson, taught interactively"
 echo ""
 echo "Phone:"
 echo "  1. Install Tailscale on your phone, sign in to the same tailnet"
