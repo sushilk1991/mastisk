@@ -46,7 +46,7 @@ PERSPECTIVE_PROMPT = """You are one of several AI models consulted on a question
 {user_prompt}
 
 ## Your response
-Be specific, cite concrete mechanisms, and acknowledge uncertainty where real. 200-500 words. Plain prose, no fenced code unless code is genuinely the answer.
+Be specific, cite concrete mechanisms, and acknowledge uncertainty where real. Give the answer the depth the question needs, and no more. Plain prose, no fenced code unless code is genuinely the answer.
 """
 
 
