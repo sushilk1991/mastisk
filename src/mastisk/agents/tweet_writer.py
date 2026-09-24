@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -45,8 +46,15 @@ X_THREAD_CRAFT = """X thread craft rules:
 - Preserve useful names, numbers, quotes, products, and observed actions from the evidence. Never replace a concrete detail with a category word like "interfaces" or "workflows".
 - Make the thread sound like a note to technical peers, not a blog intro chopped into posts.
 - Add personal language only when the theme or local evidence supports it.
-- End with a concrete next thought or caveat, not a tidy maxim or CTA.
+- End with a concrete next thought, a caveat, or a genuine open question. No tidy maxim.
 """
+
+# browser-harness daemon name. A separate name keeps Mastisk from reusing a
+# daemon the user's shell started against a different Chrome.
+HARNESS_DAEMON_NAME = "mastisk"
+
+# A trailing thread counter such as " 3/7" or " (3/7)".
+TWEET_COUNTER_RE = re.compile(r"\s*\(?\d{1,2}/\d{1,2}\)?\s*$")
 
 DESLOP_RULES = """Anti-slop rules:
 - Write like one person thinking in public, not a research analyst.
@@ -333,6 +341,7 @@ class TweetWriter(Agent):
                 draft, model, intent, feedback=feedback, previous_tweets=previous_tweets,
             )
             title, angle, tweets, sources, warnings = _validate_draft(draft, intent=intent)
+            tweets = _number_tweets(tweets)
             if browser_warning:
                 warnings.append(_sanitize_warning(browser_warning))
 
@@ -757,7 +766,7 @@ class TweetWriter(Agent):
             browser_context=browser_text,
             max_tweet_chars=settings.max_tweet_chars,
             max_hook_chars=settings.max_hook_chars,
-            x_thread_craft=X_THREAD_CRAFT,
+            x_thread_craft=X_THREAD_CRAFT + "\n\n" + _x_platform_rules(),
             deslop_rules=DESLOP_RULES + "\n\n" + _x_thread_voice_rules() + "\n\n" + _blog_voice_rules(),
         )
         return prompt[: settings.prompt_char_limit]
@@ -814,7 +823,7 @@ class TweetWriter(Agent):
             max_tweet_chars=settings.max_tweet_chars,
             max_hook_chars=settings.max_hook_chars,
             draft_json=json.dumps(draft, ensure_ascii=False, indent=2),
-            x_thread_craft=X_THREAD_CRAFT,
+            x_thread_craft=X_THREAD_CRAFT + "\n\n" + _x_platform_rules(),
             deslop_rules=DESLOP_RULES + "\n\n" + _x_thread_voice_rules() + "\n\n" + _blog_voice_rules(),
         )
         try:
@@ -869,7 +878,9 @@ data = js(\"\"\"(() => {{
 print(json.dumps(data))
 """
     proc = subprocess.run(
-        ["browser-harness", "-c", script],
+        ["browser-harness"],
+        input=script,
+        env=_harness_env(settings.browser_cdp_url),
         capture_output=True,
         text=True,
         timeout=settings.browser_context_timeout_seconds,
@@ -891,6 +902,67 @@ print(json.dumps(data))
     raise RuntimeError("browser-harness returned no page context")
 
 
+# Runs inside browser-harness before each research script.
+#
+# A background tab in an unfocused window gets no paint. X and Grok wait on
+# animation frames during startup, so without a frame they stall at
+# readyState "interactive" with an empty timeline, and even trivial evals
+# time out. A 1%-quality screenshot forces one frame without focusing
+# anything (verified 2026-09-23: 0/3 unpainted tabs showed posts, 3/3
+# painted tabs did).
+HARNESS_PAINT_PRELUDE = """
+import time
+
+
+def paint():
+    try:
+        cdp("Page.captureScreenshot", format="jpeg", quality=1)
+    except Exception:
+        pass
+
+
+def wait_painted(ready_js, timeout_s):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        paint()
+        try:
+            if js(ready_js):
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
+"""
+
+
+def _tab_script(body: str) -> str:
+    """Wrap a research script so its tab closes even when a step fails.
+
+        new_tab(...)            try:
+        ...           ->            new_tab(...)
+        print(result)               ...
+                                finally:
+                                    close_tab()
+    """
+    indented = "\n".join(f"    {line}" if line else "" for line in body.strip("\n").splitlines())
+    return f"{HARNESS_PAINT_PRELUDE}\ntry:\n{indented}\nfinally:\n    close_tab()\n"
+
+
+def _harness_env(cdp_url: str) -> dict[str, str]:
+    """Environment for a browser-harness call from the daemon.
+
+    launchd gives the daemon no shell profile, so the Chrome target comes from
+    settings: tweet.browser_cdp_url = "http://127.0.0.1:54357" drives the
+    Mobius Chrome. Tabs open with background=True, so the window never takes
+    focus.
+    """
+    env = dict(os.environ)
+    env["BU_NAME"] = HARNESS_DAEMON_NAME
+    if cdp_url:
+        env["BU_CDP_URL"] = cdp_url
+    return env
+
+
 def _grok_browser_context(prompt: str) -> dict[str, str]:
     clean_prompt = _collapse_ws(prompt)
     if not clean_prompt:
@@ -901,8 +973,7 @@ import json
 import time
 
 new_tab("https://grok.com/")
-wait_for_load()
-time.sleep(4)
+wait_painted("!!document.querySelector('[contenteditable=\\"true\\"]')", 20)
 setup = js(\"\"\"(() => {{
   const editor = document.querySelector('[contenteditable="true"][role="textbox"]');
   if (!editor) {{
@@ -969,6 +1040,7 @@ last_len = 0
 stable = 0
 for _ in range(20):
     time.sleep(3)
+    paint()
     data = js(\"\"\"(() => {{
       const text = document.body?.innerText || '';
       const normalize = (value) => (value || '')
@@ -1007,8 +1079,11 @@ for _ in range(20):
     last_len = text_len
 print(json.dumps(last or {{}}))
 """
+    script = _tab_script(script)
     proc = subprocess.run(
-        ["browser-harness", "-c", script],
+        ["browser-harness"],
+        input=script,
+        env=_harness_env(settings.browser_cdp_url),
         capture_output=True,
         text=True,
         timeout=settings.grok_browser_timeout_seconds,
@@ -1074,8 +1149,10 @@ import time
 target_url = {json.dumps(search_url)}
 query = {json.dumps(clean_query)}
 new_tab(target_url)
-wait_for_load()
-time.sleep(3)
+# X renders posts a few seconds after load; poll until some appear.
+X_POST_WAIT_SECONDS = 20
+wait_painted("document.querySelectorAll('article').length > 0", X_POST_WAIT_SECONDS)
+paint()
 data = js(\"\"\"(() => {{
   const normalize = (text) => (text || '')
     .replaceAll(String.fromCharCode(10), ' ')
@@ -1111,8 +1188,11 @@ data = js(\"\"\"(() => {{
 }})()\"\"\")
 print(json.dumps(data))
 """
+    script = _tab_script(script)
     proc = subprocess.run(
-        ["browser-harness", "-c", script],
+        ["browser-harness"],
+        input=script,
+        env=_harness_env(settings.browser_cdp_url),
         capture_output=True,
         text=True,
         timeout=settings.x_browser_search_timeout_seconds,
@@ -1583,6 +1663,32 @@ def _x_thread_voice_rules() -> str:
         return path.read_text()[:6000]
     except OSError:
         return ""
+
+
+def _x_platform_rules() -> str:
+    """X-specific drafting rules distilled from the twitter-x-posts skill."""
+    path = Path(__file__).with_name("x_platform.md")
+    try:
+        return path.read_text()[:4000]
+    except OSError:
+        return ""
+
+
+def _number_tweets(tweets: list[str]) -> list[str]:
+    """Append an "n/N" counter to each tweet of a multi-tweet thread.
+
+    Any counter the model already wrote is stripped first, so a rerun over a
+    numbered previous draft never doubles it:
+        ["Hook 1/3", "Body"] -> ["Hook 1/2", "Body 2/2"]
+    A single tweet is a standalone post and stays unnumbered. The suffix is
+    at most 6 chars (" 12/12"), inside the 280 - max_tweet_chars headroom.
+    """
+    if len(tweets) < 2:
+        return tweets
+
+    total = len(tweets)
+    bare = [TWEET_COUNTER_RE.sub("", tweet).rstrip() for tweet in tweets]
+    return [f"{tweet} {i}/{total}" for i, tweet in enumerate(bare, start=1)]
 
 
 def _sanitize_warning(text: str) -> str:

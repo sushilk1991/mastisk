@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
@@ -333,7 +334,7 @@ def test_tweet_writer_can_capture_current_browser_tab_without_url():
     calls: list[list[str]] = []
 
     def fake_run(args, **kwargs):
-        calls.append(args)
+        calls.append([*args, kwargs["input"]])
         payload = {
             "kind": "browser",
             "url": "https://x.com/someone/status/1",
@@ -347,9 +348,9 @@ def test_tweet_writer_can_capture_current_browser_tab_without_url():
         context = _browser_context(None)
 
     assert calls
-    assert "target_url = None" in calls[0][2]
-    assert "target_url = null" not in calls[0][2]
-    assert ".join('\\\\n\\\\n')" in calls[0][2]
+    assert "target_url = None" in calls[0][1]
+    assert "target_url = null" not in calls[0][1]
+    assert ".join('\\\\n\\\\n')" in calls[0][1]
     assert context["url"] == "https://x.com/someone/status/1"
 
 
@@ -425,7 +426,7 @@ def test_tweet_writer_searches_x_with_browser_harness():
     calls: list[list[str]] = []
 
     def fake_run(args, **kwargs):
-        calls.append(args)
+        calls.append([*args, kwargs["input"]])
         payload = {
             "captured_at": "2026-05-30T10:00:00Z",
             "url": "https://x.com/search?q=codex%20agent%20hacks",
@@ -447,9 +448,11 @@ def test_tweet_writer_searches_x_with_browser_harness():
         rows = _x_browser_search_context("codex agent hacks")
 
     assert calls
-    assert calls[0][:2] == ["browser-harness", "-c"]
-    assert "https://x.com/search" in calls[0][2]
-    assert "q=codex%20agent%20hacks" in calls[0][2]
+    assert calls[0][:1] == ["browser-harness"]
+    assert "https://x.com/search" in calls[0][1]
+    assert "q=codex%20agent%20hacks" in calls[0][1]
+    # X renders posts after load; a fixed sleep often captured an empty timeline.
+    assert "X_POST_WAIT_SECONDS" in calls[0][1]
     assert rows == [{
         "kind": "browser",
         "title": "X: Codex agent workflows are moving from prompt tricks to verified diffs.",
@@ -467,7 +470,7 @@ def test_tweet_writer_searches_grok_with_browser_harness():
     calls: list[list[str]] = []
 
     def fake_run(args, **kwargs):
-        calls.append(args)
+        calls.append([*args, kwargs["input"]])
         payload = {
             "captured_at": "2026-05-30T10:00:00Z",
             "url": "https://grok.com/share/thread-1",
@@ -496,12 +499,12 @@ def test_tweet_writer_searches_grok_with_browser_harness():
         row = _grok_browser_context(prompt)
 
     assert calls
-    assert calls[0][:2] == ["browser-harness", "-c"]
-    assert "https://grok.com/" in calls[0][2]
-    assert prompt in calls[0][2]
-    assert "[contenteditable=\"true\"][role=\"textbox\"]" in calls[0][2]
-    assert "type_text(" in calls[0][2]
-    assert "submit.click()" in calls[0][2]
+    assert calls[0][:1] == ["browser-harness"]
+    assert "https://grok.com/" in calls[0][1]
+    assert prompt in calls[0][1]
+    assert "[contenteditable=\"true\"][role=\"textbox\"]" in calls[0][1]
+    assert "type_text(" in calls[0][1]
+    assert "submit.click()" in calls[0][1]
     assert row["title"] == "Grok: Slack AI Agents in Dev Workflows - Grok"
     assert row["url"] == "https://grok.com/share/thread-1"
     assert "Slack agents moving from notifications" in row["excerpt"]
@@ -732,3 +735,110 @@ def test_tweet_writer_incorporates_pending_feedback(db, vault_tmp, data_tmp):
     assert feedback["applied_at"] is not None
     assert "make this less trusting" in prompts[0]
     assert "Previous tweet 2" in prompts[0]
+
+
+def test_tweet_writer_numbers_thread_tweets(db, vault_tmp, data_tmp):
+    from mastisk.agents.tweet_writer import TweetWriter
+
+    _seed_note(db, body="Agents need a test loop.", summary="Agents need a test loop.")
+    thread_id = _seed_thread(db, theme="agent test loops", include_web=False)
+    _enqueue(thread_id)
+
+    # The model sometimes numbers tweets itself; the writer must not double it.
+    draft = {
+        "title": "Test loops",
+        "angle": "Agents need a test loop.",
+        "thread": [
+            "Agents without a test loop guess. 1/3",
+            "Give them one command that says pass or fail.",
+            "Which command would you hand yours first?",
+        ],
+        "sources": [],
+        "warnings": [],
+    }
+
+    async def fake_run_intelligence(*args, **kwargs):
+        return {"text": json.dumps(draft)}, "claude"
+
+    with patch(
+        "mastisk.agents.tweet_writer.run_intelligence",
+        new_callable=AsyncMock,
+        side_effect=fake_run_intelligence,
+    ):
+        asyncio.run(TweetWriter().run_once())
+
+    row = db.execute("SELECT * FROM tweet_threads WHERE id=?", (thread_id,)).fetchone()
+    assert json.loads(row["thread_json"]) == [
+        "Agents without a test loop guess. 1/3",
+        "Give them one command that says pass or fail. 2/3",
+        "Which command would you hand yours first? 3/3",
+    ]
+
+
+def test_tweet_writer_leaves_single_tweet_unnumbered():
+    from mastisk.agents.tweet_writer import _number_tweets
+
+    assert _number_tweets(["One standalone post."]) == ["One standalone post."]
+
+
+def test_tweet_writer_prompt_includes_x_platform_rules(vault_tmp, data_tmp):
+    from mastisk.agents.tweet_writer import TweetWriter, _analyze_thread_intent
+
+    prompt = TweetWriter()._render_prompt(
+        theme="agent test loops",
+        intent=_analyze_thread_intent("agent test loops"),
+        previous_tweets=[],
+        feedback=[],
+        local_sources=[],
+        web_context=[],
+        browser_context=None,
+    )
+
+    assert "X platform rules" in prompt
+    assert "No URLs in tweet text" in prompt
+    assert "open question only when" in prompt
+    assert "not a tidy maxim or CTA" not in prompt
+
+
+def test_tweet_writer_points_harness_at_configured_chrome():
+    from mastisk.agents.tweet_writer import _harness_env
+
+    env = _harness_env("http://127.0.0.1:54357")
+
+    assert env["BU_CDP_URL"] == "http://127.0.0.1:54357"
+    assert env["BU_NAME"] == "mastisk"
+    assert "PATH" in env
+
+
+def test_tweet_writer_keeps_inherited_harness_target_when_unset(monkeypatch):
+    from mastisk.agents.tweet_writer import _harness_env
+
+    monkeypatch.setenv("BU_CDP_URL", "http://127.0.0.1:9333")
+
+    env = _harness_env("")
+
+    assert env["BU_CDP_URL"] == "http://127.0.0.1:9333"
+    assert env["BU_NAME"] == "mastisk"
+
+
+def test_tweet_writer_closes_tabs_it_opens():
+    from mastisk.agents.tweet_writer import _grok_browser_context, _x_browser_search_context
+
+    scripts: list[str] = []
+
+    def fake_run(args, **kwargs):
+        scripts.append(kwargs["input"])
+        return subprocess.CompletedProcess(args, 0, stdout="{}", stderr="")
+
+    with patch("mastisk.agents.tweet_writer.subprocess.run", side_effect=fake_run):
+        for call in (lambda: _x_browser_search_context("agents"), lambda: _grok_browser_context("agents")):
+            with contextlib.suppress(RuntimeError):
+                call()
+
+    assert len(scripts) == 2
+    assert all("close_tab()" in script for script in scripts)
+    # A failed script must still close its tab, or tabs pile up in the user's Chrome.
+    assert all("finally:" in script for script in scripts)
+    # Background tabs get no paint, and X/Grok stall until a frame is drawn.
+    assert all("wait_painted(" in script for script in scripts)
+    assert all("Page.captureScreenshot" in script for script in scripts)

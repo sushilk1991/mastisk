@@ -354,11 +354,15 @@ class TweetSettings(BaseSettings):
     x_browser_search_per_action_limit: int = 3
     x_browser_search_max_actions: int = 5
     x_browser_search_plan_timeout_seconds: int = 60
-    x_browser_search_timeout_seconds: float = 35.0
+    # Forced-paint polling makes a live X search take 20-35s in a background tab.
+    x_browser_search_timeout_seconds: float = 60.0
     grok_browser_search_enabled: bool = True
     grok_browser_timeout_seconds: float = 90.0
     grok_browser_excerpt_char_limit: int = 3500
     browser_context_timeout_seconds: float = 25.0
+    # CDP endpoint of the Chrome the harness drives, e.g. the Mobius Chrome at
+    # http://127.0.0.1:54357. Empty inherits BU_CDP_URL or local discovery.
+    browser_cdp_url: str = ""
     prompt_char_limit: int = 40000
     per_local_source_char_limit: int = 1200
     claude_timeout_seconds: int = 180
