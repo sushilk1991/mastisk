@@ -224,6 +224,16 @@ In plain English:
 
 The same pattern works for RSS (`Scout` instead of `GitHub Poller/Ideator`) and YouTube/podcasts (`Listener`). Notes you write yourself ride the same Notetaker → Escalator pipe.
 
+### Synthesis critic gate
+
+A new synthesis needs a valid critic score of **4/5 or higher** before it becomes an article or vault page. A lower score permits one revision using the critic's feedback, followed by another critique. Missing, malformed, out-of-range, or unavailable scores withhold publication. Failed repair calls do not publish the earlier failed draft.
+
+Withheld attempts retain their source article IDs, final score, and available critic rationale in `synthesis_runs`; the activity feed reports `withheld`. Their draft body is not saved as a wiki page. An unchanged cluster is not retried every tick.
+
+The same policy filters existing syntheses from ordinary Ask context, search, and digest ranking/calendar/navigation. The latest run linked to an article controls visibility, with its row ID breaking timestamp ties. Explicit human acceptance overrides the score; human rejection withholds that run. Syntheses without a run remain hidden from these read surfaces. Direct article access stays available for reviewing existing pages. No existing article is deleted.
+
+A passing model critique is not independent factual verification. Source-backed claims still need source checks. This gate applies to the Synthesizer, not Compiler articles, notes, or roundtable responses.
+
 ---
 
 ## Install (one command)

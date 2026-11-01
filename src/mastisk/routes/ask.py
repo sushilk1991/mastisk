@@ -470,7 +470,8 @@ def _wiki_sources(
 
     if req.article_id:
         article = q.get_article(conn, req.article_id)
-        if article:
+        # Explicit article context still uses the normal critic/review visibility policy.
+        if article and q._article_is_visible(conn, str(article["id"])):
             source = _article_source(article, current=True)
             sources.append(source)
             seen.add(("article", str(article["id"])))
@@ -583,7 +584,8 @@ def _prioritize_research_sources(
 
 def _overview_source(conn: sqlite3.Connection) -> dict:
     kind_rows = conn.execute(
-        "SELECT kind, COUNT(*) AS n FROM articles GROUP BY kind ORDER BY kind"
+        f"SELECT kind, COUNT(*) AS n FROM articles WHERE {q._synthesis_visible_sql()} "
+        "GROUP BY kind ORDER BY kind"
     ).fetchall()
     note_count = conn.execute(
         "SELECT COUNT(*) AS n FROM notes WHERE deleted_at IS NULL"
@@ -592,9 +594,10 @@ def _overview_source(conn: sqlite3.Connection) -> dict:
         "SELECT COUNT(*) AS n FROM blog_posts WHERE deleted_at IS NULL AND status='done'"
     ).fetchone()["n"]
     anchors = conn.execute(
-        """SELECT a.id, a.title, a.kind, COUNT(l.to_article) AS inbound
+        # Overview titles are evidence too; hidden drafts must not leak through anchors.
+        f"""SELECT a.id, a.title, a.kind, COUNT(l.to_article) AS inbound
            FROM articles a LEFT JOIN links l ON l.to_article = a.id
-           WHERE a.body_md != ''
+           WHERE a.body_md != '' AND {q._synthesis_visible_sql('a')}
            GROUP BY a.id
            ORDER BY inbound DESC, a.updated_at DESC
            LIMIT 10"""
@@ -621,6 +624,10 @@ def _overview_source(conn: sqlite3.Connection) -> dict:
 def _hydrate_hit(conn: sqlite3.Connection, hit: dict) -> dict | None:
     kind = str(hit["kind"])
     if kind == "article":
+        # Recheck after search so a newly rejected draft cannot be hydrated as evidence.
+        if not q._article_is_visible(conn, str(hit["id"])):
+            return None
+
         article = q.get_article(conn, str(hit["id"]))
         return _article_source(article) if article else None
     if kind == "note":

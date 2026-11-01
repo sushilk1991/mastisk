@@ -134,16 +134,19 @@ def digest(date: str | None = None, top_n: int = digest_ranker.DEFAULT_TOP_N):
             summary = f"No agent activity on {d_iso}."
 
         prev_row = conn.execute(
-            """SELECT DATE(updated_at) AS d FROM articles
-               WHERE DATE(updated_at) < ? AND body_md != ''
+            # Navigation and markers must not offer dates containing only withheld drafts.
+            f"""SELECT DATE(updated_at) AS d FROM articles
+               WHERE DATE(updated_at) < ? AND LENGTH(body_md) >= ?
+                 AND {q._synthesis_visible_sql()}
                ORDER BY updated_at DESC LIMIT 1""",
-            (d_iso,),
+            (d_iso, digest_ranker.MIN_BODY_CHARS),
         ).fetchone()
         next_row = conn.execute(
-            """SELECT DATE(updated_at) AS d FROM articles
-               WHERE DATE(updated_at) > ? AND body_md != ''
+            f"""SELECT DATE(updated_at) AS d FROM articles
+               WHERE DATE(updated_at) > ? AND LENGTH(body_md) >= ?
+                 AND {q._synthesis_visible_sql()}
                ORDER BY updated_at ASC LIMIT 1""",
-            (d_iso,),
+            (d_iso, digest_ranker.MIN_BODY_CHARS),
         ).fetchone()
         prev_date = prev_row["d"] if prev_row else None
         next_date = next_row["d"] if next_row else None
@@ -318,10 +321,11 @@ def digest_calendar(year: int, month: int):
     with connect() as conn:
         rows = conn.execute(
             # Match ranker eligibility without persisting rankings: calendar -> first digest.
-            """SELECT DISTINCT DATE(updated_at) AS d
+            f"""SELECT DISTINCT DATE(updated_at) AS d
                FROM articles
                WHERE DATE(updated_at) BETWEEN ? AND ?
                  AND LENGTH(body_md) >= ?
+                 AND {q._synthesis_visible_sql()}
                ORDER BY d ASC""",
             (first, last, digest_ranker.MIN_BODY_CHARS),
         ).fetchall()

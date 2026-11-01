@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from mastisk.db.queries import _synthesis_visible_sql
 from mastisk.services import user_profile as up
 
 DEFAULT_TOP_N = 5
@@ -117,10 +118,12 @@ def score_candidates(
         profile = up.build_profile(conn)
 
     rows = conn.execute(
-        """SELECT id, title, summary, kind, body_md, updated_at,
+        # Score only publishable material; critic failures must not enter the reading list.
+        f"""SELECT id, title, summary, kind, body_md, updated_at,
                   sources_count, backlinks_count, forwardlinks_count
            FROM articles
-           WHERE DATE(updated_at) = ? AND body_md != ''""",
+           WHERE DATE(updated_at) = ? AND body_md != ''
+             AND {_synthesis_visible_sql()}""",
         (digest_date,),
     ).fetchall()
 

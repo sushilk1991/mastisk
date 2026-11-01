@@ -205,6 +205,8 @@ CREATE TABLE IF NOT EXISTS synthesis_runs (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   reviewed_at DATETIME
 );
+-- Latest review lookup gates ordinary reads without scanning the complete run ledger.
+CREATE INDEX IF NOT EXISTS idx_synthesis_runs_article ON synthesis_runs(draft_article_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_synthesis_runs_hash ON synthesis_runs(cluster_hash);
 CREATE INDEX IF NOT EXISTS idx_synthesis_runs_pending ON synthesis_runs(user_accepted) WHERE user_accepted IS NULL;
 

@@ -11,8 +11,10 @@ from datetime import date, timedelta
 
 import pytest
 
+from mastisk.db import queries as q
 from mastisk.routes.digest_route import _latest_feedback
 from mastisk.services import digest_ranker, user_profile
+from mastisk.synthesis_policy import _PUBLISH_MIN_SCORE
 
 
 @pytest.fixture()
@@ -134,6 +136,13 @@ class TestRankAndPersist:
                 sources=src, backlinks=src, forwardlinks=src,
                 updated_at=f"{today} 10:00:00",
             )
+            # Ranking quality is tested only after the synthesis publication contract passes.
+            if kind == "Synthesis":
+                q.record_synthesis_run(
+                    conn, cluster_hash=f"A{i}", source_article_ids=[],
+                    draft_article_id=f"A{i}", eval_score=_PUBLISH_MIN_SCORE,
+                    eval_rationale="Passing fixture",
+                )
 
         top = digest_ranker.rank_for_digest(conn, today, top_n=5)
         assert len(top) == 5

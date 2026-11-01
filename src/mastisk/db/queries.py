@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from mastisk.paths import db_path
+from mastisk.synthesis_policy import _CRITIC_MAX_SCORE, _PUBLISH_MIN_SCORE
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 MAX_GENERATED_ARTICLE_TITLE_CHARS = 70
@@ -1122,15 +1123,43 @@ def unpin_article(conn: sqlite3.Connection, article_id: str) -> None:
 
 # ─────────────────────────────── Search ───────────────────────────────
 
+
+def _synthesis_visible_sql(alias: str = "articles") -> str:
+    """Apply the latest review before LIMIT; only internal, fixed SQL aliases are accepted."""
+    # A later rejection/failure supersedes earlier success, including same-second runs.
+    return f"""({alias}.kind != 'Synthesis' OR EXISTS (
+        SELECT 1 FROM synthesis_runs sr
+        WHERE sr.id = (
+            SELECT latest.id FROM synthesis_runs latest
+            WHERE latest.draft_article_id = {alias}.id
+            ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+        ) AND (
+            sr.user_accepted = 1 OR (
+                sr.user_accepted IS NULL
+                AND sr.eval_score BETWEEN {_PUBLISH_MIN_SCORE} AND {_CRITIC_MAX_SCORE}
+            )
+        )
+    ))"""
+
+
+def _article_is_visible(conn: sqlite3.Connection, article_id: str) -> bool:
+    """Keep explicitly requested context from bypassing the ordinary read policy."""
+    return conn.execute(
+        f"SELECT 1 FROM articles WHERE id = ? AND {_synthesis_visible_sql()}",
+        (article_id,),
+    ).fetchone() is not None
+
+
 def search_articles(conn: sqlite3.Connection, q: str, *, limit: int = 20) -> list[dict]:
     if not q.strip():
         return []
     # External-content FTS: join on rowid
     rows = conn.execute(
-        """SELECT articles.id, articles.title, articles.kind, articles.summary,
+        f"""SELECT articles.id, articles.title, articles.kind, articles.summary,
                   snippet(articles_fts, 2, '<mark>', '</mark>', '…', 10) AS snippet
            FROM articles_fts JOIN articles ON articles.rowid = articles_fts.rowid
-           WHERE articles_fts MATCH ? ORDER BY rank LIMIT ?""",
+           WHERE articles_fts MATCH ? AND {_synthesis_visible_sql()}
+           ORDER BY rank LIMIT ?""",
         (_fts_escape(q), limit),
     )
     return [dict(r) for r in rows]
@@ -1530,12 +1559,12 @@ def search_all(
     # snippet column index -1 means "FTS5 picks the best matching column",
     # so a body hit shows body context and a title hit shows the title.
     for r in conn.execute(
-        """SELECT articles.id AS id, articles.title AS title,
+        f"""SELECT articles.id AS id, articles.title AS title,
                   articles.kind AS subkind, articles.summary AS summary,
                   snippet(articles_fts, -1, char(2), char(3), '…', 10) AS snippet,
                   bm25(articles_fts, 10.0, 5.0, 1.0) AS score
            FROM articles_fts JOIN articles ON articles.rowid = articles_fts.rowid
-           WHERE articles_fts MATCH ?
+           WHERE articles_fts MATCH ? AND {_synthesis_visible_sql()}
            ORDER BY score, articles.updated_at DESC
            LIMIT ?""",
         (expr, _PALETTE_ARTICLE_CAP),
@@ -1781,7 +1810,7 @@ def get_synthesis_run_for_article(
                   created_at, reviewed_at
            FROM synthesis_runs
            WHERE draft_article_id = ?
-           ORDER BY created_at DESC
+           ORDER BY created_at DESC, id DESC
            LIMIT 1""",
         (article_id,),
     ).fetchone()

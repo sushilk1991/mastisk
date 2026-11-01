@@ -11,17 +11,14 @@ Cluster selection: Personalized PageRank (HippoRAG2-style).
   3. Top-K (K<=8) by PPR score = the cluster.
   4. Require at least 3 members and one non-seed, else skip.
 
-Generation: single Claude draft + single Claude critique for bookkeeping.
-  - Draft model: Claude (via the local ``claude`` CLI).
-  - Critic model: Claude (same family — looping it on its own output is
-    recursive and adds latency without value, so we don't).
-  - Critic writes rationale bullets first, then ``SCORE: <1-5>``. The score
-    is recorded but never triggers a revision; emit policy below covers it.
+Generation: draft -> critique -> at most one revision -> critique.
+  - The intelligence bridge supplies both drafting and critique.
+  - Critic writes rationale bullets, then ``SCORE: <1-5>``.
+  - Publication requires at least 4/5; missing or invalid scores fail closed.
 
-Emit policy: we do NOT gate on score. Every synthesis ships as a
-kind='Synthesis' article with ``updated_by='Synthesizer'``; the UI's
-accept/discard layer (Stage 4C) later sets ``user_accepted``. Low-score
-drafts still ship so the user has rejection data to calibrate from.
+Withheld attempts retain cluster IDs, score, and rationale in synthesis_runs,
+without an article or vault page. The human accept/discard layer can still
+review previously published drafts.
 
 Self-learning: we pull the 3 most recent user-accepted drafts as positive
 few-shot exemplars and the 2 most recent rejected drafts with feedback as
@@ -43,6 +40,12 @@ from mastisk.bridges import intelligence
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
 from mastisk.paths import vault_dir
+from mastisk.synthesis_policy import (
+    _CRITIC_MAX_SCORE,
+    _CRITIC_MIN_SCORE,
+    _MAX_REVISIONS,
+    _score_passes,
+)
 from mastisk.vault_io import write_vault_text
 
 log = logging.getLogger("mastisk.synthesizer")
@@ -52,7 +55,7 @@ log = logging.getLogger("mastisk.synthesizer")
 # clusters' cached outputs. Cluster-hash dedup still applies, but a version
 # bump means we *could* decide to re-run historic clusters — we currently
 # don't, but the column is there for future replays.
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 
 # PPR hyperparameters. Tuned for a small-to-medium wiki (hundreds of nodes).
 # On a larger graph we'd want to trim the adjacency to high-weight edges
@@ -217,9 +220,8 @@ class Synthesizer(Agent):
             members, positives, negatives
         )
 
-        if draft_data is None:
-            # Draft was unusable even after retry. Still record the run so we
-            # don't immediately retry the same cluster next tick.
+        if draft_data is None or not _score_passes(eval_score):
+            # Failed grades retain audit evidence but never create a wiki/vault page.
             with connect() as conn:
                 q.record_synthesis_run(
                     conn,
@@ -230,10 +232,12 @@ class Synthesizer(Agent):
                     eval_rationale=eval_rationale,
                     prompt_version=PROMPT_VERSION,
                 )
-            log.info(
-                "synthesizer: cluster %s produced no usable draft (score=%s)",
-                cluster_hash,
-                eval_score,
+            log.info("synthesizer: withheld cluster %s (score=%s)", cluster_hash, eval_score)
+            self.emit_feed(
+                verb="withheld",
+                obj=(draft_data or {}).get("title") or "Synthesis failed critic gate",
+                kind="synthesis",
+                payload={"cluster_size": len(cluster_ids), "eval_score": eval_score},
             )
             return None
 
@@ -603,45 +607,49 @@ class Synthesizer(Agent):
         positives: list[dict],
         negatives: list[dict],
     ) -> tuple[dict | None, float | None, str | None]:
-        """Run a single Claude draft, then a single Claude critique for a score.
+        """Draft -> critique -> one optional repair; persistence applies the score gate."""
+        base_prompt = self._draft_prompt(members, positives, negatives)
+        prompt = base_prompt
+        draft_data, score, rationale = None, None, None
 
-        Returns (draft_data, score, rationale). draft_data is None only if the
-        draft call failed or produced malformed JSON. The critic's score is
-        recorded for bookkeeping but never triggers a revision.
-        """
-        prompt = self._draft_prompt(members, positives, negatives)
-        try:
-            reply, _ = await intelligence.run_intelligence(prompt, timeout_s=300)
-        except Exception as e:
-            log.warning("synthesizer: draft model unreachable: %s", e)
-            return None, None, None
+        # Bound repair cost; preserve the failed grade if a repair cannot be generated.
+        for attempt in range(_MAX_REVISIONS + 1):
+            try:
+                reply, _ = await intelligence.run_intelligence(prompt, timeout_s=300)
+            except Exception as exc:
+                log.warning("synthesizer: draft model unreachable: %s", exc)
+                return draft_data, score, rationale
 
-        text = reply.get("text") or ""
-        candidate = self._extract_draft_json(text)
-        if candidate is None:
-            log.info(
-                "synthesizer: malformed draft JSON (reply len=%d)",
-                len(text),
+            candidate = self._extract_draft_json(reply.get("text") or "")
+            if candidate is None:
+                log.info("synthesizer: malformed draft JSON")
+                return draft_data, score, rationale
+
+            draft_data = self._normalise_draft(candidate, members)
+            score, rationale = await self._critique(draft_data, members)
+            if _score_passes(score) or score is None or attempt == _MAX_REVISIONS:
+                return draft_data, score, rationale
+
+            # Keep the original evidence and failed draft visible to the repair model.
+            prompt = (
+                f"{base_prompt}\n\nRevise the draft once using the critic below. "
+                "Remove unsupported claims; do not invent evidence to satisfy the critic. "
+                "Return the same JSON schema.\n\n"
+                f"Critic feedback:\n{rationale}\n\n"
+                f"Previous draft:\n{self._render_draft_for_critic(draft_data)}"
             )
-            return None, None, None
 
-        draft_data = self._normalise_draft(candidate, members)
-        score, rationale = await self._critique(draft_data, members)
-        # Critic failure → ship the uncritiqued draft. Low score → still ship;
-        # the UI's accept/discard layer is what gates emit.
         return draft_data, score, rationale
 
     async def _critique(
         self, draft_data: dict, members: list[dict]
     ) -> tuple[float | None, str | None]:
-        """Run the Claude critic. Returns (score, rationale) or (None, None)
-        on failure. A failure here must NOT kill the synthesis — we'd rather
-        ship an uncritiqued draft than skip entirely."""
+        """Return the critic's grade and evidence; an unavailable grade withholds publication."""
         prompt = self._critic_prompt(draft_data, members)
         try:
             resp, _ = await intelligence.run_intelligence(prompt, timeout_s=180)
         except Exception as e:
-            log.warning("synthesizer: critic unreachable (%s); shipping uncritiqued", e)
+            log.warning("synthesizer: critic unreachable (%s); withholding draft", e)
             return None, None
         text = resp.get("text") or ""
         score = self._parse_score(text)
@@ -649,17 +657,20 @@ class Synthesizer(Agent):
 
     @staticmethod
     def _parse_score(text: str) -> float | None:
-        """Pull ``SCORE: <1-5>`` from the critic's output. Accepts ints or
-        decimals and clamps to [1,5]. Returns None if no match — caller
-        treats that as "critic failed"."""
-        m = re.search(r"SCORE\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", text, flags=re.I)
-        if not m:
+        """Use the last score line; malformed or out-of-range grades must fail closed."""
+        matches = re.findall(r"^\s*SCORE\s*[:=]\s*(.*?)\s*$", text, flags=re.I | re.M)
+        if not matches:
             return None
+
         try:
-            v = float(m.group(1))
+            value = float(matches[-1])
         except ValueError:
             return None
-        return max(1.0, min(5.0, v))
+
+        if not _CRITIC_MIN_SCORE <= value <= _CRITIC_MAX_SCORE:
+            return None
+
+        return value
 
     @staticmethod
     def _extract_draft_json(reply: str) -> dict | None:

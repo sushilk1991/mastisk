@@ -124,6 +124,15 @@ def test_ask_hydrates_article_body_instead_of_only_its_summary(
                    'The unresolved choice is local harness, vendor platform, or independent institution.',
                    0.8)"""
     )
+    # Body hydration remains available once the synthesis has passed its critic gate.
+    from mastisk.db import queries as q
+    from mastisk.synthesis_policy import _PUBLISH_MIN_SCORE
+
+    q.record_synthesis_run(
+        db, cluster_hash="control-plane", source_article_ids=[],
+        draft_article_id="control-plane", eval_score=_PUBLISH_MIN_SCORE,
+        eval_rationale="Passing fixture",
+    )
     captured: dict[str, str] = {}
 
     async def fake_generate(prompt: str) -> tuple[str, str]:

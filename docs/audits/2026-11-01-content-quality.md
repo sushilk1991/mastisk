@@ -1,6 +1,6 @@
 # Mastisk content-quality audit
 
-As of 2026-11-01.
+Snapshot as of 2026-11-01, before the critic-gate implementation. The critic findings describe the then-installed behavior; [README](../../README.md#synthesis-critic-gate) documents the subsequent code change. Deployment remains separate.
 
 ## Verdict
 

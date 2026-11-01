@@ -1,38 +1,36 @@
-# Digest calendar fix and content audit
+# Digest calendar, critic gate, and main delivery
 
 ## Done
-- Changed `src/mastisk/routes/digest_route.py` to list all dates with eligible articles, independent of saved digest candidates. Digest generation remains on demand.
-- Replaced the saved-only calendar test and added threshold, month-boundary, date-movement, first-open, read-only-calendar, and validation coverage in `tests/test_dashboard_intelligence.py`.
-- Wrote `docs/audits/2026-11-01-content-quality.md`: full-corpus structural checks, 23 article/20 note full-text samples, four fetched primary sources, and ranked improvements with acceptance checks.
-- Applied the no-ai-slop writing pass to the audit report.
+- Collected all pending renderer, safe-restart, calendar, skill, test, and documentation changes in main commit `45f80c8`.
+- Calendar dates now depend on eligible articles, not previously saved digest selections.
+- Implemented a 4/5 synthesis publication gate with one bounded revision. Missing/invalid scores and failed repairs withhold publication.
+- Withheld attempts retain cluster IDs and available critic evidence without creating an article or vault page.
+- Existing low/unscored/rejected syntheses are filtered from ordinary Ask context, search, and digest ranking/calendar/navigation. Explicit human acceptance overrides the score; direct existing-article access remains available for review.
+- Wrote the content audit and implementation plan under `docs/audits/` and `docs/plans/`.
+- Removed both extra worktrees after verifying their HEADs were merged into origin/main and their tracked files were clean. Complete private archives, including untracked logs, are under `~/Library/Application Support/Mastisk/worktree-archives/20261101-200717/`.
+- Excluded `.know` runtime indexes and locks from version control.
 
 ## Verified
-- Before fix: four calendar tests failed on missing eligible dates.
-- After fix: 46 dashboard intelligence and digest ranker tests pass (last run 2026-11-01).
-- Corrected route returns HTTP 200 and all 31 October dates against a read-only production DB connection in an isolated FastAPI TestClient.
-- Production route Ruff check and git diff whitespace check pass. Four import-order findings in untouched test blocks match HEAD exactly; no new lint findings.
-- All 23 sampled articles and 20 sampled notes returned nonempty HTTP 200 API records. Live API confirms a persisted synthesis scored 1/5 with no human acceptance.
-- Installed Compiler, Synthesizer, Scout, Escalator, GithubIdeator, and digest ranker match the inspected checkout.
-- Scout's current extraction recipe reproduces the datasette release failure: navigation only, missing the dependency explanation present in the primary source.
+- Before critic implementation: 15 focused regressions failed on missing publication/read gates.
+- Full macOS backend suite: 1,178 passed.
+- Full Linux backend suite through boxrun: 1,178 passed, with a Starlette/httpx deprecation warning.
+- Frontend through boxrun: 13 Chromium tests, TypeScript checks, and production build passed. Build reports existing large-chunk/Browserslist warnings and dependency-audit findings.
+- Changed critic-gate Python files pass Ruff. Full-repo Ruff remains at the same 145 baseline findings, with no new findings.
+- Corrected route returns HTTP 200 and all 31 October dates against the production DB in read-only mode.
+- Read-only production checks confirm the existing 1/5 synthesis is excluded from corrected search and digest candidates; no production data was changed.
+- The live daemon's health endpoint still returns HTTP 200.
+- Both extra worktrees are gone; the main checkout is the only registered worktree.
+
+## Cloud test workaround
+- The 20 GB data disk is full. No caches were deleted.
+- Tests used `/tmp/boxrun-mastisk-20261101` and temporary npm/uv caches. The original cloud checkout was preserved and restored after the test run; temporary outputs remain under `/tmp`.
 
 ## Pending
-- User approval for a drained deployment/restart of ONLY the calendar route. The installed package is separate from this checkout; restarting alone will not activate the fix. Do not run a full dirty-checkout update that would include unrelated changes.
-- After approved deployment, verify live `/api/digest/calendar?year=2026&month=10` returns all 31 dates and check the calendar interaction. Current live endpoint still marks only Oct 8, 18, 19.
-- Quality improvements are recommendations only. No corpus cleanup, publication-policy changes, or regeneration was performed.
-
-## Delivery requested
-- Commit and push all pending source, tests, skills, and documentation to main.
-- Remove merged worktrees; preserve untracked logs in a private archive first.
-- Then implement the critic gate in a separate main commit: minimum score 4/5, one bounded revision, and exclusion of withheld/rejected syntheses from normal answers and digests.
-
-## Shipping checks
-- Full local backend suite: 1,154 passed.
-- TypeScript checks and shell syntax pass.
-- Ruff: 145 findings, exactly matching the pre-existing baseline; no new findings.
-- Cloud browser/build checks are blocked by a full 20 GB disk. The Go build cache occupies 7.3 GB; permission to clear only that cache is pending.
+- Install and activate the calendar and critic-gate changes only after explicit approval for a drained deployment/restart. The installed package is separate from this checkout; pushing to main does not deploy it.
+- After approved deployment, verify live calendar interaction and a real synthesis run's publication/withheld outcome.
+- Provenance-preserving promotion, long-history dedup, mixed digest ranking, and extraction retries remain recommendations, not implemented features.
 
 ## Constraints
-- Preserve existing code outside the requested changes; all pending files are now authorized for commit/push.
-- Exclude local `.know` runtime indexes and locks from version control.
-- Production database and vault are read-only; any writes use API/CLI.
-- No daemon restart or package replacement without explicit approval.
+- All changes were authorized for direct commits and push to main; no release tag or production restart is authorized.
+- Production database and vault remain read-only to agents; writes use API/CLI.
+- Git history and origin/main identify delivered commits. Do not infer live deployment from a successful push.
