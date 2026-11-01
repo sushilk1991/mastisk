@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "twitter-x-posts": {
+      "source": "kostja94/marketing-skills",
+      "sourceType": "github",
+      "skillPath": "skills/platforms/x/SKILL.md",
+      "computedHash": "5f6d086cc0592838a59aad606d73cdbb6c27f1f23129a5701f5fb000983d1768"
+    }
+  }
+}

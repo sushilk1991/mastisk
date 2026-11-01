@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from mastisk.runtime import _RunGate, _track_job
+
 log = logging.getLogger("mastisk.scheduler")
 _calendar_sync_missing_token_logged = False
 _RUN_WHEN_WOKEN_MISFIRE_GRACE = None
@@ -26,8 +28,24 @@ def _scheduled_calendar_sync() -> None:
     sync_calendar()
 
 
-async def start_scheduler():
-    sched = AsyncIOScheduler(timezone="UTC")
+class _TrackedScheduler(AsyncIOScheduler):
+    """Wrap every registered callable so draining covers its persistence work."""
+
+    def __init__(self, gate: _RunGate, **kwargs) -> None:
+        self._gate = gate
+        super().__init__(**kwargs)
+
+    def add_job(self, func, *args, **kwargs):
+        # Admission inside the callable also blocks already-submitted late starts.
+        return super().add_job(_track_job(self._gate, func), *args, **kwargs)
+
+
+async def start_scheduler(gate: _RunGate | None = None):
+    # The app supplies its request gate; standalone scheduler callers keep existing behavior.
+    sched = (
+        _TrackedScheduler(gate, timezone="UTC")
+        if gate is not None else AsyncIOScheduler(timezone="UTC")
+    )
 
     # Reclaim orphaned `running` jobs — if a previous process was killed
     # mid-compile, those rows never transition to done/failed and _pick_job

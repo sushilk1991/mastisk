@@ -3676,6 +3676,35 @@ button.dash-card:active,
   border: 1px dashed var(--line);
 }
 
+/* Pele inherits app tokens so theme changes recolor SVG without a redraw. */
+.mermaid-block {
+  width: 100%; min-width: 0; overflow-x: auto;
+  --pele-bg: var(--bg);
+  --pele-fg: var(--fg);
+  --pele-muted: var(--fg-mute);
+  --pele-line: var(--fg-mute);
+  --pele-surface: var(--bg-elev);
+  --pele-surface-alt: var(--bg-sunk);
+  --pele-border: var(--line);
+  --pele-accent: var(--accent);
+  --pele-critical: var(--danger);
+  --pele-error: var(--danger);
+  --pele-font: var(--sans);
+  --pele-font-mono: var(--mono);
+  --pele-series-1: var(--kind-entity);
+  --pele-series-2: var(--kind-concept);
+  --pele-series-3: var(--kind-source);
+  --pele-series-4: var(--kind-synth);
+}
+.mermaid-block > svg { display: block; max-width: 100%; height: auto; }
+.mermaid-block svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Minimum dimensions override Pele's compact inline button sizes for touch access. */
+.mermaid-block .pele-zoom button { min-width: 44px; min-height: 44px; }
+.mermaid-error {
+  overflow: auto; max-height: 20rem; font-size: 12px; padding: 12px;
+  border: 1px solid var(--line); border-radius: 6px; color: var(--fg-mute);
+}
+
 /* chart */
 .artifact-chart-wrap {
   position: relative;

@@ -3,6 +3,9 @@ import Chart from 'chart.js/auto';
 import type { ChartConfiguration } from 'chart.js/auto';
 import type { Artifact } from '../types';
 import { api } from '../api';
+import { MermaidBlock } from './MermaidBlock';
+
+const PELE_RENDERER = 'pele';
 
 interface Props {
   artifact: Artifact;
@@ -150,6 +153,20 @@ function ArtifactBody({ artifact }: { artifact: Artifact }) {
 /* ---------- chart ---------- */
 
 function ChartBody({ spec }: { spec: Record<string, unknown> }) {
+  // Only marked source specs use Pele; legacy stored configs retain their canvas renderer.
+  if (!spec || typeof spec !== 'object' || !('renderer' in spec)) {
+    return <LegacyChartBody spec={spec}/>;
+  }
+  if (spec.renderer !== PELE_RENDERER) {
+    return <MalformedNote reason="Unsupported chart renderer."/>;
+  }
+  if (typeof spec.source !== 'string' || !spec.source.trim()) {
+    return <MalformedNote reason="Pele chart needs Mermaid source."/>;
+  }
+  return <MermaidBlock source={spec.source}/>;
+}
+
+function LegacyChartBody({ spec }: { spec: Record<string, unknown> }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [err, setErr] = useState<string | null>(null);
 

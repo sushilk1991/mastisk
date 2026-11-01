@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from mastisk.paths import pwa_dir
+from mastisk.restart_control import _control_server
 from mastisk.routes import (
     agents_route,
     articles,
@@ -57,6 +58,7 @@ from mastisk.routes import (
     tweet_route,
     vault_route,
 )
+from mastisk.runtime import _DrainMiddleware, _RunGate
 from mastisk.settings import get_settings
 from mastisk.tunnel_scope import TunnelScopeMiddleware
 
@@ -69,12 +71,14 @@ async def lifespan(app: FastAPI):
     log.info("mastisk starting")
     try:
         from mastisk.scheduler import start_scheduler, stop_scheduler
-        scheduler_handle = await start_scheduler()
+        scheduler_handle = await start_scheduler(gate=app.state._run_gate)
     except Exception as e:
         log.warning("scheduler failed to start: %s", e)
         scheduler_handle = None
     try:
-        yield
+        # Local control stays alive while a restart client waits for whole runs to finish.
+        async with _control_server(app.state._run_gate, scheduler_handle):
+            yield
     finally:
         if scheduler_handle:
             await stop_scheduler(scheduler_handle)
@@ -102,6 +106,9 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+    # One gate covers HTTP background tasks and scheduled jobs for this app instance.
+    app.state._run_gate = _RunGate()
+    app.add_middleware(_DrainMiddleware, gate=app.state._run_gate)
     app.add_middleware(ingest.CaptureBearerAuthMiddleware)
     app.add_middleware(TunnelScopeMiddleware)
 

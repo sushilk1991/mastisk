@@ -18,6 +18,7 @@ Mastisk is the assistant that **reads, watches, listens, and thinks for you in t
 - [Configuration](#configuration)
 - [Running it](#running-it)
 - [Phone setup](#phone-setup)
+- [Charts and diagrams](#charts-and-diagrams)
 - [Connecting your GitHub](#connecting-your-github)
 - [Connecting Google Calendar](#connecting-google-calendar)
 - [Capturing notes](#capturing-notes)
@@ -342,6 +343,44 @@ Safe to edit. Mastisk reloads config on the next agent tick — no restart neede
 mastisk start    # foreground, Ctrl-C to stop
 ```
 
+### Safe restarts
+
+```bash
+mastisk restart                 # wait up to 30 minutes, then restart and check health
+mastisk restart --timeout 3600  # allow up to one hour for active runs to finish
+```
+
+The command pauses new scheduled work and returns `503` with `Retry-After` for
+new HTTP requests while draining. Existing scheduled runs, API requests, and
+response background tasks finish normally, including saving their results.
+Passive feed subscriptions do not block restart. Claude/Codex child processes
+are not detached or killed to make the restart happen sooner.
+
+Once all admitted work finishes, the command restarts launchd and verifies a
+replacement daemon identity plus `/api/sidebar`. A timeout, Ctrl-C, or CLI
+process exit cancels the drain and resumes admission and scheduling. Existing
+provider timeouts still apply. There is no force-restart fallback.
+
+`mastisk update` uses the same drain **before replacing installed package files**
+and holds it through restart. It preserves the running daemon's Python interpreter
+(or the CLI's interpreter when not draining); changing Python can invalidate
+macOS permission to read the iCloud vault.
+`./install.sh --update` delegates to the checkout's updater. `--skip-restart` explicitly bypasses draining; use it only with Mastisk
+stopped or during an approved maintenance window. Obtain user approval before
+agents invoke a restart or update. Raw `launchctl kickstart -k`, signals, and
+OS shutdown bypass this protection.
+
+**First deployment:** a daemon started before this feature has no control socket.
+The new command refuses to restart it; installing this feature requires a
+separately approved maintenance stop/install/start. The changes are not activated
+in an already-running process merely by editing this checkout.
+
+Control uses a user-only Unix socket, not an HTTP endpoint. Its directory is
+`/tmp/mastisk-<uid>-<data-directory-hash>/` (mode `0700`); `control.sock` is mode
+`0600`. If restart fails, read the CLI error rather than deleting the socket or
+falling back to a forced restart. Once local health passes, verify the
+[Tailscale URL](#phone-setup) too.
+
 ### Auto-start on login
 
 Enable it once:
@@ -373,20 +412,116 @@ tail -f ~/Library/Application\ Support/Mastisk/logs/mastisk.log
 
 ## Phone setup
 
-1. Install the **Tailscale** app on your phone, sign in to the same tailnet as your Mac.
-2. On your Mac: `mastisk url` — copy the Tailnet line (`http://<hostname>.tailXXXXX.ts.net:5555`).
-3. Add that hostname to `~/Library/Application Support/Mastisk/config.toml` if it is not one of the default local hosts:
+**This Mac's endpoint:** https://sushils-macbook-pro.tailec4b87.ts.net:8443/
+
+Configured on 2026-10-18 with Tailscale 1.102.4. Port `8443` forwards to
+Mastisk on `127.0.0.1:5555`; port `443` retains Mobius at `/` and the existing
+`/share` route.
+Local agents should keep using `http://127.0.0.1:5555`.
+
+### Configure HTTPS access
+
+1. Connect the Mac and phone to the same tailnet. Both must have Tailscale enabled;
+   the Mac must be awake and Mastisk running.
+2. Find the Mac's DNS name and inspect existing Serve routes:
+   ```bash
+   # App Store CLI location; use your installed tailscale binary if different.
+   TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+   "$TS" status
+   "$TS" serve status
+   TAILNET_HOST=$("$TS" status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
+   ```
+   Preserve existing routes. Use port `8443` only if it is free or already assigned
+   to Mastisk. Never run `tailscale serve reset` to configure this app.
+3. Append the DNS name, without scheme or port, to `[server].local_hostnames` in
+   `~/Library/Application Support/Mastisk/config.toml`. Preserve existing entries
+   and keep the file mode `0600`. For example:
    ```toml
    [server]
-   local_hostnames = ["<hostname>.tailXXXXX.ts.net"]
+   local_hostnames = ["localhost", "127.0.0.1", "::1", "[::1]", "testserver", "sushils-macbook-pro.tailec4b87.ts.net"]
    ```
-   Mastisk treats unlisted `Host` headers as tunnel/proxy traffic and hides the PWA/API except for bearer-gated capture ingress.
-4. Open that URL in Safari on your phone.
-5. Tap the Share icon → **Add to Home Screen**.
+4. Enable **TLS-terminated TCP**, then restart Mastisk with user approval if its
+   hostname allowlist changed. The middleware reads that allowlist at startup;
+   reloading other settings is not enough. Older daemons need the
+   [first-deployment procedure](#safe-restarts), not a forced-restart fallback.
+   ```bash
+   # Terminate TLS without adding HTTP proxy headers that Mastisk rejects.
+   "$TS" serve --bg --tls-terminated-tcp=8443 tcp://127.0.0.1:5555
 
-You now have a Mastisk icon that launches full-screen. It's a PWA — works offline for cached articles, syncs when you're back online.
+   # Obtain user approval; wait for active runs before restarting.
+   mastisk restart
+
+   # After startup, both must return 200 without bypassing certificate checks.
+   curl --noproxy '*' -fsS -o /dev/null -w '%{http_code}\n' "https://${TAILNET_HOST}:8443/"
+   curl --noproxy '*' -fsS -o /dev/null -w '%{http_code}\n' "https://${TAILNET_HOST}:8443/api/sidebar"
+   ```
+   `--bg` keeps Serve configured across Tailscale restarts and Mac reboots.
+   This endpoint is tailnet-only; do not enable Funnel for the PWA/API.
+5. Open `https://<DNS-name>:8443/` in Safari on the phone, then tap
+   **Share → Add to Home Screen**. The `http://…:5555` address from `mastisk url`
+   is the direct HTTP listener, not this HTTPS endpoint.
+
+### Troubleshooting and agent guardrails
+
+- **API returns 500 after reinstall:** inspect the log for vault `PermissionError`
+  and check the installed interpreter. During rollout, Python 3.15 could not read
+  the iCloud vault; restoring the previous Python 3.14 interpreter restored access.
+  Keep the known-working interpreter when reinstalling; do not change vault permissions.
+- **Local works, direct tailnet port fails:** check the firewall rule for the
+  exact Python executable running Mastisk. On this Mac, macOS Firewall blocks
+  incoming connections to Homebrew Python 3.14.7. Keep that rule: Serve forwards
+  to loopback, so the HTTPS endpoint works without opening Python to the LAN.
+- **HTTPS returns 404:** confirm Serve reports `TLS-terminated TCP`, not an HTTP
+  proxy, and the exact DNS name is in `local_hostnames`. An HTTP proxy configured
+  with `--https=8443` adds forwarded headers; Mastisk intentionally rejects them
+  even for allowlisted hosts. With approval, remove only that incorrect route
+  using `"$TS" serve --https=8443 off`, then configure TCP forwarding above.
+- **Do not weaken tunnel protection:** retain the middleware's forwarded-header
+  checks, preserve other apps' Serve routes, and keep the firewall enabled.
+- **Before declaring success:** verify the page and `/api/sidebar` return `200`,
+  recheck existing Serve routes, and test the URL from another tailnet device.
+  The initial verification on 2026-10-18 used this Mac's tailnet endpoint; a
+  phone-side check still requires opening the URL on the phone.
+
+The PWA caches articles for offline reading and syncs when the Mac is reachable.
 
 You also get a **second reading path** via iCloud: **Files app → iCloud Drive → Mastisk → vault → `*.md`**. Plain markdown, opens in Obsidian too. The PWA is the rich UX; the iCloud vault is the fallback when your Mac is off.
+
+---
+
+## Charts and diagrams
+
+[Pele](https://pele.run/) renders Mermaid diagrams and new chart artifacts locally
+in the browser. The package is bundled with Mastisk; diagram content is not sent
+to pele.run. Articles, podcasts, and Guru share `MermaidBlock.tsx`. Existing
+Mermaid source stays unchanged, and stored Chart.js configs still use Chart.js.
+
+New chart specs use this format:
+
+```json
+{
+  "renderer": "pele",
+  "source": "xychart-beta\n  title Throughput\n  x-axis [A, B, C]\n  bar [10, 20, 30]"
+}
+```
+
+The Artifact Agent generates this format by default. Use XY charts for measured
+bar/line series and pie charts for proportions; never invent article data.
+Existing charts are not rewritten. Regenerate an article's artifacts to produce
+new Pele charts. Custom Agent Studio prompt overrides should request the same
+`renderer`/`source` format.
+
+Keep rendering behind `MermaidBlock`: it disables links and images, sanitizes SVG
+with DOMPurify, and limits input to 50,000 characters, output to 1,000,000
+characters, and flowcharts to 500 edges. It never accepts author-supplied render
+options or icon markup. Invalid diagrams show inert source text instead of
+breaking the page. App CSS tokens control light/dark colors; Pele handles resize
+and zoom, with touch-sized buttons and keyboard controls.
+
+Verify changes with `npm --prefix frontend run typecheck`,
+`npm --prefix frontend test` (Chromium required), and
+`pytest tests/test_pele_artifacts.py`. Run browser tests/builds through `boxrun`;
+the fixtures contain fixed data and never touch the live wiki.
 
 ---
 
@@ -750,6 +885,7 @@ mastisk seed-demo           load the demo wiki onto an existing install
 mastisk reset               wipe wiki content (keeps identity + config + feeds)
 mastisk reset --wipe-vault  wipe markdown vault too
 mastisk start               run the app (foreground)
+mastisk restart             drain active runs, restart launchd, verify health
 mastisk dev                 dev mode with reload (repo-checkout only)
 mastisk url                 print Desktop + LAN + Tailnet URLs
 mastisk add-feed <url>      subscribe an RSS feed

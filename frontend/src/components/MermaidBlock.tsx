@@ -1,81 +1,89 @@
 import { useEffect, useRef, useState } from 'react';
+import type { Mounted } from 'pele';
 
-type MermaidTheme = 'dark' | 'neutral';
-
-// Module-level render counter. Mermaid is loaded lazily so the ~500KB
-// library only ships to readers who actually open an article with a
-// diagram section.
-let renderSeq = 0;
-let initializedTheme: MermaidTheme | null = null;
-
-function currentTheme(): MermaidTheme {
-  const t = document.documentElement.getAttribute('data-theme');
-  const dark = t ? t === 'dark' : (window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false);
-  return dark ? 'dark' : 'neutral';
-}
+// App-owned limits bound generated or captured source before inserting SVG.
+const SOURCE_LIMIT = 50_000;
+const SVG_OUTPUT_LIMIT = 1_000_000;
+const EDGE_LIMIT = 500;
 
 interface Props {
   source: string;
 }
 
-/** Renders one Mermaid diagram from raw source, with a code fallback on parse errors. */
+/** Stored Mermaid source -> Pele SVG -> sanitizer -> responsive local diagram. */
 export function MermaidBlock({ source }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [theme, setTheme] = useState<MermaidTheme>(currentTheme);
-
-  // Re-render diagrams when the app theme toggles (App.tsx stamps data-theme
-  // on <html>).
-  useEffect(() => {
-    const obs = new MutationObserver(() => setTheme(currentTheme()));
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => obs.disconnect();
-  }, []);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const container = ref.current;
     let cancelled = false;
-    // Capture the id up front: renderSeq is module-global and another
-    // MermaidBlock may increment it before our catch runs.
-    const id = `mmd-${++renderSeq}`;
-    (async () => {
+    let diagram: Mounted | undefined;
+    setError(null);
+    setLoading(true);
+
+    // Bundle locally and load only for readers opening a diagram or new chart.
+    void (async () => {
       try {
-        const mermaid = (await import('mermaid')).default;
-        if (initializedTheme !== theme) {
-          // No fontFamily override: mermaid measures node boxes with the font
-          // it's configured for, so inheriting the app font clips labels.
-          mermaid.initialize({
-            startOnLoad: false,
-            securityLevel: 'strict',
-            theme,
-          });
-          initializedTheme = theme;
+        const [{ mount }, { default: DOMPurify }] = await Promise.all([
+          import('pele'), import('dompurify'),
+        ]);
+        if (cancelled || !container) {
+          return;
         }
-        const { svg } = await mermaid.render(id, source.trim());
-        if (!cancelled && ref.current) {
-          ref.current.innerHTML = svg;
-          setError(null);
+
+        // Source cannot enable navigation, external images, or raw icon markup.
+        diagram = mount(container, source.trim(), {
+          links: false,
+          images: false,
+          limit: SOURCE_LIMIT,
+          outputLimit: SVG_OUTPUT_LIMIT,
+          maxEdges: EDGE_LIMIT,
+          zoom: 'auto',
+          sanitize: (svg) => DOMPurify.sanitize(svg, {
+            USE_PROFILES: { svg: true, svgFilters: true },
+            FORBID_TAGS: ['foreignObject', 'image', 'a'],
+            RETURN_DOM_FRAGMENT: true,
+          }),
+          onRender: () => {
+            if (cancelled) {
+              return;
+            }
+            setError(null);
+            setLoading(false);
+          },
+          onError: (reason) => {
+            if (cancelled) {
+              return;
+            }
+            setError(reason instanceof Error ? reason.message : String(reason));
+            setLoading(false);
+          },
+        });
+      } catch (reason) {
+        if (cancelled) {
+          return;
         }
-      } catch (e) {
-        // mermaid.render leaves an orphaned error element in <body> on parse
-        // failure; clean it up so broken diagrams don't litter the page.
-        document.getElementById(`d${id}`)?.remove();
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        setError(reason instanceof Error ? reason.message : String(reason));
+        setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [source, theme]);
 
-  // The render container stays mounted even in the error state — a later
-  // successful render (theme change, source fix) needs ref.current to exist.
+    // Stop resize/font observers and zoom handlers on source changes or unmount.
+    return () => {
+      cancelled = true;
+      diagram?.destroy();
+      container?.replaceChildren();
+    };
+  }, [source]);
+
+  // Keep the container mounted so corrected source can recover from parse errors.
   return (
     <>
-      <div className="mermaid-block" ref={ref} style={{ overflowX: 'auto', display: error ? 'none' : undefined }} />
-      {error && (
-        <pre className="mermaid-error" title={error} style={{
-          overflowX: 'auto', fontSize: 12, padding: 12,
-          border: '1px solid var(--border)', borderRadius: 6, opacity: 0.75,
-        }}>{source}</pre>
-      )}
+      <div className="mermaid-block" ref={ref} aria-busy={loading} style={{ display: error ? 'none' : undefined }} />
+      {loading && <span role="status">Rendering diagram…</span>}
+      {error && <pre className="mermaid-error" title={error}>{source}</pre>}
     </>
   );
 }

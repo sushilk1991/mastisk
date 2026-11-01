@@ -36,6 +36,8 @@ log = logging.getLogger("mastisk.artifact_agent")
 
 # Allowed artifact kinds; anything else gets dropped during validation.
 _ALLOWED_KINDS = {"chart", "comparison", "timeline", "stat"}
+_PELE_RENDERER = "pele"
+_MAX_DIAGRAM_SOURCE = 50_000
 
 
 # The prompt shown to the model. Spelled out verbatim so the behaviour is
@@ -59,23 +61,18 @@ where:
   to the visualisation
 - "spec" is the declarative payload for the given kind, per below.
 
-─── kind: "chart" — Chart.js config ────────────────────────────────────────
+─── kind: "chart" — Mermaid source rendered locally by Pele ────────────────
 {
-  "type": "bar" | "line" | "pie" | "doughnut" | "radar" | "scatter",
-  "data": {
-    "labels": ["..."],
-    "datasets": [
-      { "label": "...", "data": [1, 2, 3], "backgroundColor": "...optional..." }
-    ]
-  },
-  "options": {
-    "maintainAspectRatio": false,
-    "responsive": true
-  }
+  "renderer": "pele",
+  "source": "xychart-beta\\n  title Throughput\\n  x-axis [A, B, C]\\n  y-axis Requests 0 --> 30\\n  bar [10, 20, 30]"
 }
-Use this for anything quantitative — proportions, trends, comparisons of
-magnitudes. "options.maintainAspectRatio" MUST be false so the canvas fills
-the card. Do not invent numbers; only chart what the article supports.
+Use xychart-beta with bar or line series for trends and magnitudes; use pie
+for proportions. The source must be plain Mermaid syntax, not HTML, SVG, or
+Markdown fences. Escape newlines and quotes inside the JSON source string.
+Keep source under 50,000 characters. Use descriptive labels and axis units.
+Omit links, images, icons, style directives, and render configuration; the app
+controls appearance and security. Do not invent numbers; only chart what the
+article supports. Emit the renderer/source format for every new chart.
 
 ─── kind: "comparison" — side-by-side columns ──────────────────────────────
 {
@@ -336,10 +333,10 @@ class ArtifactAgent(Agent):
 
     @staticmethod
     def _is_valid(a: dict) -> bool:
-        """Structural validation — kind in allowed set, title non-empty,
-        spec is a dict. We *don't* deep-validate spec shape here — the UI
-        renders defensively, and a half-broken chart is more useful than
-        no artifact at all."""
+        """Validate artifact shape and bounded Pele source; preserve legacy configs.
+
+        The frontend handles Mermaid syntax errors with a readable source fallback.
+        """
         if not isinstance(a, dict):
             return False
         kind = a.get("kind")
@@ -351,6 +348,17 @@ class ArtifactAgent(Agent):
         spec = a.get("spec")
         if not isinstance(spec, dict):
             return False
+        # Marked charts carry Mermaid text; never add legacy canvas options to them.
+        if kind == "chart" and "renderer" in spec:
+            if spec["renderer"] != _PELE_RENDERER:
+                return False
+            source = spec.get("source")
+            return (
+                isinstance(source, str)
+                and bool(source.strip())
+                and len(source) <= _MAX_DIAGRAM_SOURCE
+            )
+
         # Best-effort: ensure chart configs don't lock the canvas aspect
         # ratio. We *enforce* the rule rather than drop the artifact because
         # it's a purely cosmetic concern and the model may forget it.

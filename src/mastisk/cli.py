@@ -10,6 +10,7 @@ import shutil
 import socket
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +31,7 @@ from mastisk.paths import (
     vault_dir,
     vault_is_icloud,
 )
+from mastisk.restart_control import _DEFAULT_DRAIN_TIMEOUT
 
 app = typer.Typer(
     name="mastisk",
@@ -38,6 +40,7 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+_UPDATE_SOURCE_ENV = "MASTISK_UPDATE_SOURCE"
 
 
 def _api_client():
@@ -253,6 +256,28 @@ def start(
     console.print(f"  vault: {vault_dir()} {'[dim](iCloud)[/dim]' if vault_is_icloud() else '[dim](local)[/dim]'}")
     console.print(f"  data:  {data_dir()}")
     uvicorn.run("mastisk.app:create_app", factory=True, host=host, port=port, log_level="info")
+
+
+@app.command()
+def restart(
+    timeout: float = typer.Option(
+        _DEFAULT_DRAIN_TIMEOUT, "--timeout", help="Seconds to wait for active runs to finish",
+    ),
+):
+    """Drain active work, restart launchd, and verify the new daemon."""
+    from mastisk.restart_control import _restart_daemon, _RestartError
+
+    # The driver never signals launchd until whole runs have finished saving results.
+    try:
+        _restart_daemon(timeout, _restart_progress)
+    except _RestartError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    console.print("[green]restarted; replacement daemon is healthy[/green]")
+
+
+def _restart_progress(active: int) -> None:
+    console.print(f"[cyan]waiting: {active} active run(s)[/cyan]")
 
 
 @app.command()
@@ -664,7 +689,8 @@ def update(
     skip_restart: bool = typer.Option(False, "--skip-restart", help="Don't kickstart the launchd agent after update"),
 ):
     """Pull latest code, rebuild frontend, reinstall package, restart launchd agent if loaded."""
-    source = _load_install_source()
+    # The shell installer pins its own checkout rather than an older install breadcrumb.
+    source = os.environ.get(_UPDATE_SOURCE_ENV) or _load_install_source()
     if not source:
         console.print("[red]no install source recorded[/red] — run ./install.sh from your clone once")
         raise typer.Exit(1)
@@ -713,22 +739,35 @@ def update(
                 _run_in(repo / "frontend", ["npm", "install", "--silent"])
             _run_in(repo / "frontend", ["npm", "run", "build"], capture=True)
 
-    console.print("[cyan]reinstalling (uv tool install --force)…[/cyan]")
-    _run_in(repo, ["uv", "tool", "install", "--force", "--reinstall", "."])
+    from mastisk.restart_control import _drain_session, _restart_idle, _RestartError
 
-    # Refresh the breadcrumb in case the repo moved
-    (data_dir() / "install_source").write_text(str(repo))
+    # Drain before reinstall: replacing package files during a run is unsafe too.
+    session = (
+        _drain_session(progress=_restart_progress)
+        if not skip_restart and _launchd_loaded() else nullcontext(None)
+    )
+    try:
+        with session as drained:
+            console.print("[cyan]reinstalling (uv tool install --force)…[/cyan]")
+            # Keep the daemon's interpreter even when the checkout CLI runs a newer Python.
+            interpreter = drained.get("python") if drained is not None else None
+            interpreter = interpreter or str(Path(sys.executable).resolve())
+            _run_in(repo, [
+                "uv", "tool", "install", "--force", "--reinstall",
+                "--python", interpreter, ".",
+            ])
 
-    new_commit = _git_output(repo, ["rev-parse", "--short", "HEAD"]).strip()
-    console.print(f"[green]✓ installed[/green] {current} → {new_commit}")
+            # Refresh the breadcrumb in case the repo moved.
+            (data_dir() / "install_source").write_text(str(repo))
+            new_commit = _git_output(repo, ["rev-parse", "--short", "HEAD"]).strip()
+            console.print(f"[green]✓ installed[/green] {current} → {new_commit}")
 
-    if not skip_restart and _launchd_loaded():
-        console.print("[cyan]restarting running agent via launchctl…[/cyan]")
-        subprocess.run(
-            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{_PLIST_LABEL}"],
-            check=False,
-        )
-        console.print("[green]✓ restarted[/green]")
+            if drained is not None:
+                _restart_idle(drained)
+                console.print("[green]✓ restarted; replacement daemon is healthy[/green]")
+    except _RestartError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
 
 
 def _load_install_source() -> Optional[str]:

@@ -25,7 +25,8 @@ def _create_task(client: TestClient, text: str) -> dict:
     return response.json()
 
 
-def test_digest_calendar_marks_ranked_digests_not_article_update_dates(client, db):
+def test_calendar_before_open(client, db):
+    """Eligible days must be reachable before a digest has ever been requested."""
     db.execute(
         """INSERT INTO articles
              (id, kind, title, slug, summary, body_md, confidence, updated_at)
@@ -35,24 +36,72 @@ def test_digest_calendar_marks_ranked_digests_not_article_update_dates(client, d
     )
     before = client.get("/api/digest/calendar?year=2026&month=7")
     assert before.status_code == 200
-    assert before.json()["active_dates"] == []
+    assert before.json()["active_dates"] == ["2026-07-17"]
+    assert db.execute("SELECT COUNT(*) FROM digest_candidates").fetchone()[0] == 0
 
-    db.execute(
-        """INSERT INTO digest_candidates
-             (digest_date, article_id, quality_score, interest_score, final_score, selected, rank)
-           VALUES ('2026-07-17', 'calendar-proof', 0.7, 0.8, 0.75, 1, 1)"""
-    )
+    # Calendar -> digest -> calendar: opening an available day must yield a thread.
+    opened = client.get("/api/digest?date=2026-07-17")
+    assert opened.status_code == 200
+    assert [thread["article_id"] for thread in opened.json()["threads"]] == ["calendar-proof"]
     after = client.get("/api/digest/calendar?year=2026&month=7")
-    assert after.json()["active_dates"] == ["2026-07-17"]
+    assert after.json() == before.json()
 
+    # Match the on-demand ranker when an article moves to a different update date.
     db.execute(
         "UPDATE articles SET updated_at = '2026-07-18 12:00:00' WHERE id = 'calendar-proof'"
     )
-    stale = client.get("/api/digest/calendar?year=2026&month=7")
-    assert stale.json()["active_dates"] == []
+    moved = client.get("/api/digest/calendar?year=2026&month=7")
+    assert moved.json()["active_dates"] == ["2026-07-18"]
     reopened = client.get("/api/digest?date=2026-07-17")
     assert reopened.status_code == 200
     assert reopened.json()["threads"] == []
+
+
+@pytest.mark.parametrize("body_delta", [-1, 0, 1])
+def test_calendar_body_threshold(client, db, body_delta):
+    """The marker and ranker share the same minimum, including its boundary."""
+    from mastisk.services.digest_ranker import MIN_BODY_CHARS
+
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, body_md, updated_at)
+           VALUES ('boundary', 'Source', 'Boundary', 'boundary', ?, '2026-07-31 23:59:59')""",
+        ("x" * (MIN_BODY_CHARS + body_delta),),
+    )
+    calendar = client.get("/api/digest/calendar?year=2026&month=7")
+    opened = client.get("/api/digest?date=2026-07-31")
+    expected = ["2026-07-31"] if body_delta >= 0 else []
+    assert calendar.status_code == 200
+    assert opened.status_code == 200
+    assert calendar.json()["active_dates"] == expected
+    assert bool(opened.json()["threads"]) == bool(expected)
+
+
+def test_calendar_month_bounds(client, db):
+    """Return sorted unique eligible days only within the requested month."""
+    from mastisk.services.digest_ranker import MIN_BODY_CHARS
+
+    # Unordered dates include leap day, duplicates, neighbours, and an empty stub.
+    dates = ["2024-03-01", "2024-02-29", "2024-02-01", "2024-01-31", "2024-02-29"]
+    for index, day in enumerate(dates):
+        db.execute(
+            """INSERT INTO articles (id, kind, title, slug, body_md, updated_at)
+               VALUES (?, 'Concept', 'Calendar day', ?, ?, ?)""",
+            (f"day-{index}", f"day-{index}", "x" * MIN_BODY_CHARS, f"{day} 12:00:00"),
+        )
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, body_md, updated_at)
+           VALUES ('stub', 'Concept', 'Stub', 'stub', '', '2024-02-10 12:00:00')"""
+    )
+    response = client.get("/api/digest/calendar?year=2024&month=2")
+    assert response.status_code == 200
+    assert response.json()["active_dates"] == ["2024-02-01", "2024-02-29"]
+    assert client.get("/api/digest/calendar?year=2024&month=4").json()["active_dates"] == []
+
+
+@pytest.mark.parametrize("query", ["year=2026&month=0", "year=2026&month=13", "year=1899&month=1", "year=3000&month=1"])
+def test_calendar_invalid_range(client, query):
+    """Keep malformed calendar ranges out of date construction and SQL."""
+    assert client.get(f"/api/digest/calendar?{query}").status_code == 400
 
 
 def test_resurfaced_titles_end_cleanly_and_repo_provenance_is_not_leaked():

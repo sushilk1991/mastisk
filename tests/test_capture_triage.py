@@ -384,6 +384,7 @@ def test_capture_triage_accepts_medium_confidence_quote_to_library(
             f"/api/triage/{item['id']}/reclassify",
             json={"type": "quote"},
         )
+        assert client.get("/api/triage").json() == []
 
     assert accepted.status_code == 200, accepted.text
     quote = db.execute("SELECT id, path, source_type, source_ref FROM quotes").fetchone()
@@ -392,7 +393,6 @@ def test_capture_triage_accepts_medium_confidence_quote_to_library(
     assert (vault_tmp / quote["path"]).exists()
     note_text = (vault_tmp / captured.json()["destination"]).read_text(encoding="utf-8")
     assert "needs_triage: false" in note_text
-    assert client.get("/api/triage").json() == []
 
 
 def test_capture_triage_inventory_uses_command_name_and_capture_date(

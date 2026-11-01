@@ -85,27 +85,11 @@ remove_skills() {
 
 # ─────────────────────────────────────────────────────────── update ──
 if [ "$UPDATE" -eq 1 ]; then
-  echo "== Updating Mastisk =="
-  git pull --ff-only
-  echo "== Rebuilding frontend =="
-  (cd frontend && npm install --silent && npm run build) >/dev/null
-  echo "== Reinstalling Python package =="
-  uv tool install --force --reinstall . >/dev/null
-  # Refresh install_source breadcrumb
-  MASTISK_CFG_DIR="$HOME/Library/Application Support/Mastisk"
-  mkdir -p "$MASTISK_CFG_DIR"
-  printf '%s\n' "$REPO_ROOT" > "$MASTISK_CFG_DIR/install_source"
-  echo "✓ binary refreshed at $(command -v mastisk || echo '~/.local/bin/mastisk')"
+  # Use checkout code so an older installed CLI cannot bypass safe draining.
+  echo "== Updating Mastisk (wait for active runs before reinstall/restart) =="
+  MASTISK_UPDATE_SOURCE="$REPO_ROOT" uv run --project "$REPO_ROOT" mastisk update
   echo "== Refreshing Claude Code skills =="
   install_skills
-  # Restart if launchd agent is loaded
-  if launchctl list 2>/dev/null | grep -q 'com.mastisk.agents'; then
-    echo "== Restarting via launchctl =="
-    launchctl kickstart -k "gui/$(id -u)/com.mastisk.agents"
-    echo "✓ restarted"
-  else
-    echo "  (no autostart agent; if Mastisk was running, restart it: pkill -f 'mastisk start' && mastisk start &)"
-  fi
   mastisk --version 2>/dev/null || true
   exit 0
 fi
