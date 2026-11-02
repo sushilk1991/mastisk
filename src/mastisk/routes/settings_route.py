@@ -8,15 +8,18 @@ model/URL/budget changes).
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import tomllib
-from typing import Any
+from typing import Any, Literal
 
 import httpx
+import tomli_w
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from mastisk.paths import config_path
-from mastisk.settings import get_settings, reload_settings, update_toml_key
+from mastisk.settings import IntelligenceSettings, get_settings, reload_settings, update_toml_key
 
 router = APIRouter(tags=["settings"])
 
@@ -25,21 +28,23 @@ router = APIRouter(tags=["settings"])
 # they're configuring each field. Keep tight; the UI copies render verbatim.
 MODEL_ROLES = {
     "claude_cmd": (
-        "Claude CLI used by the Compiler to write full wiki pages. "
+        "Claude CLI used when the configured intelligence chain selects Claude. "
         "Accepts a bare name (resolved via PATH) or an absolute path."
     ),
+    "codex_cmd": "Codex CLI fallback. Runs in an isolated, read-only working directory.",
+    "muse_cmd": "Muse CLI fallback. Runs without workspace tools or shell access.",
     "embed_model": (
         "Ollama embedding model. Scout scores each RSS item against your "
         "interests.md with cosine similarity to decide whether to clip it. "
         "Run `ollama pull nomic-embed-text` before picking that one."
     ),
     "summarize_model_cheap": (
-        "Local, fast Ollama model. Powers Ask (the cmd-K drawer) and any "
-        "light summarisation / link-grooming work. Optimise for latency."
+        "Local, fast Ollama model for explicit cheap-model calls. "
+        "Shared Ask and agent calls follow the selected provider order."
     ),
     "summarize_model_heavy": (
-        "Heavier Ollama model — cloud-proxied or a larger local checkpoint. "
-        "Reserved for multi-source synthesis jobs. Optimise for quality."
+        "Main Ollama chat model, used when the shared provider order selects Ollama. "
+        "Cloud tags can run through a signed-in local Ollama daemon."
     ),
 }
 
@@ -52,8 +57,23 @@ class BudgetIn(BaseModel):
     synthesizer: int = Field(ge=0, le=100000)
 
 
+class IntelligencePatch(BaseModel):
+    """Only user-facing model/routing controls may be changed by this API."""
+    provider_order: list[str] | None = None
+    anthropic_auto: bool | None = None
+    codex_model: str | None = None
+    codex_reasoning_effort: str | None = None
+    claude_model: str | None = None
+    muse_model: str | None = None
+    muse_reasoning_effort: str | None = None
+
+
 class SettingsIn(BaseModel):
     claude_cmd: str | None = None
+    codex_cmd: str | None = None
+    muse_cmd: str | None = None
+    intelligence: IntelligencePatch | None = None
+    ollama_think: bool | Literal["low", "medium", "high", "max"] | None = None
 
     ollama_local_url: str | None = None
     ollama_local_only: bool | None = None
@@ -76,6 +96,10 @@ def read_settings():
     return {
         "values": {
             "claude_cmd": s.claude_cmd,
+            "codex_cmd": s.codex_cmd,
+            "muse_cmd": s.muse_cmd,
+            "intelligence": s.intelligence.model_dump(),
+            "ollama_think": s.ollama_think,
             "ollama_local_url": s.ollama_local_url,
             "ollama_local_only": s.ollama_local_only,
             "ollama_cloud_url": s.ollama_cloud_url,
@@ -123,13 +147,31 @@ def write_settings(body: SettingsIn):
     if "budget" in patch:
         existing["budget"] = {**existing.get("budget", {}), **patch.pop("budget")}
 
+    # Validate merged routing before writing anything; partial patches retain existing pins.
+    if "intelligence" in patch:
+        merged = {**existing.get("intelligence", {}), **patch.pop("intelligence")}
+        try:
+            IntelligenceSettings(**merged)
+        except ValidationError as exc:
+            raise HTTPException(422, detail=exc.errors(include_context=False)) from exc
+        existing["intelligence"] = merged
+
     existing.update(patch)
 
     try:
+        # Serialize fully, then atomically replace a private file; nested tables stay intact.
+        content = _dump_toml(existing)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_dump_toml(existing))
+        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(content)
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
     except Exception as e:
-        raise HTTPException(500, f"could not write config.toml: {e}")
+        raise HTTPException(500, f"could not write config.toml: {e}") from e
 
     reload_settings()
     return {"ok": True}
@@ -138,28 +180,8 @@ def write_settings(body: SettingsIn):
 # ───── minimal TOML writer ─────
 
 def _dump_toml(data: dict[str, Any]) -> str:
-    """Write a flat config.toml with one nested [budget] table.
-
-    Deliberately narrow — covers the fields we actually accept. Preserves
-    neither comments nor unknown tables, but the file is machine-managed
-    from here on anyway.
-    """
-    out: list[str] = [
-        "# Mastisk config — written by the Settings page. Safe to edit by hand.",
-        "# Secrets live here (never in the iCloud vault).",
-        "",
-    ]
-    scalar_keys = [k for k, v in data.items() if not isinstance(v, dict)]
-    for k in scalar_keys:
-        out.append(f"{k} = {_toml_scalar(data[k])}")
-    table_keys = [k for k, v in data.items() if isinstance(v, dict)]
-    for k in table_keys:
-        out.append("")
-        out.append(f"[{k}]")
-        for sk, sv in data[k].items():
-            out.append(f"{sk} = {_toml_scalar(sv)}")
-    out.append("")
-    return "\n".join(out)
+    """Preserve arbitrary nested TOML values when saving user-facing controls."""
+    return "# Mastisk config — secrets remain local.\n" + tomli_w.dumps(data)
 
 
 def _toml_scalar(v: Any) -> str:

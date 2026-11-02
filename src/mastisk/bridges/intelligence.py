@@ -1,4 +1,4 @@
-"""Config-driven Anthropic/Codex/Claude/Ollama fallback chain.
+"""Config-driven Anthropic/Codex/Claude/Ollama/Muse fallback chain.
 
 Use ``run_intelligence(prompt)`` for any generative LLM call that doesn't
 have task-specific JSON-shape retry logic. Returns ``(result, provider)``
@@ -35,12 +35,18 @@ import logging
 import time
 from typing import Literal, cast
 
-from mastisk.bridges import anthropic_bridge, claude_bridge, codex_bridge, ollama_bridge
+from mastisk.bridges import (
+    anthropic_bridge,
+    claude_bridge,
+    codex_bridge,
+    muse_bridge,
+    ollama_bridge,
+)
 from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.intelligence")
 
-ProviderLabel = Literal["anthropic", "claude", "codex", "ollama"]
+ProviderLabel = Literal["anthropic", "claude", "codex", "ollama", "muse"]
 
 
 class IntelligenceUnavailable(RuntimeError):
@@ -206,6 +212,21 @@ async def _run_provider(
                 else s.claude_model or None
             ),
         )
+    if provider == "muse":
+        # Muse uses the same bounded, tool-free contract as the other CLI fallbacks.
+        return await muse_bridge._run_muse(
+            prompt,
+            model=(
+                cli_model_overrides["muse"]
+                if cli_model_overrides is not None and "muse" in cli_model_overrides
+                else s.muse_model or None
+            ),
+            reasoning_effort=s.muse_reasoning_effort or None,
+            timeout=float(timeout_s),
+        )
+    if provider != "ollama":
+        raise ValueError(f"Unknown intelligence provider: {provider}")
+
     # Ollama tier. ``ollama_bridge.chat`` hardcodes its own httpx timeout
     # (~180s), so we wrap it to honour ``timeout_s`` consistently with the
     # other tiers.

@@ -2,10 +2,11 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArtifactCard } from '../src/components/ArtifactCard';
 import { MermaidBlock } from '../src/components/MermaidBlock';
+import { SettingsView } from '../src/components/SettingsView';
 import '../src/styles/mastisk.css';
 
 interface Fixture {
-  mode: 'diagram' | 'artifact' | 'empty';
+  mode: 'diagram' | 'artifact' | 'settings' | 'empty';
   source?: string;
   spec?: Record<string, unknown>;
   theme?: 'light' | 'dark';
@@ -33,6 +34,7 @@ window.setFixture = (fixture) => {
     `Chromium · ${window.innerWidth}×${window.innerHeight} · ${fixture.theme ?? 'light'} · text 16px`;
   root.render(
     <StrictMode>
+      {fixture.mode === 'settings' && <SettingsView />}
       {fixture.mode === 'diagram' && <MermaidBlock source={fixture.source ?? ''} />}
       {fixture.mode === 'artifact' && <ArtifactCard
         artifact={{

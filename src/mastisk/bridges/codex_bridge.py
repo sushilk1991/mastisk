@@ -9,6 +9,8 @@ import logging
 import shutil
 import tempfile
 
+from mastisk.settings import get_settings
+
 log = logging.getLogger("mastisk.codex")
 
 
@@ -27,8 +29,11 @@ async def run_codex(
 
     Raises CodexError on non-zero exit, timeout, or missing binary.
     """
-    if shutil.which("codex") is None:
-        raise CodexError("codex binary not on PATH")
+    # Resolve the configured executable, never a shell command or ambient alias.
+    command = get_settings().codex_cmd
+    executable = shutil.which(command)
+    if executable is None:
+        raise CodexError(f"{command} binary not on PATH")
     # ``--skip-git-repo-check``: the daemon's launchd cwd is not a trusted
     # codex directory, so without this flag codex refuses to run with
     # ``Not inside a trusted directory``. We use codex purely as a stateless
@@ -44,7 +49,7 @@ async def run_codex(
     # unattended. Never inherit ambient sandbox config here.
     workdir = tempfile.mkdtemp(prefix="mastisk-codex-")
     cmd = [
-        "codex", "exec", "--skip-git-repo-check",
+        executable, "exec", "--skip-git-repo-check",
         "--sandbox", "read-only",
         "-C", workdir,
     ]

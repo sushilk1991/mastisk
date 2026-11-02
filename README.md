@@ -146,7 +146,7 @@ flowchart LR
 **Key ideas:**
 
 - **Agents are independent and small.** Each one is ~150–600 lines of Python with a single responsibility. They communicate through a `jobs` queue in SQLite.
-- **Two LLM tiers, two budgets.** Cheap local Ollama for classification and embeddings; Claude for "actually think about this" work. Each agent has a daily cap so a runaway loop can't burn your Claude quota overnight.
+- **Configurable providers, bounded budgets.** Shared generative calls use the configured Ollama/Codex/Claude/Muse/Anthropic fallback order. Explicit cheap-model calls and embeddings retain their separate models. Each agent has a daily cap.
 - **The vault is the truth.** Articles, notes, synthesis pages, repo snapshots — all are markdown in iCloud. The DB is an *index*; you can wipe it and rebuild from the vault.
 - **No API keys for Claude.** Mastisk shells out to the `claude` CLI, which uses your existing Claude Code session. You never paste an Anthropic key.
 
@@ -158,7 +158,7 @@ flowchart LR
 |---|---|---|
 | **Scout** | every 10 min | Polls RSS feeds. Embeds each item against your `interests.md`. Drops irrelevant or `dislikes.md`-matching items. Enqueues a Compiler job for the rest. |
 | **Listener** | on demand (`add-youtube` / `add-podcast`) | Downloads audio with `yt-dlp`, transcribes with `mlx-whisper`, hands the transcript to Compiler. |
-| **Compiler** | per-job | Turns one source into a structured wiki article (title, summary, sections, related links, confidence) via Claude. Writes to DB + vault. |
+| **Compiler** | per-job | Turns one source into a structured wiki article through the shared provider chain. Writes to DB + vault. |
 | **Synthesizer** | periodic | Drafts cross-article Synthesis pages with a Draft → Critic loop. Refreshes when new related articles land. |
 | **Notetaker** | every 30s | Watches `vault/_notes/inbox/`. When a new file is stable for 30s, classifies it locally (Ollama) into idea / question / task / quote / etc. |
 | **Escalator** | per-classified-note | If a note is an idea or question with high confidence and enough length, kicks off Claude research. Output: a wiki-article stub linked from the note. |
@@ -223,6 +223,16 @@ In plain English:
 8. Later, the **Synthesizer** may pull this article into a cross-article Synthesis page if it sees enough related material. The **Linter** keeps an eye on dead links and low-confidence stubs.
 
 The same pattern works for RSS (`Scout` instead of `GitHub Poller/Ideator`) and YouTube/podcasts (`Listener`). Notes you write yourself ride the same Notetaker → Escalator pipe.
+
+### Provider settings
+
+Settings exposes the shared default provider, Claude/Codex/Muse executable paths and model pins, CLI reasoning effort, and the main Ollama model's thinking mode. Choosing a default provider moves it to the front of the configured order and disables automatic Anthropic prepending. Ask planning, privacy checks, and answers follow this same order; explicit task-specific routing remains unchanged.
+
+For DeepSeek Flash 1017, set the main model to `deepseek-v4.1-flash:1017-cloud`, choose Ollama first, and select `high` thinking. Ollama's `/api/show` must list the chosen level. Cheap-model calls retain `think: false`; embedding calls are unchanged. Only final answer content is used as response text.
+
+Codex retains a read-only sandbox and isolated working directory. Muse runs headlessly with an empty preset, workspace/shell/web tools disabled, no foreign personal context, and one model step. Only a successful JSONL terminal result counts as a response; failures advance the fallback chain. Neither adapter inherits unrestricted workspace trust.
+
+Settings updates validate routing and atomically preserve unrelated nested configuration and secrets in a mode-0600 file. A direct Ollama API key is optional when a signed-in local Ollama daemon proxies cloud-tagged models. Model and routing changes apply to new calls after saving.
 
 ### Synthesis critic gate
 

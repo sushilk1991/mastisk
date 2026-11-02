@@ -30,6 +30,12 @@ def _endpoints() -> list[tuple[str, str | None]]:
     return urls
 
 
+def _thinking_for(model: str) -> bool | str:
+    """Apply the configured level only to the main model, preserving cheap-call latency."""
+    settings = get_settings()
+    return settings.ollama_think if model == settings.summarize_model_heavy else False
+
+
 async def chat(prompt: str, *, cheap: bool = False, system: str | None = None) -> str:
     s = get_settings()
     model = s.summarize_model_cheap if cheap else s.summarize_model_heavy
@@ -47,7 +53,7 @@ async def chat(prompt: str, *, cheap: bool = False, system: str | None = None) -
                 r = await client.post(
                     f"{base}/api/chat",
                     headers=headers,
-                    json={"model": model, "messages": messages, "stream": False, "think": False},
+                    json={"model": model, "messages": messages, "stream": False, "think": _thinking_for(model)},
                 )
                 r.raise_for_status()
                 data = r.json()
@@ -91,7 +97,7 @@ async def run_ollama(
                 r = await client.post(
                     f"{base}/api/chat",
                     headers=headers,
-                    json={"model": model, "messages": messages, "stream": False, "think": False},
+                    json={"model": model, "messages": messages, "stream": False, "think": _thinking_for(model)},
                 )
                 r.raise_for_status()
                 data = r.json()

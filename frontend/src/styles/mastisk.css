@@ -3414,14 +3414,18 @@ button.dash-card:active,
 .settings-ctl { display: flex; flex-direction: column; gap: 8px; }
 .settings-ctl input[type="text"],
 .settings-ctl input[type="password"],
-.settings-ctl input[type="number"] {
+.settings-ctl input[type="number"],
+.settings-ctl select {
   width: 100%;
   font-family: var(--mono); font-size: 13px;
   background: var(--bg-sunk); border: 1px solid var(--line);
   color: var(--fg); border-radius: 6px; padding: 8px 10px;
   outline: none; transition: border-color 0.15s;
 }
-.settings-ctl input:focus { border-color: var(--accent); }
+.settings-ctl input:focus, .settings-ctl select:focus { border-color: var(--accent); }
+/* New provider selectors retain touch targets and a visible keyboard focus indicator. */
+.settings-ctl select { min-height: 44px; }
+.settings-ctl select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .settings-ctl-number input { max-width: 140px; }
 
 .settings-inline-note {

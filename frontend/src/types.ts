@@ -1302,8 +1302,25 @@ export interface BudgetValues {
   synthesizer: number;
 }
 
+export type IntelligenceProvider = 'anthropic' | 'ollama' | 'codex' | 'claude' | 'muse';
+export type OllamaThinking = boolean | 'low' | 'medium' | 'high' | 'max';
+
+export interface IntelligenceValues {
+  provider_order: IntelligenceProvider[];
+  anthropic_auto: boolean;
+  codex_model: string | null;
+  codex_reasoning_effort: string | null;
+  claude_model: string | null;
+  muse_model: string | null;
+  muse_reasoning_effort: string | null;
+}
+
 export interface SettingsValues {
   claude_cmd: string;
+  codex_cmd: string;
+  muse_cmd: string;
+  intelligence: IntelligenceValues;
+  ollama_think: OllamaThinking;
   ollama_local_url: string;
   ollama_local_only: boolean;
   ollama_cloud_url: string;
@@ -1337,6 +1354,10 @@ export interface Artifact {
 
 export interface SettingsPatch {
   claude_cmd?: string;
+  codex_cmd?: string;
+  muse_cmd?: string;
+  intelligence?: Partial<IntelligenceValues>;
+  ollama_think?: OllamaThinking;
   ollama_local_url?: string;
   ollama_local_only?: boolean;
   ollama_cloud_url?: string;

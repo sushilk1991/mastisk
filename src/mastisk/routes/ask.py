@@ -50,7 +50,6 @@ _FILE_MIRRORS = {
 _WEB_QUERY_NOISE = frozenset({
     "compare", "current", "find", "latest", "mastisk", "recent", "research", "wiki",
 })
-_ASK_PROVIDER_ORDER = ("anthropic", "claude", "ollama")
 
 
 class AskMessage(BaseModel):
@@ -242,7 +241,6 @@ Current question:
             timeout_s=60,
             classification=True,
             json_object=True,
-            provider_order=_ASK_PROVIDER_ORDER,
         )
     except Exception as exc:
         log.warning("ask: intelligent retrieval planning failed: %s", exc)
@@ -334,7 +332,6 @@ Candidate public query:
             timeout_s=60,
             classification=True,
             json_object=True,
-            provider_order=_ASK_PROVIDER_ORDER,
         )
     except Exception as exc:
         log.warning("ask: public-query privacy review failed: %s", exc)
@@ -1006,7 +1003,6 @@ async def _generate_answer(prompt: str) -> tuple[str, str]:
         prompt,
         timeout_s=180,
         classification=True,
-        provider_order=_ASK_PROVIDER_ORDER,
     )
     return str(result.get("text") or "").strip(), provider
 

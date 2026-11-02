@@ -156,12 +156,15 @@ def test_prep_survives_llm_outage_with_deterministic_note(prep, db, vault_tmp):
 
 
 def test_events_for_day_returns_attendees_and_prep(db):
+    from zoneinfo import ZoneInfo
+
     from mastisk import google_calendar as gc
+    from mastisk.settings import get_settings
     # events_for_day is gated on a connected calendar: fake the token file
     # (data_tmp is already active via the db fixture) and the state row.
     gc.token_file_path().parent.mkdir(parents=True, exist_ok=True)
     gc.token_file_path().write_text('{"access_token": "t", "refresh_token": "r"}')
-    _seed_event(db, attendees=ATTENDEES)
+    start = _seed_event(db, attendees=ATTENDEES)
     db.execute(
         "INSERT INTO meeting_preps (event_id, start, note_path, brief) "
         "SELECT id, start, 'meetings/prep/x.md', 'focus on pricing' FROM calendar_events WHERE id='ev1'",
@@ -171,12 +174,10 @@ def test_events_for_day_returns_attendees_and_prep(db):
            VALUES (1, datetime('now'), 'connected')
            ON CONFLICT(id) DO UPDATE SET last_synced_at=excluded.last_synced_at, status=excluded.status""",
     )
-    day = datetime.now(UTC).astimezone().date()
+    # Query the seeded event's configured calendar date, not the host's current date.
+    timezone = ZoneInfo(get_settings().capture.default_timezone)
+    day = datetime.fromisoformat(start).astimezone(timezone).date()
     events = gc.events_for_day(day)
-    ev = next((e for e in events if e["id"] == "ev1"), None)
-    if ev is None:
-        # Event may start after local midnight; widen to tomorrow.
-        events = gc.events_for_day(day + timedelta(days=1))
-        ev = next(e for e in events if e["id"] == "ev1")
+    ev = next(e for e in events if e["id"] == "ev1")
     assert [a["email"] for a in ev["attendees"]] == ["me@self.com", "sarah@acme.com"]
     assert ev["prep"] == {"brief": "focus on pricing", "note_path": "meetings/prep/x.md"}

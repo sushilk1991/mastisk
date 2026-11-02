@@ -86,6 +86,8 @@ class IntelligenceSettings(BaseSettings):
     codex_model: str | None = "gpt-5.6-luna"
     codex_reasoning_effort: str | None = "low"
     claude_model: str | None = "haiku"
+    muse_model: str | None = None
+    muse_reasoning_effort: str | None = "high"
     # Circuit breaker: after this many CONSECUTIVE failures a provider is
     # skipped for cooldown_s seconds. Prevents a dead CLI tier (e.g. codex
     # hanging to its 180s timeout on every call) from taxing every request.
@@ -95,7 +97,7 @@ class IntelligenceSettings(BaseSettings):
     @field_validator("provider_order")
     @classmethod
     def _validate_provider_order(cls, value: list[str]) -> list[str]:
-        allowed = {"anthropic", "codex", "claude", "ollama"}
+        allowed = {"anthropic", "codex", "claude", "ollama", "muse"}
         if not value:
             raise ValueError("provider_order must include at least one provider")
         seen: set[str] = set()
@@ -104,7 +106,7 @@ class IntelligenceSettings(BaseSettings):
             provider = raw.strip().lower() if isinstance(raw, str) else ""
             if provider not in allowed:
                 raise ValueError(
-                    "provider_order entries must be one of: anthropic, codex, claude, ollama"
+                    "provider_order entries must be one of: anthropic, codex, claude, ollama, muse"
                 )
             if provider in seen:
                 raise ValueError(
@@ -386,6 +388,8 @@ class Settings(BaseSettings):
 
     # Claude
     claude_cmd: str = Field(default="claude", alias="CLAUDE_CMD")
+    codex_cmd: str = Field(default="codex", alias="CODEX_CMD")
+    muse_cmd: str = Field(default="muse", alias="MUSE_CMD")
 
     # Anthropic API (direct Messages API tier — see bridges/anthropic_bridge.py).
     # Secret: keep in config.toml or the environment, never in the vault.
@@ -396,6 +400,8 @@ class Settings(BaseSettings):
     ollama_cloud_key: str | None = Field(default=None, alias="OLLAMA_CLOUD_KEY")
     ollama_local_url: str = Field(default="http://localhost:11434", alias="OLLAMA_LOCAL_URL")
     ollama_local_only: bool = Field(default=False, alias="OLLAMA_LOCAL_ONLY")
+    # Named thinking levels are model-specific; cheap/local calls remain non-thinking.
+    ollama_think: bool | Literal["low", "medium", "high", "max"] = False
 
     # Models. Defaults chosen to work out of the box with common local + cloud-proxied Ollama stacks.
     # Override in ~/Library/Application Support/Mastisk/config.toml

@@ -559,11 +559,11 @@ def test_intelligent_ask_uses_model_planned_queries_with_bounded_planner_time(
     assert any(
         source["id"] == "1" for source in response.json()["retrieved_sources"]
     )
+    # No call-specific order: planning must respect the user's selected default.
     assert observed["planner_kwargs"] == {
         "timeout_s": 60,
         "json_object": True,
         "classification": True,
-        "provider_order": ("anthropic", "claude", "ollama"),
     }
     assert f"Today is {date.today().isoformat()}" in observed["planner_prompt"]
     assert "historical implementation decision" in observed["answer_prompt"]
@@ -682,7 +682,6 @@ def test_public_web_query_requires_independent_tool_free_privacy_review(
         "timeout_s": 60,
         "classification": True,
         "json_object": True,
-        "provider_order": ("anthropic", "claude", "ollama"),
     }
 
 
@@ -855,7 +854,7 @@ def test_intelligent_ask_keeps_history_with_six_planned_queries(
     )
 
 
-def test_answer_generation_uses_tool_free_provider_chain(monkeypatch) -> None:
+def test_answer_uses_shared_chain(monkeypatch) -> None:
     from mastisk.routes.ask import _generate_answer
 
     observed: dict = {}
@@ -875,5 +874,4 @@ def test_answer_generation_uses_tool_free_provider_chain(monkeypatch) -> None:
     assert observed["kwargs"] == {
         "timeout_s": 180,
         "classification": True,
-        "provider_order": ("anthropic", "claude", "ollama"),
     }

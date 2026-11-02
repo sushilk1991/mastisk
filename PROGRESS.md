@@ -25,12 +25,22 @@
 - The 20 GB data disk is full. No caches were deleted.
 - Tests used `/tmp/boxrun-mastisk-20261101` and temporary npm/uv caches. The original cloud checkout was preserved and restored after the test run; temporary outputs remain under `/tmp`.
 
+## Provider work (2026-11-02)
+- User approved the combined deployment after completion, then selected DeepSeek Flash 1017 cloud as default with thinking on/high and requested Codex/Muse controls in Settings.
+- Added provider/model/effort settings, isolated Muse execution, configurable Codex paths, shared Ask routing, and atomic nested settings persistence. Package defaults remain compatible; this installation will receive its selected order through the live API.
+- Provider API regressions: 10 failed before implementation; focused backend suite now passes 74 tests. Settings browser regressions: two failed before implementation and now pass.
+- Real probes passed for DeepSeek `:1017-cloud` with high thinking, Codex read-only exec, and Muse tool-free exec. Ollama `/api/show` confirms supported thinking values include `high`.
+- Combined validation passes: 1,197 backend tests on macOS and Linux; 15 Chromium tests, TypeScript, and frontend production build through boxrun. Full Ruff has 144 pre-existing findings, down from 145, with no new findings.
+- Full validation exposed an existing host/configured-timezone mismatch in a meeting-prep test. The fixture now queries its seeded event's configured calendar date; it passed red/green verification.
+- Cloud temporary storage filled during a test run. Mastisk's own prior test artifacts were preserved under `/var/tmp/mastisk-pytest-preserved-20261102/`, then the full Linux suite passed using a fresh dedicated test directory. No caches were deleted.
+- The cloud checkout currently points to the preserved temporary test directory; restore the original cloud checkout after pulling tested build assets.
+
 ## Pending
-- Install and activate the calendar and critic-gate changes only after explicit approval for a drained deployment/restart. The installed package is separate from this checkout; pushing to main does not deploy it.
-- After approved deployment, verify live calendar interaction and a real synthesis run's publication/withheld outcome.
+- Deployment is explicitly approved. Finish the provider changes, validate, commit/push to main, then drain/install/restart once. Preserve the daemon's Python 3.14 and frozen dependencies.
+- Verify live provider settings/default response, calendar dates, critic filtering, new UI assets, and TLS endpoints. No reinstall/restart has occurred yet.
 - Provenance-preserving promotion, long-history dedup, mixed digest ranking, and extraction retries remain recommendations, not implemented features.
 
 ## Constraints
-- All changes were authorized for direct commits and push to main; no release tag or production restart is authorized.
+- Direct commits/push to main and one combined drained deployment/restart are authorized. No release tag is requested.
 - Production database and vault remain read-only to agents; writes use API/CLI.
 - Git history and origin/main identify delivered commits. Do not infer live deployment from a successful push.
