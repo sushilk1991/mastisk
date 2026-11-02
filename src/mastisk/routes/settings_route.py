@@ -15,9 +15,11 @@ from typing import Any, Literal
 
 import httpx
 import tomli_w
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, ValidationError
 
+from mastisk.bridges.intelligence import ProviderLabel, effective_order
+from mastisk.bridges.model_catalog import _cli_detection, _get_catalog
 from mastisk.paths import config_path
 from mastisk.settings import IntelligenceSettings, get_settings, reload_settings, update_toml_key
 
@@ -64,6 +66,8 @@ class IntelligencePatch(BaseModel):
     codex_model: str | None = None
     codex_reasoning_effort: str | None = None
     claude_model: str | None = None
+    claude_reasoning_effort: str | None = None
+    anthropic_model: str | None = None
     muse_model: str | None = None
     muse_reasoning_effort: str | None = None
 
@@ -119,7 +123,17 @@ def read_settings():
         "model_roles": MODEL_ROLES,
         "config_path": str(config_path()),
         "cloud_active": bool(s.ollama_cloud_key) and not s.ollama_local_only,
+        "cli_detection": _cli_detection(),
+        "effective_order": effective_order(),
     }
+
+
+@router.get("/settings/models/{provider}")
+async def model_catalog(
+    provider: ProviderLabel, model: str = Query(default="", max_length=512), refresh: bool = False,
+):
+    """Read native picker metadata without inference, login, installs or config writes."""
+    return await _get_catalog(provider, model=model, refresh=refresh)
 
 
 @router.post("/settings")

@@ -1,34 +1,30 @@
-# Mastisk delivery and deployment
+# Smart Settings
 
 ## Done
-- Main commits: `45f80c8` collected pending renderer/restart/calendar work; `c0aaffe` added the critic gate; `77eb686` added provider controls and Muse support.
-- Calendar dates depend on eligible articles, not prior digest requests.
-- Synthesis publication requires a valid 4/5 score, with at most one revision. Low/missing/invalid grades are withheld. Existing low/unscored/rejected syntheses are filtered from ordinary Ask/search/digests; explicit human acceptance and direct article review remain supported.
-- Settings now exposes provider priority, Ollama thinking, and Claude/Codex/Muse CLI/model controls. Nested settings saves are validated, atomic, and private.
-- Deployed `77eb686` under the user's approved safe drain. Installed 58 packages with all 57 non-Mastisk dependency versions and the daemon's existing Python 3.14 preserved. Replacement daemon identity and health were verified.
-- Applied the user's runtime choice through the live API: `deepseek-v4.1-flash:1017-cloud`, `think: high`, provider order Ollama → Codex → Claude → Muse, automatic Anthropic prepending disabled. Cheap and embedding models were unchanged.
-- Removed both merged extra worktrees. Complete private archives are under `~/Library/Application Support/Mastisk/worktree-archives/20261101-200717/`. Main is the only registered worktree.
+- Implemented the approved AI model card: Provider → Model → supported Thinking, followed by readable fallback behavior.
+- Model dropdowns read native Codex/Claude/Muse catalogs or provider APIs. Discovery sends no prompts, starts no model turn, and performs no login/install.
+- Shared CLI detection respects absolute PATH order, supplements minimal service paths, honors explicit overrides, and rejects relative PATH entries. Normal Settings hides paths and internal config keys behind Advanced.
+- Provider browsing preserves saved fallback order. Saves send only edited fields. Model changes adjust only incompatible thinking for that provider; discovery errors preserve saved selections and cached lists.
+- Added Claude effort forwarding, preserving explicit task-model overrides. Preserved the legacy resolver contract used by optional image generation. Fixed mobile footer overlap and ensured 44px control targets.
 
 ## Verified
-- Full macOS and Linux backend suites: 1,197 passed each. Frontend through boxrun: 15 Chromium tests, TypeScript, and production build passed.
-- Full Ruff: 144 existing findings versus the 145 baseline; no new findings. New modules pass lint; legacy findings remain in existing files.
-- Real probes passed for DeepSeek high thinking, Codex read-only execution, and Muse tool-free execution. Ollama metadata confirms the pinned tag supports `high`.
-- Installed source matches all 153 committed Python modules. Local and TLS-served PWA assets exactly match the tested build.
-- Live local and tailnet page/API return 200. Both calendar endpoints return all 31 October dates. New Codex/Muse controls and the selected thinking/model settings are returned by the live settings API.
-- Live Ask returned `MASTISK_PROVIDER_READY` using provider `ollama`; its temporary verification conversation was removed through the API.
-- Live search excludes the known 1/5 synthesis while direct review still works. The October 29 digest returned 83 items; all eight selected syntheses met their actual critic/review policy.
-- Unrelated configuration, mode 0600, launchd plist, all Tailscale Serve routes, other-app HTTPS availability, and forwarded-header blocking were preserved.
-
-## Deployment evidence
-- Private artifact directory: `/tmp/mastisk-deploy-20261102.UOUYGa/` contains the tested wheel, source/build fingerprints, frozen dependencies, prior package/config/database snapshots, deployment log, and verification manifest.
-- Wheel SHA256: `915e444a4fab42266e8dbbf78dce0e303b626f5237408eb004e2ebdb12a9af58`.
-- Cloud data disk was full; tests used temporary storage. Prior test artifacts were preserved under `/var/tmp/mastisk-pytest-preserved-20261102/`, and the original cloud checkout was restored. No caches were deleted.
+- Linux full backend: 1,223 passed. macOS touched-area tests: 74 passed. New modules pass Ruff; full-repo findings remain at the existing 144, with no new touched-file findings.
+- Frontend through boxrun: 22 Chromium tests, TypeScript, and production build passed. Reviewed desktop/light (1280×900) and mobile/dark (390×844) frames, both labelled with base text 16px.
+- Actual new API probes returned 26 Ollama, eight Codex, 13 Claude, and four Muse models. The pinned DeepSeek tag advertises Off/Low/High/Max. Production config bytes were unchanged by these read-only probes.
+- Tests cover metadata-only requests, pagination, credential redaction, cache refresh/invalidation, timeout/cancellation cleanup, queued-request deadlines, stale responses, missing saved models, partial saves, fallback preservation, keyboard navigation, and mobile layout.
+- Live daemon/package/config were not replaced or restarted for this redesign. Current production deployment remains `77eb686`; its DeepSeek/high selection and existing fallbacks remain in place.
 
 ## Pending
-- Observe the next post-restart synthesis publication/withheld outcome; no new synthesis-run row appeared during verification. No content was generated solely to force this check.
-- Phone-side browser interaction remains a user check. Server responses, real counts, and served UI assets were verified from the Mac.
-- Provenance-preserving note promotion, long-history dedup, mixed digest ranking, and extraction retries remain recommendations, not implemented features.
+- Obtain new approval before a drained deployment/restart. The live Settings page still serves the previous UI.
+- Install the tested source/PWA together, preserving the current Python interpreter and installed dependency versions. Recheck actual page/assets, model dropdown API, save behavior, and local/tailnet health afterward.
+- Authenticated Anthropic catalog listing was checked against the official API contract and mocked pagination, not a real authenticated API request. Existing configured Anthropic access was not changed.
 
-## Constraints
-- Deployment approval was used for this single drained install/restart. Another restart still needs approval.
-- Production database/vault writes remain API/CLI-only. No release tag was requested.
+## Artifacts and cloud state
+- Private artifacts: `/tmp/mastisk-smart-settings-20261102.1O7wPz/`. Includes reviewed screenshots, sanitized native catalog replies, verification JSON, and tested PWA under `pwa/pwa/`.
+- Cloud full disks required using the existing `/tmp/boxrun-mastisk-20261101` checkout. The original cloud checkout was preserved as `/data/workspace/mastisk-6d982900.before-smart-settings-20261102`; restore its ordinary path before stopping.
+- Backend scratch was under `/var/tmp/mastisk-smart-pytest-20261102`; frontend/browser scratch used `/tmp` after the root disk filled. No caches were deleted. Serialize boxrun invocations: concurrent pull/run commands raced its SSH config temp file.
+
+## Prior delivery
+- Earlier calendar, critic-gate and provider work is deployed at `77eb686`; see `docs/audits/2026-11-02-deployment.md` and the content-quality audit.
+- That deployment verified all 31 October calendar dates, actual Ollama Ask routing, critic filtering, matching UI assets, private/unrelated config preservation, and local/tailnet endpoints.
+- Prior rollback evidence: `/tmp/mastisk-deploy-20261102.UOUYGa/`. Extra merged worktrees were archived under `~/Library/Application Support/Mastisk/worktree-archives/20261101-200717/`; only main remains registered.

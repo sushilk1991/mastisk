@@ -12,11 +12,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import shutil
 import uuid
-from pathlib import Path
 
+from mastisk.bridges.executables import _find_cli
 from mastisk.paths import tmp_dir
 from mastisk.settings import get_settings
 
@@ -35,17 +34,7 @@ def _resolve_cmd(cmd: str) -> str:
     We augment PATH with the common user-install locations before asking
     ``shutil.which`` — good enough without forcing the user to hand-edit config.
     """
-    if "/" in cmd:
-        return cmd
-    extra = [
-        str(Path.home() / ".local" / "bin"),
-        str(Path.home() / "bin"),
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-    ]
-    path = os.pathsep.join([*extra, os.environ.get("PATH", "")])
-    resolved = shutil.which(cmd, path=path)
-    return resolved or cmd
+    return _find_cli(cmd) or cmd
 
 
 async def run_claude(
@@ -56,10 +45,14 @@ async def run_claude(
     timeout_s: int = 300,
     classification: bool = False,
     model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict:
     """Run Claude headlessly, return parsed JSON from stdout."""
     s = get_settings()
-    claude_cmd = _resolve_cmd(s.claude_cmd)
+    # Runtime calls require detection; the legacy resolver also serves optional image generation.
+    claude_cmd = _find_cli(s.claude_cmd)
+    if claude_cmd is None:
+        raise ClaudeError(f"{s.claude_cmd} binary not detected")
 
     job_id = uuid.uuid4().hex[:8]
     workdir = tmp_dir() / f"job-{job_id}"
@@ -84,6 +77,11 @@ async def run_claude(
         if model:
             # e.g. "haiku" — an alias the CLI resolves to its current Haiku.
             cmd += ["--model", model]
+
+        # The native model catalog supplies valid effort values; omitted means CLI default.
+        if reasoning_effort:
+            cmd += ["--effort", reasoning_effort]
+
         log.info("claude %s (workdir=%s)", prompt[:80].replace("\n", " "), workdir)
         # stdin=DEVNULL: when the daemon runs under launchd it inherits a
         # piped stdin, which ``claude -p`` will then try to consume — same

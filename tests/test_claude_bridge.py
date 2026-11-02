@@ -82,7 +82,7 @@ async def test_run_claude_classification_uses_no_tools_plan_mode(data_tmp):
         return mock_proc
 
     with (
-        patch("mastisk.bridges.claude_bridge._resolve_cmd", return_value="/usr/bin/claude"),
+        patch("mastisk.bridges.claude_bridge._find_cli", return_value="/usr/bin/claude"),
         patch(
             "mastisk.bridges.claude_bridge.asyncio.create_subprocess_exec",
             side_effect=fake_exec,

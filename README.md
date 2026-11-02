@@ -226,7 +226,11 @@ The same pattern works for RSS (`Scout` instead of `GitHub Poller/Ideator`) and 
 
 ### Provider settings
 
-Settings exposes the shared default provider, Claude/Codex/Muse executable paths and model pins, CLI reasoning effort, and the main Ollama model's thinking mode. Choosing a default provider moves it to the front of the configured order and disables automatic Anthropic prepending. Ask planning, privacy checks, and answers follow this same order; explicit task-specific routing remains unchanged.
+Settings starts with one **AI model** form: choose the provider, pick a model from its dropdown, then choose a supported thinking level. The fallback order appears below. Choosing a provider puts it first without reordering the saved fallbacks, and disables automatic Anthropic priority. Ask and shared agents follow this order; tasks with their own model settings remain unchanged.
+
+Model choices come from the installed Codex, Claude or Muse CLI, or the Ollama/Anthropic API. Discovery sends no prompts and does not install models or sign in. Lists are cached for five minutes; **Refresh** reads them again. Failed refreshes keep the last known list and your saved model. Switching models adjusts incompatible thinking and shows the new value before saving.
+
+CLI detection runs on the Mastisk server, not the device viewing Settings. It checks the service's absolute PATH entries, then common user-install locations. **Advanced** contains optional executable overrides, custom model IDs, API priority, connections, specialised models, GitHub tokens and budgets. Blank executable overrides restore auto-detection. Automatic Anthropic priority adds that API first only when a key exists and it is not already listed.
 
 For DeepSeek Flash 1017, set the main model to `deepseek-v4.1-flash:1017-cloud`, choose Ollama first, and select `high` thinking. Ollama's `/api/show` must list the chosen level. Cheap-model calls retain `think: false`; embedding calls are unchanged. Only final answer content is used as response text.
 
@@ -302,7 +306,7 @@ Uninstall (preserves your iCloud vault):
 |---|---|---|---|
 | **Claude auth** | managed by `claude` CLI | — | required; run `claude login` |
 | **Ollama Cloud API key** | `config.toml` → `ollama_cloud_key` | string | optional; skip to use local Ollama only |
-| **GitHub PAT** | `config.toml` → `[github] pat` (or PWA → Settings → GitHub) | classic PAT, `public_repo` scope | optional but recommended |
+| **GitHub PAT** | `config.toml` → `[github] pat` (or PWA → Settings → Advanced → GitHub) | classic PAT, `public_repo` scope | optional but recommended |
 | **Google Calendar OAuth** | `config.toml` → `[calendar] client_id/client_secret`, then `mastisk calendar-connect` | Google Cloud OAuth client type: Desktop app; scope: `https://www.googleapis.com/auth/calendar.readonly` | optional; for read-only Today events |
 | **Tailscale auth** | Tailscale app (menu-bar icon) | — | optional; only if you want phone access |
 | **RSS feeds** | SQLite `rss_feeds` table | URL list | needed for Scout to do anything |
@@ -332,7 +336,7 @@ open ~/Library/Application\ Support/Mastisk/config.toml
 Three ways:
 
 ```bash
-# 1. PWA → Settings → GitHub → paste PAT (validates against the API)
+# 1. PWA → Settings → Advanced → GitHub → paste PAT (validates against the API)
 # 2. Edit ~/Library/Application Support/Mastisk/config.toml under [github]
 # 3. export MASTISK_GITHUB_PAT=ghp_xxx   (env var override)
 ```
@@ -551,7 +555,7 @@ Track GitHub repositories and Mastisk will poll them hourly (commits + open issu
 
 ```bash
 # 1. Add a PAT (one-time, classic with public_repo scope)
-#    PWA → Settings → GitHub → paste it
+#    PWA → Settings → Advanced → GitHub → paste it
 #    or:
 #    edit ~/Library/Application Support/Mastisk/config.toml under [github]
 

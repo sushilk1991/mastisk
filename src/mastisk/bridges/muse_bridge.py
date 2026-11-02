@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 import tempfile
 
+from mastisk.bridges.executables import _find_cli
 from mastisk.settings import get_settings
 
 _MAX_MODEL_STEPS = 1
@@ -48,7 +48,7 @@ async def _run_muse(
 ) -> dict:
     """Isolated exec -> JSONL terminal -> final text; timeout/cancellation reap the child."""
     command = get_settings().muse_cmd
-    executable = shutil.which(command)
+    executable = _find_cli(command)
     if executable is None:
         raise RuntimeError(f"{command} binary not on PATH")
 

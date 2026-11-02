@@ -86,6 +86,8 @@ class IntelligenceSettings(BaseSettings):
     codex_model: str | None = "gpt-5.6-luna"
     codex_reasoning_effort: str | None = "low"
     claude_model: str | None = "haiku"
+    # Only shared Claude calls use this pin; explicit task-model overrides keep their own defaults.
+    claude_reasoning_effort: str | None = None
     muse_model: str | None = None
     muse_reasoning_effort: str | None = "high"
     # Circuit breaker: after this many CONSECUTIVE failures a provider is

@@ -1311,6 +1311,8 @@ export interface IntelligenceValues {
   codex_model: string | null;
   codex_reasoning_effort: string | null;
   claude_model: string | null;
+  claude_reasoning_effort: string | null;
+  anthropic_model: string;
   muse_model: string | null;
   muse_reasoning_effort: string | null;
 }
@@ -1336,6 +1338,27 @@ export interface SettingsBundle {
   model_roles: Record<string, string>;
   config_path: string;
   cloud_active: boolean;
+  cli_detection: Partial<Record<IntelligenceProvider, { path: string | null; auto_path?: string | null }>>;
+  effective_order: IntelligenceProvider[];
+}
+
+// Catalogs expose only model choices/capabilities; account identities and credentials stay server-side.
+export interface ModelChoice {
+  id: string;
+  name: string;
+  thinking: string[] | null;
+  default_thinking: string | null;
+  kind: 'chat' | 'embedding' | 'unknown';
+}
+
+export interface ModelCatalog {
+  provider: IntelligenceProvider;
+  status: 'ready' | 'unavailable' | 'not_installed' | 'needs_auth';
+  models: ModelChoice[];
+  source: string | null;
+  checked_at: string | null;
+  stale: boolean;
+  message: string | null;
 }
 
 export type ArtifactKind = 'chart' | 'comparison' | 'timeline' | 'stat';

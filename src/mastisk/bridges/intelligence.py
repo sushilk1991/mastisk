@@ -211,6 +211,11 @@ async def _run_provider(
                 if cli_model_overrides is not None and "claude" in cli_model_overrides
                 else s.claude_model or None
             ),
+            # Task-specific models can have different capabilities from the shared selection.
+            reasoning_effort=(
+                None if cli_model_overrides is not None and "claude" in cli_model_overrides
+                else s.claude_reasoning_effort or None
+            ),
         )
     if provider == "muse":
         # Muse uses the same bounded, tool-free contract as the other CLI fallbacks.

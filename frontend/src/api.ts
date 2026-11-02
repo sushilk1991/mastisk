@@ -6,7 +6,7 @@ import type {
   KindleImportResult, KindleReviewItem, PersonDetail, PersonSummary, PinnedItem, PodcastListItem, PodcastView, ProjectDetail, ProjectSummary, QuoteDetail, QuoteSourceType, QuoteSummary, ReminderRow,
   QuickCaptureResponse, RepoDetail, RepoIdeasResponse, RepoSummary, ResurfaceItem, RoutineGroups, RoutineProgress, RoutineRow,
   Roundtable, RoundtableSummary, SearchResult,
-  SettingsBundle, SettingsPatch, SlippingItem, TaskRow, TimeOfDay, TranscriptAnchor, JournalDay, JournalDaySummary,
+  IntelligenceProvider, ModelCatalog, SettingsBundle, SettingsPatch, SlippingItem, TaskRow, TimeOfDay, TranscriptAnchor, JournalDay, JournalDaySummary,
   Automation, AutomationDetail, AutomationRun, AutomationTriggers,
   SynthesisRunResponse, TopicSuggestion, TweetThread, UserInfo, VaultItem, WikiSuggestion,
   NeedsReviewItem,
@@ -456,6 +456,8 @@ export const api = {
     ),
 
   settings: () => j<SettingsBundle>(`${BASE}/settings`),
+  modelCatalog: (provider: IntelligenceProvider, model: string, refresh = false) =>
+    j<ModelCatalog>(`${BASE}/settings/models/${provider}?${new URLSearchParams({ model, refresh: String(refresh) })}`),
   saveSettings: (patch: SettingsPatch) =>
     j<{ ok: boolean }>(`${BASE}/settings`, {
       method: 'POST',

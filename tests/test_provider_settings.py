@@ -144,7 +144,7 @@ def test_configured_codex_path(client, monkeypatch):
     proc = MagicMock(returncode=0)
     proc.communicate = AsyncMock(return_value=(b"CODEX_OK", b""))
     spawn = AsyncMock(return_value=proc)
-    monkeypatch.setattr(codex_bridge.shutil, "which", lambda _cmd: "/custom/codex")
+    monkeypatch.setattr(codex_bridge, "_find_cli", lambda _cmd: "/custom/codex")
     monkeypatch.setattr(codex_bridge.asyncio, "create_subprocess_exec", spawn)
 
     assert asyncio.run(codex_bridge.run_codex("Reply"))["text"] == "CODEX_OK"
@@ -164,7 +164,7 @@ def test_muse_dispatch_is_isolated(client, monkeypatch):
     proc.communicate = AsyncMock(return_value=((json.dumps(terminal) + "\n").encode(), b""))
     spawn = AsyncMock(return_value=proc)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    monkeypatch.setattr("shutil.which", lambda _cmd: "/custom/muse")
+    monkeypatch.setattr("mastisk.bridges.muse_bridge._find_cli", lambda _cmd: "/custom/muse")
     monkeypatch.setattr(ollama_bridge, "chat", AsyncMock(side_effect=AssertionError("wrong provider")))
 
     result, provider = asyncio.run(intelligence.run_intelligence("Reply", provider_order=("muse",)))
@@ -189,7 +189,7 @@ def test_muse_failure_falls_back(client, monkeypatch):
     proc = MagicMock(returncode=1)
     proc.communicate = AsyncMock(return_value=(b"", b"provider unavailable"))
     monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=proc))
-    monkeypatch.setattr("shutil.which", lambda _cmd: "/custom/muse")
+    monkeypatch.setattr("mastisk.bridges.muse_bridge._find_cli", lambda _cmd: "/custom/muse")
     chat = AsyncMock(return_value="OLLAMA_OK")
     monkeypatch.setattr(ollama_bridge, "chat", chat)
 
@@ -198,3 +198,36 @@ def test_muse_failure_falls_back(client, monkeypatch):
     assert provider == "ollama"
     assert result["text"] == "OLLAMA_OK"
     assert chat.await_count == 1
+
+
+def test_claude_effort_argument(client, monkeypatch):
+    """A thinking level offered for Claude must change its actual CLI invocation."""
+    from mastisk.bridges import claude_bridge
+
+    client.post("/api/settings", json={"intelligence": {
+        "provider_order": ["claude"], "anthropic_auto": False,
+        "claude_model": "sonnet", "claude_reasoning_effort": "high",
+    }})
+    values = client.get("/api/settings").json()["values"]
+    assert values["intelligence"].get("claude_reasoning_effort") == "high"
+    proc = MagicMock(returncode=0)
+    proc.communicate = AsyncMock(return_value=(b'{"result":"CLAUDE_OK"}', b""))
+    spawn = AsyncMock(return_value=proc)
+    monkeypatch.setattr(claude_bridge, "_find_cli", lambda _cmd: "/custom/claude")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    result, provider = asyncio.run(intelligence.run_intelligence("Reply"))
+    assert provider == "claude" and result["text"] == "CLAUDE_OK"
+    args = spawn.call_args.args
+    assert args[args.index("--effort") + 1] == "high"
+
+
+def test_task_override_effort(client, monkeypatch):
+    """An explicit task model must not inherit an incompatible shared model's effort."""
+    client.post("/api/settings", json={"intelligence": {
+        "provider_order": ["claude"], "anthropic_auto": False,
+        "claude_model": "sonnet", "claude_reasoning_effort": "high",
+    }})
+    run = AsyncMock(return_value={"text": "OK"})
+    monkeypatch.setattr(intelligence.claude_bridge, "run_claude", run)
+    asyncio.run(intelligence.run_intelligence("Reply", cli_model_overrides={"claude": "haiku"}))
+    assert run.call_args.kwargs.get("reasoning_effort") is None

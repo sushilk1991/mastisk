@@ -25,7 +25,7 @@ def spawn(monkeypatch, data_tmp):
     process.communicate = AsyncMock(return_value=(b"", b""))
     process.wait = AsyncMock()
     factory = AsyncMock(return_value=process)
-    monkeypatch.setattr(muse_bridge.shutil, "which", lambda command: "/test/muse")
+    monkeypatch.setattr(muse_bridge, "_find_cli", lambda command: "/test/muse")
     monkeypatch.setattr(muse_bridge.asyncio, "create_subprocess_exec", factory)
     return process, factory
 

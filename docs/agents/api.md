@@ -33,6 +33,18 @@ curl -s -X POST http://127.0.0.1:5555/api/ask -H 'Content-Type: application/json
 curl -s http://127.0.0.1:5555/api/digest | jq '.items[] | {title, score}'
 ```
 
+## Settings model catalogs
+
+`GET /api/settings` returns masked settings, passive `cli_detection`, and `effective_order` from the runtime resolver. `POST /api/settings` merges supplied fields without changing unrelated settings.
+
+`GET /api/settings/models/{provider}?model=MODEL&refresh=true` reads native picker metadata without inference or login. Providers: `ollama`, `codex`, `claude`, `muse`, `anthropic`. Each model has `id`, `name`, `thinking`, `default_thinking`, and `kind`. Missing thinking metadata is unknown, not permission to invent levels. Discovery runs on the server, with a 15-second deadline plus child cleanup and a five-minute bounded cache.
+
+Check `status` and `stale`, not HTTP 200 alone. A failed refresh can retain the last good `models`; a catalog is not proof that inference will succeed. Returned metadata excludes account identity and credentials.
+
+```bash
+curl -sf 'http://127.0.0.1:5555/api/settings/models/codex?refresh=true' | jq '{status, stale, models}'
+```
+
 ## SQLite (read-only)
 
 `DB="$HOME/Library/Application Support/Mastisk/mastisk.db"`. Tables: `articles`, `article_sections`, `links`, `notes`, `note_escalations`, `note_links`, `sources`, `article_sources`, `jobs`, `feed`, `signals`, `roundtables`, `roundtable_perspectives`, `synthesis_runs`, `blog_posts`.

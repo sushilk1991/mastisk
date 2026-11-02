@@ -9,6 +9,7 @@ import logging
 import shutil
 import tempfile
 
+from mastisk.bridges.executables import _find_cli
 from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.codex")
@@ -31,7 +32,7 @@ async def run_codex(
     """
     # Resolve the configured executable, never a shell command or ambient alias.
     command = get_settings().codex_cmd
-    executable = shutil.which(command)
+    executable = _find_cli(command)
     if executable is None:
         raise CodexError(f"{command} binary not on PATH")
     # ``--skip-git-repo-check``: the daemon's launchd cwd is not a trusted
