@@ -1,46 +1,34 @@
-# Digest calendar, critic gate, and main delivery
+# Mastisk delivery and deployment
 
 ## Done
-- Collected all pending renderer, safe-restart, calendar, skill, test, and documentation changes in main commit `45f80c8`.
-- Calendar dates now depend on eligible articles, not previously saved digest selections.
-- Implemented a 4/5 synthesis publication gate with one bounded revision. Missing/invalid scores and failed repairs withhold publication.
-- Withheld attempts retain cluster IDs and available critic evidence without creating an article or vault page.
-- Existing low/unscored/rejected syntheses are filtered from ordinary Ask context, search, and digest ranking/calendar/navigation. Explicit human acceptance overrides the score; direct existing-article access remains available for review.
-- Wrote the content audit and implementation plan under `docs/audits/` and `docs/plans/`.
-- Removed both extra worktrees after verifying their HEADs were merged into origin/main and their tracked files were clean. Complete private archives, including untracked logs, are under `~/Library/Application Support/Mastisk/worktree-archives/20261101-200717/`.
-- Excluded `.know` runtime indexes and locks from version control.
+- Main commits: `45f80c8` collected pending renderer/restart/calendar work; `c0aaffe` added the critic gate; `77eb686` added provider controls and Muse support.
+- Calendar dates depend on eligible articles, not prior digest requests.
+- Synthesis publication requires a valid 4/5 score, with at most one revision. Low/missing/invalid grades are withheld. Existing low/unscored/rejected syntheses are filtered from ordinary Ask/search/digests; explicit human acceptance and direct article review remain supported.
+- Settings now exposes provider priority, Ollama thinking, and Claude/Codex/Muse CLI/model controls. Nested settings saves are validated, atomic, and private.
+- Deployed `77eb686` under the user's approved safe drain. Installed 58 packages with all 57 non-Mastisk dependency versions and the daemon's existing Python 3.14 preserved. Replacement daemon identity and health were verified.
+- Applied the user's runtime choice through the live API: `deepseek-v4.1-flash:1017-cloud`, `think: high`, provider order Ollama → Codex → Claude → Muse, automatic Anthropic prepending disabled. Cheap and embedding models were unchanged.
+- Removed both merged extra worktrees. Complete private archives are under `~/Library/Application Support/Mastisk/worktree-archives/20261101-200717/`. Main is the only registered worktree.
 
 ## Verified
-- Before critic implementation: 15 focused regressions failed on missing publication/read gates.
-- Full macOS backend suite: 1,178 passed.
-- Full Linux backend suite through boxrun: 1,178 passed, with a Starlette/httpx deprecation warning.
-- Frontend through boxrun: 13 Chromium tests, TypeScript checks, and production build passed. Build reports existing large-chunk/Browserslist warnings and dependency-audit findings.
-- Changed critic-gate Python files pass Ruff. Full-repo Ruff remains at the same 145 baseline findings, with no new findings.
-- Corrected route returns HTTP 200 and all 31 October dates against the production DB in read-only mode.
-- Read-only production checks confirm the existing 1/5 synthesis is excluded from corrected search and digest candidates; no production data was changed.
-- The live daemon's health endpoint still returns HTTP 200.
-- Both extra worktrees are gone; the main checkout is the only registered worktree.
+- Full macOS and Linux backend suites: 1,197 passed each. Frontend through boxrun: 15 Chromium tests, TypeScript, and production build passed.
+- Full Ruff: 144 existing findings versus the 145 baseline; no new findings. New modules pass lint; legacy findings remain in existing files.
+- Real probes passed for DeepSeek high thinking, Codex read-only execution, and Muse tool-free execution. Ollama metadata confirms the pinned tag supports `high`.
+- Installed source matches all 153 committed Python modules. Local and TLS-served PWA assets exactly match the tested build.
+- Live local and tailnet page/API return 200. Both calendar endpoints return all 31 October dates. New Codex/Muse controls and the selected thinking/model settings are returned by the live settings API.
+- Live Ask returned `MASTISK_PROVIDER_READY` using provider `ollama`; its temporary verification conversation was removed through the API.
+- Live search excludes the known 1/5 synthesis while direct review still works. The October 29 digest returned 83 items; all eight selected syntheses met their actual critic/review policy.
+- Unrelated configuration, mode 0600, launchd plist, all Tailscale Serve routes, other-app HTTPS availability, and forwarded-header blocking were preserved.
 
-## Cloud test workaround
-- The 20 GB data disk is full. No caches were deleted.
-- Tests used `/tmp/boxrun-mastisk-20261101` and temporary npm/uv caches. The original cloud checkout was preserved and restored after the test run; temporary outputs remain under `/tmp`.
-
-## Provider work (2026-11-02)
-- User approved the combined deployment after completion, then selected DeepSeek Flash 1017 cloud as default with thinking on/high and requested Codex/Muse controls in Settings.
-- Added provider/model/effort settings, isolated Muse execution, configurable Codex paths, shared Ask routing, and atomic nested settings persistence. Package defaults remain compatible; this installation will receive its selected order through the live API.
-- Provider API regressions: 10 failed before implementation; focused backend suite now passes 74 tests. Settings browser regressions: two failed before implementation and now pass.
-- Real probes passed for DeepSeek `:1017-cloud` with high thinking, Codex read-only exec, and Muse tool-free exec. Ollama `/api/show` confirms supported thinking values include `high`.
-- Combined validation passes: 1,197 backend tests on macOS and Linux; 15 Chromium tests, TypeScript, and frontend production build through boxrun. Full Ruff has 144 pre-existing findings, down from 145, with no new findings.
-- Full validation exposed an existing host/configured-timezone mismatch in a meeting-prep test. The fixture now queries its seeded event's configured calendar date; it passed red/green verification.
-- Cloud temporary storage filled during a test run. Mastisk's own prior test artifacts were preserved under `/var/tmp/mastisk-pytest-preserved-20261102/`, then the full Linux suite passed using a fresh dedicated test directory. No caches were deleted.
-- The cloud checkout currently points to the preserved temporary test directory; restore the original cloud checkout after pulling tested build assets.
+## Deployment evidence
+- Private artifact directory: `/tmp/mastisk-deploy-20261102.UOUYGa/` contains the tested wheel, source/build fingerprints, frozen dependencies, prior package/config/database snapshots, deployment log, and verification manifest.
+- Wheel SHA256: `915e444a4fab42266e8dbbf78dce0e303b626f5237408eb004e2ebdb12a9af58`.
+- Cloud data disk was full; tests used temporary storage. Prior test artifacts were preserved under `/var/tmp/mastisk-pytest-preserved-20261102/`, and the original cloud checkout was restored. No caches were deleted.
 
 ## Pending
-- Deployment is explicitly approved. Finish the provider changes, validate, commit/push to main, then drain/install/restart once. Preserve the daemon's Python 3.14 and frozen dependencies.
-- Verify live provider settings/default response, calendar dates, critic filtering, new UI assets, and TLS endpoints. No reinstall/restart has occurred yet.
-- Provenance-preserving promotion, long-history dedup, mixed digest ranking, and extraction retries remain recommendations, not implemented features.
+- Observe the next post-restart synthesis publication/withheld outcome; no new synthesis-run row appeared during verification. No content was generated solely to force this check.
+- Phone-side browser interaction remains a user check. Server responses, real counts, and served UI assets were verified from the Mac.
+- Provenance-preserving note promotion, long-history dedup, mixed digest ranking, and extraction retries remain recommendations, not implemented features.
 
 ## Constraints
-- Direct commits/push to main and one combined drained deployment/restart are authorized. No release tag is requested.
-- Production database and vault remain read-only to agents; writes use API/CLI.
-- Git history and origin/main identify delivered commits. Do not infer live deployment from a successful push.
+- Deployment approval was used for this single drained install/restart. Another restart still needs approval.
+- Production database/vault writes remain API/CLI-only. No release tag was requested.
