@@ -1,7 +1,7 @@
 # Smart Settings
 
 ## Done
-- Implemented the approved AI model card: Provider → Model → supported Thinking, followed by readable fallback behavior.
+- Source `a280819` is pushed to main. It implements the approved AI model card: Provider → Model → supported Thinking, followed by readable fallback behavior.
 - Model dropdowns read native Codex/Claude/Muse catalogs or provider APIs. Discovery sends no prompts, starts no model turn, and performs no login/install.
 - Shared CLI detection respects absolute PATH order, supplements minimal service paths, honors explicit overrides, and rejects relative PATH entries. Normal Settings hides paths and internal config keys behind Advanced.
 - Provider browsing preserves saved fallback order. Saves send only edited fields. Model changes adjust only incompatible thinking for that provider; discovery errors preserve saved selections and cached lists.
@@ -20,8 +20,9 @@
 - Authenticated Anthropic catalog listing was checked against the official API contract and mocked pagination, not a real authenticated API request. Existing configured Anthropic access was not changed.
 
 ## Artifacts and cloud state
-- Private artifacts: `/tmp/mastisk-smart-settings-20261102.1O7wPz/`. Includes reviewed screenshots, sanitized native catalog replies, verification JSON, and tested PWA under `pwa/pwa/`.
-- Cloud full disks required using the existing `/tmp/boxrun-mastisk-20261101` checkout. The original cloud checkout was preserved as `/data/workspace/mastisk-6d982900.before-smart-settings-20261102`; restore its ordinary path before stopping.
+- Private artifacts: `/tmp/mastisk-smart-settings-20261102.1O7wPz/`. Includes reviewed screenshots, sanitized native catalog replies, verification JSON, tested PWA under `pwa/pwa/`, and `wheel/mastisk-0.1.0-py3-none-any.whl`. All 155 packaged Python modules and 14 PWA files match the committed source/tested assets.
+- Prepared wheel SHA256: `cb16d3e82d0e575cbc0f9e8958881311a1eb6bfcaa88e1b1313c3e8186e07653`. Source revision: `a2808193d338a8c9e45f79fb41e9cb0228171094`. This wheel has not been installed.
+- Cloud full disks required using the existing `/tmp/boxrun-mastisk-20261101` checkout. The original cloud checkout is restored at `/data/workspace/mastisk-6d982900`; the tested temporary checkout remains preserved under `/tmp`.
 - Backend scratch was under `/var/tmp/mastisk-smart-pytest-20261102`; frontend/browser scratch used `/tmp` after the root disk filled. No caches were deleted. Serialize boxrun invocations: concurrent pull/run commands raced its SSH config temp file.
 
 ## Prior delivery
