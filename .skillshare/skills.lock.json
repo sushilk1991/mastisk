@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "twitter-x-posts": {
+      "source": "github.com/kostja94/marketing-skills/skills/platforms/x",
+      "commit": "ac823a127782355339f21aef6c87f1ccff751c84",
+      "tree_hash": "fffa068e4000bba8d0a304f556116829a341e9dd"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/runkids/skillshare/main/schemas/project-config.schema.json
+
+targets:
+  - claude
+  - universal
+
+skills:
+  - name: twitter-x-posts
+    source: github.com/kostja94/marketing-skills/skills/platforms/x
+
+ignore:
+  - .DS_Store
+  - .git/
+  - __pycache__/
+
+audit:
+  block_threshold: CRITICAL
