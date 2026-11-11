@@ -130,3 +130,9 @@ export function preloadView(view: View): void {
     loader().catch(() => {});
   }
 }
+
+/** Resolves once a view's chunks are in the module cache (or have failed; the
+ *  error boundary reports that when the view renders). */
+export function viewReady(view: View): Promise<void> {
+  return Promise.all((VIEW_LOADERS[view] ?? []).map((loader) => loader().catch(() => {}))).then(() => {});
+}

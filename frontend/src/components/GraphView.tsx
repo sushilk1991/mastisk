@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react
 import { quadtree, type Quadtree, type QuadtreeLeaf } from 'd3-quadtree';
 import { api } from '../api';
 import type { GraphData, View } from '../types';
+import '../styles/views/GraphView.css';
 
 interface Props {
   onNavigate: (view: View, id?: string) => void;

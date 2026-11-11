@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.frontend_css import frontend_css
+
 
 def _css() -> str:
-    return Path("frontend/src/styles/mastisk.css").read_text(encoding="utf-8")
+    return frontend_css()
 
 
 def test_new_surfaces_have_staggered_reduced_motion_safe_entrances() -> None:
@@ -30,8 +32,10 @@ def test_press_feedback_uses_specific_transitions_not_all() -> None:
 
 def test_hit_areas_extended_without_overlap() -> None:
     css = _css()
-    assert ".verdict-btn::after, .sugg-ref::after" in css
-    assert "inset: -8px -1px" in css
+    # one rule per stylesheet now: thumbs in the shell, suggestion refs with their view
+    for selector in (".verdict-btn::after {", ".sugg-ref::after {"):
+        rule = css[css.index(selector):]
+        assert "inset: -8px -1px" in rule[: rule.index("}")]
 
 
 def test_dynamic_numbers_are_tabular() -> None:

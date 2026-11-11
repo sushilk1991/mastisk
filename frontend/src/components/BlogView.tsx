@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { api, ApiError } from '../api';
 import { localDateTime } from '../date';
 import type { BlogPostDetail, BlogPostSource, View } from '../types';
+import '../styles/views/BlogView.css';
 
 interface Props {
   blogPostId: number;

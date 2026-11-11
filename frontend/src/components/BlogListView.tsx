@@ -86,7 +86,7 @@ export function BlogListView({ onCreateBlog, onCreateBlogWithTheme, onNavigate }
         <h1 className="view-title" style={{ margin: 0 }}>
           {rows.length} draft{rows.length === 1 ? '' : 's'}
         </h1>
-        <button onClick={onCreateBlog}>+ new draft</button>
+        <button className="chip" onClick={onCreateBlog}>+ new draft</button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>

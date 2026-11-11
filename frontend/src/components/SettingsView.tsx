@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import type { IntelligenceProvider, IntelligenceValues, ModelCatalog, SettingsBundle, SettingsPatch } from '../types';
+import '../styles/views/SettingsView.css';
 
 // Provider names and thinking levels are explicit so saved values match the runtime API.
 const PROVIDERS: IntelligenceProvider[] = ['ollama', 'codex', 'claude', 'muse', 'anthropic'];

@@ -3,6 +3,7 @@ import { api } from '../api';
 import type { PodcastListItem, View } from '../types';
 import { Icon } from './icons';
 import { summaryText } from '../summaryText';
+import '../styles/views/PodcastsListView.css';
 
 interface Props {
   onNavigate: (view: View, id?: string) => void;

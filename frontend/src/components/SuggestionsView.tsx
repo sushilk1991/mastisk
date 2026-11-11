@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import type { View, WikiSuggestion } from '../types';
+import '../styles/views/SuggestionsView.css';
 
 interface Props {
   onNavigate: (view: View, id?: string) => void;

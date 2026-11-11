@@ -75,7 +75,7 @@ export function SystemCheckView() {
         <p style={{color:'var(--fg-mute)',fontSize:13,margin:'0 0 12px'}}>
           Tests that Claude and Ollama actually respond. Takes ~10–20 seconds.
         </p>
-        <button onClick={runPing} disabled={busy} style={{
+        <button className="tap" onClick={runPing} disabled={busy} style={{
           padding:'9px 16px', borderRadius:6,
           background: busy ? 'var(--bg-sunk)' : 'var(--accent)',
           color: busy ? 'var(--fg-faint)' : 'var(--fg-inv)',

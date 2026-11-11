@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.frontend_css import shell_css, view_css
+
 
 def _source(name: str) -> str:
     return Path(f"frontend/src/components/{name}").read_text(encoding="utf-8")
@@ -45,10 +47,12 @@ def test_tweet_dates_treat_sqlite_timestamps_as_utc() -> None:
 
 
 def test_tweet_ui_motion_is_scoped_and_responsive() -> None:
-    css = Path("frontend/src/styles/mastisk.css").read_text(encoding="utf-8")
-    section = css.split("/* ---------- Tweet thread workshop ---------- */", 1)[1].split(
+    # The tweet styles: what the two tweet views load, plus the part of the
+    # shell sheet they share.
+    shared = shell_css().split("/* ---------- Tweet thread workshop ---------- */", 1)[1].split(
         "/* Markdown content rendered", 1
     )[0]
+    section = shared + view_css("TweetThreadsView", "TweetThreadView")
 
     assert "container-type: inline-size" in section
     assert "@container tw-compose" in section

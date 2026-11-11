@@ -4,6 +4,7 @@ import { Icon } from './icons';
 import { api } from '../api';
 import { useModalA11y } from '../hooks/useModalA11y';
 import type { AskConversationSummary, AskResponse, AskSource, View } from '../types';
+import '../styles/views/AskDrawer.css';
 
 type ChatMode = 'wiki' | 'research';
 

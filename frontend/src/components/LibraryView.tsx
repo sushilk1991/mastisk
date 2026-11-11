@@ -6,6 +6,7 @@ import type {
   QuoteDetail, QuoteSourceType, QuoteSummary, View,
 } from '../types';
 import { InlineError, describeRequestError } from './InlineError';
+import '../styles/views/LibraryView.css';
 
 interface Props {
   liveKey: string;

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.frontend_css import frontend_css
+
 
 def test_digest_thread_titles_are_tooltipped_and_line_clamped() -> None:
     """Existing long DB titles should not expand the digest card vertically."""
     component = Path("frontend/src/components/DigestView.tsx").read_text(encoding="utf-8")
-    css = Path("frontend/src/styles/mastisk.css").read_text(encoding="utf-8")
+    css = frontend_css()
 
     assert 'className="thread-title"' in component
     assert "title={thread.title}" in component

@@ -207,11 +207,7 @@ export function OpenQuestionsView({ onNavigate }: Props) {
                     <h2 style={{fontSize:14,margin:0,flex:1}}>{q.heading}</h2>
                     <button
                       type="button"
-                      style={{
-                        fontSize: 11, padding: '2px 8px',
-                        border: '1px solid var(--border)', borderRadius: 4,
-                        background: 'var(--bg-soft, transparent)', cursor: 'pointer',
-                      }}
+                      className="chip"
                       onClick={(e) => {
                         e.stopPropagation();
                         setCaptureCtx({

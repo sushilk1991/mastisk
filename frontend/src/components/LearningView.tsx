@@ -6,6 +6,7 @@ import type {
 } from '../types';
 import { MermaidBlock } from './MermaidBlock';
 import { SafeHtml } from './SafeHtml';
+import '../styles/views/LearningView.css';
 
 interface NavProps {
   onNavigate: (view: View, id?: string) => void;

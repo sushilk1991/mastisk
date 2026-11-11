@@ -1,0 +1,71 @@
+/* Styles used only by DigestAuditView.tsx; loaded with that chunk. */
+/* ---------- digest audit view ---------- */
+.audit-controls { display: flex; gap: 6px; align-items: center; margin: 8px 0 24px; }
+.audit-range {
+  font-family: var(--mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--fg-mute);
+  background: var(--bg-elev);
+  border: 1px solid var(--line-soft);
+  padding: 4px 10px; border-radius: 12px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.audit-range:hover { color: var(--fg); border-color: var(--line); }
+.audit-range.is-on {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elev));
+  border-color: var(--accent);
+}
+.audit-day {
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+}
+.audit-day-h {
+  display: flex; align-items: baseline; gap: 14px; margin-bottom: 12px;
+}
+.audit-day-date {
+  font-family: var(--serif); font-size: 22px; font-weight: 500;
+}
+.audit-day-sub {
+  font-family: var(--mono); font-size: 11px; color: var(--fg-mute);
+}
+.audit-section-h {
+  font-family: var(--mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--fg-faint);
+  margin: 16px 0 6px;
+}
+.audit-empty {
+  font-family: var(--mono); font-size: 11px; color: var(--fg-faint);
+  padding: 4px 0;
+}
+.audit-row {
+  display: flex; gap: 12px; padding: 8px 0;
+  border-bottom: 1px dotted var(--line-soft);
+}
+.audit-row:last-child { border-bottom: 0; }
+.audit-row.is-muted { opacity: 0.6; }
+.audit-row-rank {
+  font-family: var(--mono); font-size: 11px; color: var(--fg-faint);
+  width: 28px; flex-shrink: 0; padding-top: 2px;
+}
+.audit-row-main { flex: 1; min-width: 0; }
+.audit-row-title {
+  background: none; border: none; cursor: pointer;
+  font-family: var(--serif); font-size: 15px; line-height: 1.35;
+  color: var(--fg); text-align: left;
+  padding: 0; width: 100%;
+}
+.audit-row-title:hover { color: var(--accent); }
+.audit-row-meta {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  margin-top: 4px;
+  font-family: var(--mono); font-size: 10px; color: var(--fg-mute);
+}
+.audit-kind {
+  font-family: var(--mono); font-size: 10px;
+  padding: 1px 6px; border-radius: 8px;
+  background: var(--bg-elev); color: var(--fg-mute);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}

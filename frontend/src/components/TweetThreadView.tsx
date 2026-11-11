@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } fr
 import { api, ApiError } from '../api';
 import { formatApiDateTime } from '../date';
 import type { TweetThread, TweetThreadFeedback, View } from '../types';
+import '../styles/views/TweetThreadView.css';
 
 interface Props {
   threadId: number;

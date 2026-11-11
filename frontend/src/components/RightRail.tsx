@@ -3,6 +3,7 @@ import type { Article, AgentInfo, FeedTick, Note, View } from '../types';
 import { ArtifactPanel } from './ArtifactPanel';
 import { api } from '../api';
 import { Icon } from './icons';
+import '../styles/views/RightRail.css';
 
 interface Props {
   article: Article;

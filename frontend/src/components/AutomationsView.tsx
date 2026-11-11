@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import type { Automation, AutomationDetail, AutomationTriggers, View } from '../types';
+import '../styles/views/AutomationsView.css';
 
 interface Props {
   liveKey: string;

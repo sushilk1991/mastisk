@@ -184,3 +184,24 @@ def test_save_as_note_slug_collision_keeps_both_files(client, db, vault_tmp, mon
     for body, synthesis in saved:
         note = db.execute("SELECT path FROM notes WHERE id = ?", (body["note_id"],)).fetchone()
         assert synthesis in (vault_tmp / note["path"]).read_text(encoding="utf-8")
+
+
+def test_preview_ends_on_a_whole_word():
+    from mastisk.routes.roundtable_route import _preview
+
+    assert _preview(None) is None
+    assert _preview("  \n ") is None
+    assert _preview("short\n\nanswer") == "short answer"
+
+    long = "All four respondents agree " + "that context goes stale, " * 20
+    out = _preview(long)
+    assert out is not None and len(out) <= 241
+    assert out.endswith("…")
+    # the text before the ellipsis is a prefix of the source that stops at a word end
+    body = out[:-1]
+    flat = " ".join(long.split())
+    assert flat.startswith(body)
+    assert flat[len(body)] in " ,"
+
+    # one unbroken token is cut in place, not dropped
+    assert _preview("x" * 500) == "x" * 240 + "…"

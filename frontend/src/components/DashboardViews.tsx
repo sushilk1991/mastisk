@@ -8,6 +8,7 @@ import type {
   ChecklistTemplate, ContentDetail, ContentKind, ContentList, ContentStatus, ContentSummary, Digest, InventoryDetail, InventoryStatus, InventorySummary, NeedsReviewItem, PersonDetail, PersonSummary, Priority, ProjectDetail, ProjectSummary, ReminderRow, ResurfaceItem,
   RoutineGroups, RoutineProgress, RoutineRow, SlippingItem, TaskRow, TimeOfDay, View,
 } from '../types';
+import '../styles/views/DashboardViews.css';
 
 interface LiveProps {
   liveKey: string;

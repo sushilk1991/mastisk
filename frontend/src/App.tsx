@@ -325,7 +325,7 @@ export function App() {
         />
       )}
 
-      <main className="main">
+      <main className="main" tabIndex={-1}>
         <ViewErrorBoundary resetKey={routeKey}>
         <Suspense fallback={<Loading/>}>
         {view === 'article' && article && (

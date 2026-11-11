@@ -115,13 +115,29 @@ async def save_as_note_endpoint(rt_id: int) -> dict:
     return {"note_id": note_id, "slug": row["slug"], "reused": False}
 
 
+def _preview(text: str | None, limit: int = 240) -> str | None:
+    """One-line preview that ends on a whole word, with an ellipsis when cut."""
+    flat = " ".join((text or "").split())
+    if not flat:
+        return None
+    if len(flat) <= limit:
+        return flat
+    cut = flat[:limit]
+    # Only back up to a space when one is near the end; a single very long
+    # token (a URL) is cut where it stands rather than dropped entirely.
+    space = cut.rfind(" ")
+    if space >= limit - 40:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:.-") + "…"
+
+
 def _summary(row: dict) -> dict:
     return {
         "id": row["id"],
         "input_type": row["input_type"],
         "input_ref": row["input_ref"],
         "status": row["status"],
-        "synthesis_preview": (row["synthesis"] or "")[:240] if row["synthesis"] else None,
+        "synthesis_preview": _preview(row["synthesis"]),
         "synthesis_model": row.get("synthesis_model"),
         "created_at": row["created_at"],
         "finished_at": row.get("finished_at"),

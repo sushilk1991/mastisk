@@ -1,0 +1,243 @@
+/* Styles used only by LearningView.tsx; loaded with that chunk. */
+@media (pointer: coarse) {
+  .learn-input {
+    min-height: 44px;
+  }
+  .learn-goal-link { min-height: 32px; }
+  .learn-goal-link { min-height: 44px; }
+  .learn-goal-link { display: inline-flex; align-items: center; }
+}
+
+
+/* ───────────────────────────── Learning (Guru) ───────────────────────────── */
+
+.learn-today-card {
+  border: 1px solid var(--line); border-radius: var(--rad-lg);
+  background: var(--bg-card); padding: 16px 18px; margin: 18px 0;
+}
+.learn-today-meta {
+  font-family: var(--mono); font-size: 11px; color: var(--fg-faint);
+  text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px;
+}
+.learn-today-title { font-family: var(--serif); font-size: 20px; margin-bottom: 10px; }
+.learn-today-actions { display: flex; gap: 8px; align-items: center; }
+
+.learn-new-goal { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 14px 0 20px; }
+.learn-input {
+  border: 1px solid var(--line); border-radius: var(--rad); background: var(--bg-card);
+  color: var(--fg); padding: 8px 10px; font-size: 13px; flex: 1 1 260px; min-width: 200px;
+}
+.learn-input-days { flex: 0 1 120px; min-width: 100px; }
+.learn-input-level { flex: 0 1 180px; min-width: 140px; }
+
+.learn-goals { display: flex; flex-direction: column; gap: 12px; }
+.learn-goal-card {
+  border: 1px solid var(--line); border-radius: var(--rad-lg);
+  background: var(--bg-card); padding: 14px 16px;
+}
+.learn-goal-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.learn-goal-topic { font-weight: 600; font-size: 15px; }
+.learn-goal-meta { font-size: 12px; color: var(--fg-mute); margin: 4px 0 8px; }
+.learn-goal-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+.learn-status-chip {
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--fg-mute); white-space: nowrap;
+}
+.learn-status-chip.active, .learn-status-chip.done { color: var(--ok); border-color: var(--ok-soft); background: var(--ok-soft); }
+.learn-status-chip.pending { color: var(--warn); border-color: var(--warn-soft); background: var(--warn-soft); }
+.learn-status-chip.paused { color: var(--fg-faint); }
+
+.learn-progress {
+  height: 5px; border-radius: 999px; background: var(--bg-sunk); overflow: hidden;
+}
+.learn-progress-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+.learn-lesson .view-title { margin-bottom: 18px; }
+.learn-sec-heading { font-family: var(--serif); font-size: 17px; margin: 22px 0 8px; }
+.learn-callout {
+  border-left: 3px solid var(--warn); background: var(--warn-soft);
+  border-radius: 0 var(--rad) var(--rad) 0; padding: 10px 14px; margin: 14px 0;
+}
+.learn-callout .learn-sec-heading { margin-top: 0; }
+
+.learn-quiz-block { margin: 18px 0; }
+.learn-question {
+  border: 1px solid var(--line); border-radius: var(--rad-lg);
+  background: var(--bg-card); padding: 14px 16px; margin: 10px 0;
+}
+.learn-q-text { font-weight: 600; margin-bottom: 10px; }
+.learn-q-input {
+  width: 100%; box-sizing: border-box; border: 1px solid var(--line);
+  border-radius: var(--rad); background: var(--bg); color: var(--fg);
+  padding: 8px 10px; font-size: 13px; font-family: var(--sans); resize: vertical;
+}
+.learn-q-foot { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.learn-q-conf-label { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); }
+.learn-conf-active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.learn-q-answer {
+  font-size: 13px; color: var(--fg-mute); border-left: 2px solid var(--line);
+  padding-left: 10px; margin-bottom: 10px; white-space: pre-wrap;
+}
+
+.learn-grade { border-top: 1px dashed var(--line); padding-top: 10px; }
+.learn-grade-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.learn-rating {
+  font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 2px 10px; border-radius: 999px;
+}
+.learn-rating.r1 { background: var(--danger-soft); color: var(--danger); }
+.learn-rating.r2 { background: var(--warn-soft); color: var(--warn); }
+.learn-rating.r3, .learn-rating.r4 { background: var(--ok-soft); color: var(--ok); }
+.learn-grade-feedback { font-size: 13px; margin: 6px 0; }
+.learn-evidence { list-style: none; padding: 0; margin: 6px 0; font-size: 12px; }
+.learn-evidence .met { color: var(--ok); }
+.learn-evidence .missed { color: var(--danger); }
+.learn-evidence-quote { color: var(--fg-faint); font-style: italic; }
+.learn-model-answer { font-size: 12px; color: var(--fg-mute); margin: 6px 0; }
+
+/* ───── Learning: lesson chat (Ask Guru) ───── */
+.learn-chat-fab {
+  position: fixed; right: 24px; bottom: 24px; z-index: 60;
+  padding: 10px 16px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--bg-card); color: var(--fg); font-family: var(--mono);
+  font-size: 13px; cursor: pointer; box-shadow: 0 4px 18px rgb(0 0 0 / 0.14);
+}
+.learn-chat-fab:hover { border-color: var(--accent); }
+.learn-chat-panel {
+  position: fixed; right: 24px; bottom: 24px; z-index: 60;
+  width: min(400px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 96px));
+  /* dvh tracks the visible viewport when the mobile keyboard opens */
+  max-height: min(560px, calc(100dvh - 96px));
+  display: flex; flex-direction: column;
+  background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 10px 40px rgb(0 0 0 / 0.20); overflow: hidden;
+}
+.learn-chat-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-elev);
+}
+.learn-chat-title { font-family: var(--mono); font-size: 13px; color: var(--fg); }
+.learn-chat-close {
+  border: none; background: none; color: var(--fg-mute); font-size: 18px;
+  line-height: 1; cursor: pointer; padding: 2px 6px;
+}
+.learn-chat-close:hover { color: var(--fg); }
+.learn-chat-scroll {
+  flex: 1; overflow-y: auto; padding: 14px;
+  display: flex; flex-direction: column; gap: 10px; min-height: 160px;
+}
+/* no auto margins: in a scroll container they push overflow past the
+   unreachable top edge once the suggestion chips make the block tall */
+.learn-chat-empty { color: var(--fg-mute); font-size: 13px; margin: 4px 0; }
+.learn-chat-msg {
+  max-width: 88%; padding: 8px 12px; border-radius: 10px;
+  font-size: 14px; line-height: 1.5; overflow-wrap: anywhere;
+}
+.learn-chat-msg.me {
+  align-self: flex-end; background: var(--accent-soft); color: var(--fg);
+  white-space: pre-wrap;
+}
+.learn-chat-msg.guru {
+  align-self: flex-start; background: var(--bg-sunk);
+  border: 1px solid var(--line-soft);
+}
+.learn-chat-msg.guru p { margin: 0 0 8px; }
+.learn-chat-msg.guru p:last-child { margin-bottom: 0; }
+.learn-chat-msg.guru ul, .learn-chat-msg.guru ol { margin: 4px 0; padding-left: 18px; }
+.learn-chat-msg.guru pre { overflow-x: auto; font-size: 12px; }
+.learn-chat-msg.guru table { display: block; overflow-x: auto; }
+.learn-chat-thinking { color: var(--fg-mute); font-family: var(--mono); font-size: 12px; }
+.learn-chat-err { color: var(--warn); font-family: var(--mono); font-size: 12px; }
+.learn-chat-input-row {
+  display: flex; gap: 8px; align-items: flex-end;
+  padding: 10px 12px; border-top: 1px solid var(--line-soft);
+}
+.learn-chat-input {
+  flex: 1; resize: none; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+  font: inherit; font-size: 14px;
+}
+.learn-chat-input:focus { outline: none; border-color: var(--accent); }
+@media (max-width: 900px) {
+  .learn-chat-fab {
+    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+  }
+  .learn-chat-panel {
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    max-height: min(560px, calc(100dvh - 150px));
+  }
+}
+
+@media (max-width: 640px) {
+  .learn-chat-panel { right: 8px; left: 8px; width: auto; }
+  .learn-chat-fab { right: 16px; }
+}
+
+
+/* ───── Learning: goal detail ───── */
+.learn-goal-link {
+  border: none; background: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--fg); text-align: left;
+}
+.learn-goal-link:hover { color: var(--accent); text-decoration: underline; }
+.learn-lesson-list { display: flex; flex-direction: column; gap: 6px; }
+.learn-lesson-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px;
+  background: var(--bg-card); cursor: pointer; font: inherit; color: var(--fg);
+  text-align: left;
+}
+.learn-lesson-row:hover { border-color: var(--accent); }
+.learn-lesson-day {
+  font-family: var(--mono); font-size: 11px; color: var(--fg-mute);
+  flex: 0 0 auto; min-width: 44px;
+}
+.learn-lesson-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.learn-lesson-date { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); flex: 0 0 auto; }
+.learn-syllabus { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.learn-syllabus-item {
+  padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px;
+  background: var(--bg-card);
+}
+.learn-syllabus-item.mastered { opacity: 0.75; }
+.learn-syllabus-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.learn-syllabus-title { font-weight: 600; }
+.learn-syllabus-def { color: var(--fg-mute); font-size: 13px; margin-top: 4px; }
+.learn-recall-dots { display: inline-flex; gap: 3px; align-items: center; }
+.learn-recall-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--line); display: inline-block;
+}
+.learn-recall-dot.on { background: var(--accent); }
+.learn-status-chip.upcoming { color: var(--fg-faint); border-color: var(--line-soft); }
+.learn-status-chip.learning { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+
+/* ───── Learning: figures, memory hooks, visualize, chat suggestions ───── */
+.learn-figure {
+  margin: 18px 0; border: 1px solid var(--line); border-radius: var(--rad-lg);
+  overflow: hidden; background: var(--bg-card);
+}
+.learn-figure img { display: block; width: 100%; height: auto; }
+.learn-figure figcaption {
+  padding: 8px 14px; font-size: 12px; color: var(--fg-mute);
+  font-family: var(--mono); border-top: 1px solid var(--line-soft);
+}
+.learn-mnemonic {
+  border: 1px dashed var(--accent); border-radius: var(--rad-lg);
+  background: var(--accent-soft); padding: 12px 16px; margin: 16px 0;
+}
+.learn-mnemonic-label {
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--accent); margin-bottom: 4px;
+}
+.learn-mnemonic-heading { font-family: var(--serif); font-size: 16px; margin-bottom: 6px; }
+/* the generic .art-body .sec-body bottom margin would lopside the card */
+.learn-mnemonic .sec-body { margin-bottom: 0; }
+.learn-mnemonic .sec-body p:last-child { margin-bottom: 0; }
+.learn-visualize-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+.learn-visualize-note { font-family: var(--mono); font-size: 12px; color: var(--fg-mute); }
+.learn-chat-suggest { display: flex; flex-wrap: wrap; gap: 6px; }

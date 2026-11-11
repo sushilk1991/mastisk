@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, useCallback, useEffect, useState } from 'reac
 import { api } from '../api';
 import { formatApiDateTime } from '../date';
 import type { TweetThread, View } from '../types';
+import '../styles/views/TweetThreadsView.css';
 
 interface Props {
   onNavigate: (view: View, id?: string) => void;

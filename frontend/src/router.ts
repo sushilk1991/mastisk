@@ -1,5 +1,6 @@
-import { startTransition, useCallback, useEffect, useState } from 'react';
+import { startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { View } from './types';
+import { viewReady } from './views';
 
 export interface Route {
   view: View;
@@ -223,14 +224,94 @@ export function routeToPath(view: View, arg?: string | null): string {
   return PATH_FOR_VIEW[view] ?? '/';
 }
 
+const SETTLE_CAP_MS = 220;
+const SETTLE_QUIET_MS = 48;
+
+const wait = (ms: number) => new Promise<void>((resolve) => { window.setTimeout(resolve, ms); });
+const mainEl = () => document.querySelector<HTMLElement>('main.main');
+
+/** Cross-fade between views only where the browser supports it, the tab is
+ *  visible, and the reader has not asked for reduced motion. */
+function canCrossFade(): boolean {
+  return typeof document.startViewTransition === 'function'
+    && document.visibilityState === 'visible'
+    && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Resolves when the main region has stopped changing for a moment. Views
+ *  fetch their data after mounting; against the local daemon that lands within
+ *  a few tens of milliseconds, and waiting for it lets the cross-fade end on
+ *  content instead of a loading line. The caller caps the wait. */
+function settled(): Promise<void> {
+  const main = mainEl();
+  if (!main) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let timer = window.setTimeout(finish, SETTLE_QUIET_MS);
+    const observer = new MutationObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(finish, SETTLE_QUIET_MS);
+    });
+    function finish() { observer.disconnect(); resolve(); }
+    observer.observe(main, { childList: true, subtree: true });
+    window.setTimeout(finish, SETTLE_CAP_MS);
+  });
+}
+
+/** After a navigation, keyboard and screen-reader focus moves to the new
+ *  view. A field the reader is typing in (the ask drawer, a dialog) keeps it. */
+function focusMain(): void {
+  const active = document.activeElement as HTMLElement | null;
+  if (active?.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return;
+  mainEl()?.focus({ preventScroll: true });
+}
+
 export function useRoute() {
   const [route, setRouteNow] = useState<Route>(() => parseRoute(window.location.pathname));
 
-  // Views are lazy chunks. Committing a route change as a transition keeps the
-  // current view on screen until the next one is ready, instead of flashing the
-  // Suspense fallback on every navigation.
-  const setRoute = useCallback((next: Route) => {
-    startTransition(() => setRouteNow(next));
+  // Views are lazy chunks. Committing a route change as a React transition
+  // keeps the current view on screen until the next one is ready, instead of
+  // flashing the Suspense fallback on every navigation.
+  //
+  // `onCommit` runs in the layout phase of the render that puts the new route
+  // on screen, so the scroll reset and the view-transition snapshot both see
+  // the new view.
+  const onCommit = useRef<(() => void) | null>(null);
+  const navSeq = useRef(0);
+  useLayoutEffect(() => {
+    const done = onCommit.current;
+    onCommit.current = null;
+    done?.();
+  }, [route]);
+
+  const setRoute = useCallback((next: Route, fresh = false) => {
+    const seq = ++navSeq.current;
+    const commit = () => new Promise<void>((resolve) => {
+      // A navigation that overtakes this one must not leave it waiting.
+      onCommit.current?.();
+      onCommit.current = () => {
+        // A new page starts at the top; back/forward keeps where the browser was.
+        if (fresh) mainEl()?.scrollTo(0, 0);
+        resolve();
+      };
+      startTransition(() => setRouteNow(next));
+    });
+    const landed = () => { if (seq === navSeq.current) focusMain(); };
+
+    if (!canCrossFade()) {
+      void commit().then(landed);
+      return;
+    }
+    // Wait for the chunk before freezing the page for the snapshot, so a slow
+    // download never holds a frozen frame.
+    void viewReady(next.view).then(() => {
+      if (seq !== navSeq.current) return;
+      const transition = document.startViewTransition(() =>
+        // The new snapshot is taken when this resolves: after the route is on
+        // screen and its first data has rendered, or after SETTLE_CAP_MS.
+        Promise.race([commit().then(settled), wait(SETTLE_CAP_MS)]),
+      );
+      transition.finished.catch(() => {}).then(landed);
+    });
   }, []);
 
   useEffect(() => {
@@ -263,7 +344,7 @@ export function useRoute() {
     if (path !== window.location.pathname + window.location.search) {
       window.history.pushState(null, '', path);
     }
-    setRoute(buildRoute(view, arg));
+    setRoute(buildRoute(view, arg), true);
   }, [setRoute]);
 
   const replace = useCallback((view: View, arg?: string) => {

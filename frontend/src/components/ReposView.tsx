@@ -30,7 +30,7 @@ export function ReposView({ onNavigate, onAddRepo, reloadKey }: Props) {
         <h1 className="view-title" style={{ margin: 0 }}>
           {rows.length} repo{rows.length === 1 ? '' : 's'}
         </h1>
-        {!isEmpty && <button onClick={onAddRepo}>+ add repo</button>}
+        {!isEmpty && <button className="chip" onClick={onAddRepo}>+ add repo</button>}
       </div>
 
       {isEmpty && (

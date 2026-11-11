@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from tests.frontend_css import frontend_css
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -624,7 +626,7 @@ def test_disabled_capture_router_still_records_routine_command(db, vault_tmp, da
 def test_frontend_agent_studio_static_contract() -> None:
     source = (ROOT / "frontend/src/components/AgentsView.tsx").read_text(encoding="utf-8")
     router = (ROOT / "frontend/src/router.ts").read_text(encoding="utf-8")
-    css = (ROOT / "frontend/src/styles/mastisk.css").read_text(encoding="utf-8")
+    css = frontend_css()
 
     assert "api.agentDetail" in source
     assert "Customize" in source

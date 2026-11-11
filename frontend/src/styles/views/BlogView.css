@@ -1,0 +1,133 @@
+/* Styles used only by BlogView.tsx; loaded with that chunk. */
+/* ---------- Blog post page: top toolbar + bottom action bar ---------- */
+.bp-title-row {
+  display: flex; align-items: flex-start; gap: 16px;
+  margin-bottom: 4px;
+}
+.bp-title-row .view-title { flex: 1; margin: 0; }
+.bp-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+  /* nudge so the buttons align with the title's optical center */
+  margin-top: 8px;
+}
+
+/* Button system (scoped to the blog page) */
+.bp-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px;
+  font-family: var(--sans);
+  font-size: 13px; font-weight: 500;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease,
+              color 120ms ease, box-shadow 120ms ease, transform 80ms ease;
+}
+.bp-btn:hover:not(:disabled) {
+  background: var(--bg-sunk);
+  border-color: var(--fg-faint);
+}
+.bp-btn:active:not(:disabled) { transform: translateY(1px); }
+.bp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.bp-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.bp-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--fg-inv);
+}
+.bp-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.bp-btn-ghost {
+  background: transparent;
+  color: var(--fg-mute);
+  border-color: var(--line-soft);
+}
+.bp-btn-ghost:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-elev);
+  border-color: var(--line);
+}
+
+.bp-btn-danger {
+  color: var(--danger, #c53030);
+  background: transparent;
+  border-color: var(--line);
+}
+.bp-btn-danger:hover:not(:disabled) {
+  background: rgba(197, 48, 48, 0.08);
+  border-color: var(--danger, #c53030);
+}
+
+.bp-btn .caret {
+  font-size: 10px; opacity: 0.65; margin-left: 2px;
+}
+
+/* Bottom action bar */
+.bp-actions {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 40px; padding-top: 20px;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.bp-actions .bp-spacer { flex: 1; }
+
+/* Copy dropdown */
+.bp-copy-wrap { position: relative; }
+.bp-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 280px;
+  padding: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--rad);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.14),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+  z-index: 50;
+  /* tiny entry animation */
+  animation: bp-menu-in 120ms ease-out;
+}
+.bp-menu-item {
+  display: flex; flex-direction: column; gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.bp-menu-item:hover { background: var(--bg-elev); }
+.bp-menu-item .label { font-size: 13px; font-weight: 500; color: var(--fg); }
+.bp-menu-item .hint  { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); }
+.bp-menu-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 6px;
+}
+
+/* Small utility: a chip that ages out the "copied" feedback */
+.bp-copied-flash {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--accent);
+}
+@media (max-width: 720px) {
+  .bp-title-row { flex-direction: column; gap: 8px; }
+  .bp-toolbar { margin-top: 0; align-self: flex-start; }
+  .bp-menu { right: auto; left: 0; min-width: 240px; }
+}

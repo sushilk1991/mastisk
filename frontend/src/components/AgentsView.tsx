@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../api';
 import type { AgentDetail, AgentInfo, AgentProfileUpdate, AgentPromptSlot, AgentSkill, FeedTick, View } from '../types';
 import { CodeMirrorMarkdown } from './MarkdownEditor';
+import '../styles/views/AgentsView.css';
 
 interface Props {
   agents: AgentInfo[];

@@ -2,6 +2,7 @@ import type React from 'react';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { Job, View } from '../types';
+import '../styles/views/QueueView.css';
 
 interface Props {
   onNavigate?: (view: View, id?: string) => void;

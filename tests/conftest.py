@@ -23,6 +23,20 @@ def _hermetic_intelligence(monkeypatch: pytest.MonkeyPatch) -> None:
     intelligence.reset_breakers()
 
 
+@pytest.fixture(autouse=True)
+def _never_the_real_vault(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default every test to an empty throwaway vault.
+
+    Tests that ask only for ``data_tmp`` used to read ``_self/identity.md``
+    from the user's real iCloud vault, so they failed whenever iCloud refused
+    the read (EDEADLK). ``vault_tmp`` still overrides this for tests that need
+    to write vault files.
+    """
+    monkeypatch.setenv("MASTISK_VAULT", str(tmp_path_factory.mktemp("vault-default")))
+    from mastisk import paths
+    paths.vault_dir.cache_clear()
+
+
 @pytest.fixture
 def vault_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point MASTISK_VAULT at a tmp dir; clear the lru_cache so it takes effect."""

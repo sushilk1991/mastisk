@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { DigestAudit, DigestAuditCandidate, View } from '../types';
+import '../styles/views/DigestAuditView.css';
 
 interface Props {
   date?: string;

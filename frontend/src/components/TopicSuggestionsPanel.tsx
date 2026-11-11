@@ -109,6 +109,7 @@ function SuggestionCard({ suggestion, onDraft, onDismiss }: CardProps) {
       }}
     >
       <button
+        className="tap-area"
         type="button"
         onClick={onDismiss}
         aria-label="Dismiss suggestion"
@@ -163,6 +164,7 @@ function SuggestionCard({ suggestion, onDraft, onDismiss }: CardProps) {
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
         <button
+          className="tap"
           type="button"
           onClick={onDraft}
           style={{

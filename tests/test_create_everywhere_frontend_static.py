@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.frontend_css import frontend_css
+
 
 def _read(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
@@ -57,7 +59,7 @@ def test_personal_os_views_have_create_affordances_and_empty_states() -> None:
 
 
 def test_design_polish_primitives_are_static_guarded() -> None:
-    css = _read("frontend/src/styles/mastisk.css")
+    css = frontend_css()
     agents = _read("frontend/src/components/AgentsView.tsx")
 
     assert "transition: all" not in css

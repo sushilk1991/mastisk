@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type FormEvent } from 'react';
 import { api } from '../api';
 import type { Feed } from '../types';
+import '../styles/views/IngestView.css';
 
 interface Toast { text: string; tone: 'ok' | 'err' | 'info' }
 

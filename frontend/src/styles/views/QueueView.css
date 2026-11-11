@@ -1,0 +1,70 @@
+/* Styles used only by QueueView.tsx; loaded with that chunk. */
+.queue-list {
+  border: 1px solid var(--line);
+  border-radius: var(--rad);
+  overflow: hidden;
+  background: var(--bg-elev);
+}
+.queue-row.is-clickable:hover .queue-title-line { color: var(--accent); }
+.queue-row.s-running::before { background: var(--accent); }
+.queue-row.s-failed::before  { background: var(--danger); }
+.queue-row.s-queued::before  { background: var(--fg-faint); opacity: 0.4; }
+
+.queue-id { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); padding-top: 4px; letter-spacing: 0.02em; }
+.queue-title { min-width: 0; }
+.queue-title-line {
+  font-family: var(--serif); font-size: 15.5px; color: var(--fg); line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  word-break: break-word;
+  text-wrap: balance;
+}
+.queue-title-line.is-fallback { font-style: italic; color: var(--fg-mute); }
+.queue-meta {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--fg-faint);
+  margin-top: 6px; text-transform: lowercase; letter-spacing: 0.02em;
+}
+.queue-meta .queue-agent { color: var(--fg-mute); font-weight: 500; }
+.queue-meta .queue-sep { color: var(--line); }
+.queue-meta .queue-host { color: var(--fg-faint); }
+
+.queue-end {
+  display: flex; align-items: center; gap: 14px;
+  padding-top: 5px; white-space: nowrap;
+}
+.queue-status {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 11px;
+  color: var(--fg-mute);
+}
+.queue-status::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; flex-shrink: 0;
+}
+.queue-status.s-queued  { color: var(--fg-faint); }
+.queue-status.s-running { color: var(--accent); }
+.queue-status.s-running::before { animation: pulse 1.6s infinite; }
+.queue-status.s-done    { color: var(--kind-source); }
+.queue-status.s-failed  { color: var(--danger); }
+.queue-status .retry { color: var(--fg-faint); font-size: 10px; margin-left: 2px; }
+.queue-time { font-family: var(--mono); font-size: 10px; color: var(--fg-faint); }
+
+.queue-error {
+  grid-column: 2 / -1;
+  font-family: var(--mono); font-size: 10.5px; color: var(--danger);
+  padding: 8px 10px; border-radius: 4px;
+  background: rgba(197, 48, 48, 0.06);
+  overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  margin-top: 2px;
+}
+@media (max-width: 700px) {
+  .queue-end { grid-column: 2 / 3; padding-top: 0; }
+  .queue-error { grid-column: 2 / 3; }
+}
+
+.queue-id,
+.queue-time {
+  font-variant-numeric: tabular-nums;
+}

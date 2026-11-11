@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.frontend_css import frontend_css
+
 
 def _read(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
@@ -42,7 +44,7 @@ def test_mobile_navigation_moves_primary_actions_out_of_the_header() -> None:
     app = _read("frontend/src/App.tsx")
     nav = _read("frontend/src/components/MobileNav.tsx")
     article = _read("frontend/src/components/ArticleView.tsx")
-    css = _read("frontend/src/styles/mastisk.css")
+    css = frontend_css()
 
     assert "<MobileNav" in app
     for label in ("Today", "Search", "Chat", "Capture", "Menu"):

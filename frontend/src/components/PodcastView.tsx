@@ -8,6 +8,7 @@ import { MermaidBlock } from './MermaidBlock';
 import { SafeHtml } from './SafeHtml';
 import { summaryText } from '../summaryText';
 import { NoteCaptureModal, type CaptureContext } from './NoteCaptureModal';
+import '../styles/views/PodcastView.css';
 
 interface Props {
   articleId: string;

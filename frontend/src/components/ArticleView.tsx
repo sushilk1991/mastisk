@@ -8,6 +8,7 @@ import { MermaidBlock } from './MermaidBlock';
 import { SafeHtml } from './SafeHtml';
 import { unwrapEmphasis } from '../summaryText';
 import { htmlToText } from '../sanitize';
+import '../styles/views/ArticleView.css';
 
 interface Props {
   article: Article;
