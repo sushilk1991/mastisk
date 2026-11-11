@@ -1,9 +1,14 @@
-"""Runtime configuration. Load order:
+"""Runtime configuration. Precedence for top-level keys, highest first:
 
-1. Environment variables (MASTISK_*, OLLAMA_*, CLAUDE_CMD)
-2. ~/Library/Application Support/Mastisk/config.toml
-3. .env (dev only)
+1. ~/Library/Application Support/Mastisk/config.toml
+2. Environment variables (MASTISK_*, OLLAMA_*, CLAUDE_CMD, ...)
+3. .env in the working directory (dev only)
 4. Defaults
+
+config.toml wins because its contents are passed to ``Settings`` as init
+kwargs, which pydantic-settings ranks above the environment. Nested
+``[section]`` tables are plain models: they come from config.toml or defaults
+and never read the environment.
 """
 from __future__ import annotations
 
@@ -16,13 +21,26 @@ from typing import Any, Literal
 
 import tomli_w
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from mastisk.paths import config_path
 
 
-class AgentBudget(BaseSettings):
+class _Section(BaseModel):
+    """Base for the nested ``[section]`` tables of config.toml.
+
+    Deliberately not a ``BaseSettings``: a settings class reads the process
+    environment for its own field names, so a stray ``PAT`` or ``ENABLED``
+    variable would override a section default. Only the top-level ``Settings``
+    reads the environment. The config keeps the two ``BaseSettings`` defaults
+    the sections relied on: unknown keys are rejected and defaults are validated.
+    """
+
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+
+
+class AgentBudget(_Section):
     scout: int = 500
     listener: int = 20
     compiler: int = 100
@@ -30,7 +48,7 @@ class AgentBudget(BaseSettings):
     synthesizer: int = 10
 
 
-class NotesSettings(BaseSettings):
+class NotesSettings(_Section):
     """Config for the notes subsystem. See docs/superpowers/specs/2026-04-21-notes-subsystem-design.md §8."""
     classify_stable_mtime_seconds: int = 30
     auto_escalate_cap: int = 20
@@ -53,14 +71,14 @@ class NotesSettings(BaseSettings):
     notetaker_concurrency: int = 4
 
 
-class CaptureSettings(BaseSettings):
+class CaptureSettings(_Section):
     """Config for the token-authenticated capture ingress."""
     bearer_token: str | None = None
     default_timezone: str = "America/Los_Angeles"
     router_timeout_s: int = 25
 
 
-class IntelligenceSettings(BaseSettings):
+class IntelligenceSettings(_Section):
     """Shared LLM fallback order for intelligence-heavy agents.
 
     "anthropic" is the direct Anthropic Messages API (fast, no CLI subprocess).
@@ -119,7 +137,7 @@ class IntelligenceSettings(BaseSettings):
         return order
 
 
-class CompilerSettings(BaseSettings):
+class CompilerSettings(_Section):
     """Config for the Compiler agent (raw source → wiki article)."""
     # How much of the raw source reaches the model. The old hardcoded 8k cut
     # threw away ~85% of a typical Defuddle extraction; cloud-tier models
@@ -138,7 +156,7 @@ class CompilerSettings(BaseSettings):
     stub_gate_min_sources: int = 2
 
 
-class GardenerSettings(BaseSettings):
+class GardenerSettings(_Section):
     """Config for the Gardener (consolidation + reflection) agent."""
     # Weave pass: stub pages become real articles once this many articles
     # reference them; per-page cooldown + daily cap bound LLM spend.
@@ -155,7 +173,7 @@ class GardenerSettings(BaseSettings):
     distill_max_rules: int = 4
 
 
-class AutomationsSettings(BaseSettings):
+class AutomationsSettings(_Section):
     """Prose-defined background tasks (vault/_automations)."""
     enabled: bool = True
     # Global cap across all automations — a misconfigured cron can't burn the
@@ -167,7 +185,7 @@ class AutomationsSettings(BaseSettings):
     retry_backoff_minutes: int = 5
 
 
-class ServerSettings(BaseSettings):
+class ServerSettings(_Section):
     """HTTP server trust-boundary config."""
     allowed_origins: list[str] = Field(default_factory=list)
     local_hostnames: list[str] = Field(
@@ -175,7 +193,7 @@ class ServerSettings(BaseSettings):
     )
 
 
-class LearningSettings(BaseSettings):
+class LearningSettings(_Section):
     """Guru daily-tutor config."""
     # Local time (HH:MM) after which the day's lesson generates on the next
     # agent tick. The reminder fires as soon as the lesson is ready.
@@ -200,7 +218,7 @@ class LearningSettings(BaseSettings):
     image_timeout_s: int = 240
 
 
-class RemindersSettings(BaseSettings):
+class RemindersSettings(_Section):
     """Config for reminder defaults and reminder engine cadence."""
     default_lead_minutes: int = 15
     tick_seconds: int = 60
@@ -210,7 +228,7 @@ class RemindersSettings(BaseSettings):
     daily_summary_time: str = "07:30"
 
 
-class NotifySettings(BaseSettings):
+class NotifySettings(_Section):
     """Push notification backend config."""
     backend: str = "none"
     pushover_token: str | None = None
@@ -219,24 +237,24 @@ class NotifySettings(BaseSettings):
     ntfy_server: str = "https://ntfy.sh"
 
 
-class AttachmentsSettings(BaseSettings):
+class AttachmentsSettings(_Section):
     """Config for vault attachment uploads."""
     max_mb: int = 25
 
 
-class DomainsSettings(BaseSettings):
+class DomainsSettings(_Section):
     """User-defined top-level life domains seeded from config.toml."""
     names: list[str] = Field(default_factory=list)
 
 
-class DashboardSettings(BaseSettings):
+class DashboardSettings(_Section):
     """Dashboard intelligence defaults for Phase 8 derived scans."""
     slipping_project_days: int = 14
     slipping_task_days: int = 7
     triage_reminder_days: int = 3
 
 
-class CalendarSettings(BaseSettings):
+class CalendarSettings(_Section):
     """Read-only Google Calendar cache config."""
     client_id: str = ""
     client_secret: str = ""
@@ -249,7 +267,7 @@ class CalendarSettings(BaseSettings):
     prep_lead_hours: int = 6
 
 
-class RoundtableSettings(BaseSettings):
+class RoundtableSettings(_Section):
     """Config for the multi-LLM roundtable subsystem.
     See docs/superpowers/specs/2026-04-22-multi-llm-roundtable-design.md §7."""
     backends: list[str] = Field(default_factory=lambda: ["claude", "codex", "gemini", "ollama"])
@@ -265,7 +283,7 @@ class RoundtableSettings(BaseSettings):
     context_max_chars: int = 4000
 
 
-class GithubSettings(BaseSettings):
+class GithubSettings(_Section):
     """Config for the GitHub Context Agent subsystem.
     See docs/superpowers/specs/2026-04-22-github-context-agent-design.md §7."""
     pat: str = ""
@@ -276,13 +294,14 @@ class GithubSettings(BaseSettings):
     ideate_model: str = "claude-sonnet-4-6"
 
 
-class BlogSettings(BaseSettings):
+class BlogSettings(_Section):
     """Config for the blog-writer subsystem.
     See docs/superpowers/specs/2026-04-22-blog-writer-design.md §12.
 
-    No ``blog_model`` key: ``claude_bridge.run_claude()`` doesn't take a
-    model arg — it uses whatever the user's ``claude -p`` default is. The
-    Ollama fallback (and the theme-rerank pass) both use ``ollama_model``.
+    No ``blog_model`` key: the Claude tier runs on whatever the user's
+    ``claude -p`` default is (``claude_bridge.run_claude()`` accepts a
+    ``model`` override, but no blog setting feeds it). The Ollama fallback
+    (and the theme-rerank pass) both use ``ollama_model``.
 
     ``min_relevance_score`` is the cutoff applied to LLM-reranked sources
     after the personal-evidence boost; entries below it are dropped before
@@ -340,7 +359,7 @@ class BlogSettings(BaseSettings):
     opinion_gap_miner_max_pairs: int = 6
 
 
-class TweetSettings(BaseSettings):
+class TweetSettings(_Section):
     """Config for short-form thread suggestions.
 
     The local wiki supplies the point of view. Web/browser context supplies
@@ -411,7 +430,8 @@ class Settings(BaseSettings):
     summarize_model_heavy: str = "kimi-k2.5:cloud"  # cloud-proxied via signed-in local ollama
     summarize_model_cheap: str = "qwen3.5:4b"    # local, fast
 
-    # Agent budgets (daily caps — enforced by Agent.run_once)
+    # Agent budgets. Advisory only: nothing enforces these caps. They scale the
+    # per-agent load bar in routes/feed_route.py and are echoed by the settings API.
     budget: AgentBudget = Field(default_factory=AgentBudget)
 
     notes: NotesSettings = Field(default_factory=NotesSettings)
@@ -478,7 +498,8 @@ def get_settings() -> Settings:
     # Dev-mode: load .env from cwd if present
     load_dotenv()
     toml_data = _load_toml_if_present()
-    # Pydantic reads env + defaults. Merge toml on top (toml wins over defaults, env wins over toml).
+    # TOML is passed as init kwargs, which pydantic-settings ranks above the
+    # environment: config.toml wins over env vars, env vars win over defaults.
     return Settings(**toml_data)
 
 
@@ -490,9 +511,10 @@ def reload_settings() -> Settings:
 def update_toml_key(section: str, key: str, value: Any) -> None:
     """Surgically update one key in config.toml. Creates the file if missing.
 
-    Only mutates the single (section, key) pair. Any other keys in the file
-    are preserved verbatim. Caller is responsible for calling reload_settings()
-    after this returns.
+    Only mutates the single (section, key) pair. The values of all other keys
+    are preserved, but the file is re-serialised from parsed data, so comments
+    and original formatting are lost. Caller is responsible for calling
+    reload_settings() after this returns.
     """
     p = config_path()
     p.parent.mkdir(parents=True, exist_ok=True)

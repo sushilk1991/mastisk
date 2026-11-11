@@ -274,6 +274,81 @@ def test_notetaker_skips_unstable_file_on_first_tick(notetaker, vault_tmp):
     assert any("090000-unstable" in k for k in notetaker._stability_cache)
 
 
+def _inbox_note(db, name: str = "101500-flaky") -> tuple:
+    from mastisk.db.queries import insert_note
+    from mastisk.paths import notes_inbox_dir, vault_dir
+
+    p = notes_inbox_dir() / f"{name}.md"
+    p.write_text("a note whose classification keeps failing")
+    note_id = insert_note(
+        db, slug=name, path=str(p.relative_to(vault_dir())),
+        body=p.read_text(), source="pwa",
+        created_at=datetime(2026, 4, 21, 10, 15, 0),
+    )
+    return p, note_id
+
+
+def _classify_jobs(db, status: str) -> int:
+    return db.execute(
+        "SELECT COUNT(*) AS n FROM jobs WHERE agent='notetaker' AND kind='classify' AND status=?",
+        (status,),
+    ).fetchone()["n"]
+
+
+def test_inbox_scan_does_not_duplicate_a_queued_classify_job(notetaker, db, vault_tmp):
+    p, _ = _inbox_note(db)
+    asyncio.run(notetaker._enqueue_if_needed(p, p.stat()))
+    asyncio.run(notetaker._enqueue_if_needed(p, p.stat()))
+    assert _classify_jobs(db, "queued") == 1
+
+
+def test_inbox_scan_backs_off_after_failed_classify_jobs(notetaker, db, vault_tmp):
+    """A stable inbox file whose classify job just failed is not re-enqueued
+    on the next tick; the wait grows with consecutive failures and is bounded."""
+    p, _ = _inbox_note(db)
+    asyncio.run(notetaker._enqueue_if_needed(p, p.stat()))
+    db.execute(
+        "UPDATE jobs SET status='failed', finished_at=CURRENT_TIMESTAMP, error='boom'"
+    )
+
+    asyncio.run(notetaker._enqueue_if_needed(p, p.stat()))
+    assert _classify_jobs(db, "queued") == 0
+
+    # One failure 90 s ago: past the first 60 s step.
+    db.execute("UPDATE jobs SET finished_at=datetime('now', '-90 seconds')")
+    asyncio.run(notetaker._enqueue_if_needed(p, p.stat()))
+    assert _classify_jobs(db, "queued") == 1
+
+    # Three failures, the last 90 s ago: the step is now 240 s.
+    db.execute(
+        "UPDATE jobs SET status='failed', finished_at=datetime('now', '-90 seconds')"
+    )
+    db.execute(
+        """INSERT INTO jobs (agent, kind, payload_json, status, finished_at)
+           SELECT agent, kind, payload_json, 'failed', datetime('now', '-90 seconds')
+           FROM jobs LIMIT 1"""
+    )
+    asyncio.run(notetaker._enqueue_if_needed(p, p.stat()))
+    assert _classify_jobs(db, "queued") == 0
+
+    # Bounded: however many failures, an hour is always enough.
+    db.execute("UPDATE jobs SET finished_at=datetime('now', '-61 minutes')")
+    asyncio.run(notetaker._enqueue_if_needed(p, p.stat()))
+    assert _classify_jobs(db, "queued") == 1
+
+
+def test_reclassify_scan_shares_the_failure_backoff(notetaker, db, vault_tmp):
+    """Unclassified inbox rows are also seen by the reclassify scan, so it
+    must honour the same backoff or the retry storm just moves there."""
+    p, _ = _inbox_note(db)
+    asyncio.run(notetaker._enqueue_if_needed(p, p.stat()))
+    db.execute(
+        "UPDATE jobs SET status='failed', finished_at=CURRENT_TIMESTAMP, error='boom'"
+    )
+    assert notetaker._enqueue_reclassify_ready() == 0
+    assert _classify_jobs(db, "queued") == 0
+
+
 def test_notetaker_skips_icloud_placeholder(notetaker, vault_tmp):
     """A `.icloud` placeholder is ignored entirely (not even cached)."""
     from mastisk.paths import notes_inbox_dir

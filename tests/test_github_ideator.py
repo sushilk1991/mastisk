@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, patch
-
-import pytest
+from unittest.mock import patch
 
 
 def _seed_repo_with_context_and_snapshot(db, slug="a/b"):
@@ -28,8 +26,8 @@ _FAKE_IDEAS_JSON = json.dumps([
 
 
 def test_ideator_writes_ideas_as_notes(db, vault_tmp):
-    from mastisk.agents.github_ideator import GithubIdeator
     from mastisk.agents.base import enqueue
+    from mastisk.agents.github_ideator import GithubIdeator
     _seed_repo_with_context_and_snapshot(db)
     enqueue("github_ideator", "ideate", {"repo_slug": "a/b"})
 
@@ -62,8 +60,8 @@ def test_ideator_writes_ideas_as_notes(db, vault_tmp):
 
 
 def test_ideator_falls_back_to_ollama_on_claude_and_codex_failure(db, vault_tmp):
-    from mastisk.agents.github_ideator import GithubIdeator
     from mastisk.agents.base import enqueue
+    from mastisk.agents.github_ideator import GithubIdeator
     _seed_repo_with_context_and_snapshot(db)
     enqueue("github_ideator", "ideate", {"repo_slug": "a/b"})
 
@@ -85,8 +83,8 @@ def test_ideator_falls_back_to_ollama_on_claude_and_codex_failure(db, vault_tmp)
 def test_ideator_uses_codex_when_claude_fails(db, vault_tmp):
     """Claude raises; Codex serves the ideas. ``model`` column says 'codex'.
     Pins the new middle tier between Claude and Ollama."""
-    from mastisk.agents.github_ideator import GithubIdeator
     from mastisk.agents.base import enqueue
+    from mastisk.agents.github_ideator import GithubIdeator
     _seed_repo_with_context_and_snapshot(db)
     enqueue("github_ideator", "ideate", {"repo_slug": "a/b"})
 
@@ -108,8 +106,8 @@ def test_ideator_uses_codex_when_claude_fails(db, vault_tmp):
 
 
 def test_ideator_records_error_when_all_models_fail(db, vault_tmp):
-    from mastisk.agents.github_ideator import GithubIdeator
     from mastisk.agents.base import enqueue
+    from mastisk.agents.github_ideator import GithubIdeator
     _seed_repo_with_context_and_snapshot(db)
     enqueue("github_ideator", "ideate", {"repo_slug": "a/b"})
 
@@ -134,8 +132,8 @@ def test_ideator_records_error_when_all_models_fail(db, vault_tmp):
 
 def test_ideator_skips_repo_without_context(db, vault_tmp):
     """A repo that's been added but not yet polled (no context_md) is skipped."""
-    from mastisk.agents.github_ideator import GithubIdeator
     from mastisk.agents.base import enqueue
+    from mastisk.agents.github_ideator import GithubIdeator
     db.execute("INSERT INTO repos (slug, owner, name, display_name) VALUES ('x/y', 'x', 'y', 'x/y')")
     # No snapshot. No context_md.
     enqueue("github_ideator", "ideate", {"repo_slug": "x/y"})

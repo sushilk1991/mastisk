@@ -5,6 +5,7 @@ import { api } from '../api';
 import { SynthesisFeedback } from './SynthesisFeedback';
 import { NoteCaptureModal, type CaptureContext } from './NoteCaptureModal';
 import { MermaidBlock } from './MermaidBlock';
+import { SafeHtml } from './SafeHtml';
 
 interface Props {
   article: Article;
@@ -240,7 +241,7 @@ export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
         </figure>
       )}
 
-      <p className="art-summary" dangerouslySetInnerHTML={{ __html: article.summary }}/>
+      <SafeHtml as="p" className="art-summary" html={article.summary}/>
 
       <div className="art-stats">
         <div className="art-stat"><div className="v">{article.sources}</div><div className="l">Sources</div></div>
@@ -256,7 +257,7 @@ export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
           if (s.kind === 'callout') return (
             <div key={i} className="callout">
               <h2>{s.h}</h2>
-              <div className="sec-body" dangerouslySetInnerHTML={{ __html: decorateFactDates(s.body) }}/>
+              <SafeHtml className="sec-body" html={decorateFactDates(s.body)}/>
             </div>
           );
           if (s.kind === 'diagram') return (
@@ -268,7 +269,7 @@ export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
           if (s.kind === 'open') return (
             <div key={i} className="open">
               <h2>{s.h}</h2>
-              <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body }}/>
+              <SafeHtml className="sec-body" html={s.body}/>
               <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
                 <button
                   type="button"
@@ -292,7 +293,7 @@ export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
           return (
             <div key={i}>
               <h2>{s.h}</h2>
-              <div className="sec-body" dangerouslySetInnerHTML={{ __html: decorateFactDates(s.body) }}/>
+              <SafeHtml className="sec-body" html={decorateFactDates(s.body)}/>
             </div>
           );
         })}

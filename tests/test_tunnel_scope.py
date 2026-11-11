@@ -145,3 +145,24 @@ def test_direct_tailnet_client_hostname_keeps_tailnet_pwa_flow_without_config(
 
     assert response.status_code == 201, response.text
     assert response.json()["type"] == "note"
+
+
+def test_spa_catch_all_cannot_read_outside_the_bundle(vault_tmp, data_tmp, db, tmp_path, monkeypatch):
+    """`GET /../config.toml` (sent un-normalised) used to return the file."""
+    from mastisk import app as app_module
+
+    bundle = tmp_path / "bundle" / "pwa"
+    bundle.mkdir(parents=True)
+    (bundle / "index.html").write_text("<html>shell</html>")
+    (bundle / "assets").mkdir()
+    (bundle / "manifest.json").write_text("{}")
+    (tmp_path / "bundle" / "secret.toml").write_text("pat = 'ghp_secret'")
+    monkeypatch.setattr(app_module, "pwa_dir", lambda: bundle)
+
+    client = _client(vault_tmp, data_tmp, db)
+
+    assert client.get("/manifest.json").text == "{}"
+    assert client.get("/a/some-article").text == "<html>shell</html>"
+    for path in ("/../secret.toml", "/%2e%2e/secret.toml", "/assets/../../secret.toml"):
+        response = client.get(path)
+        assert "ghp_secret" not in response.text, path

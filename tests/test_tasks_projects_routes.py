@@ -19,8 +19,8 @@ def test_domains_create_list_and_explicit_config_seed(client, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[domains]\nnames = ["Work", "Home"]\n', encoding="utf-8")
 
-    from mastisk.settings import reload_settings
     from mastisk.routes.domains import sync_config_domains
+    from mastisk.settings import reload_settings
 
     reload_settings()
     sync_config_domains()
@@ -101,7 +101,7 @@ def test_task_routes_create_filter_toggle_and_patch_file_first(client, vault_tmp
     assert toggled.status_code == 200, toggled.text
     assert toggled.json()["status"] == "done"
     host_text = (vault_tmp / "projects" / "mastisk.md").read_text(encoding="utf-8")
-    assert f"- [x] Ship parser" in host_text
+    assert "- [x] Ship parser" in host_text
 
     patched = client.patch(
         f"/api/tasks/{task['uid']}",

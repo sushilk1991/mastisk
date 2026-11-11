@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
+import importlib.util
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,10 +34,11 @@ class TranscriptResult:
 
 
 def is_available() -> bool:
+    # find_spec, not import_module: callers include async upload handlers, and
+    # a real mlx_whisper import is slow. _run_mlx does the actual import.
     try:
-        importlib.import_module("mlx_whisper")
-        return True
-    except ImportError:
+        return importlib.util.find_spec("mlx_whisper") is not None
+    except (ImportError, ValueError):
         return False
 
 

@@ -5,7 +5,7 @@ import re
 import threading
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -23,9 +23,6 @@ from mastisk.routines.streaks import (
     longest_streak,
 )
 from mastisk.settings import get_settings
-
-TimeOfDay = Literal["morning", "afternoon", "evening", "anytime"]
-StreakType = Literal["ongoing", "fixed"]
 
 _VALID_TIMES = {"morning", "afternoon", "evening", "anytime"}
 _VALID_STREAKS = {"ongoing", "fixed"}
@@ -121,7 +118,7 @@ def parse_routine_file(path: Path) -> dict[str, Any]:
         "streak_type": streak_type,
         "target_days": _clean_int(meta.get("target_days")),
         "start_date": _clean_date(meta.get("start_date")),
-        "archived": bool(meta.get("archived", False)),
+        "archived": meta.get("archived") is True,
         "completions": _completion_dates_from_body(body),
         "body": body,
         "frontmatter": meta,
@@ -200,7 +197,7 @@ def _mutate_routine_completion(
     path = vault_dir() / routine["path"]
     with host_file_lock(path):
         meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
-        if meta.get("archived"):
+        if meta.get("archived") is True:
             raise RoutineArchivedError("routine is archived")
         all_dates = set(_completion_dates_from_body(body))
         completed = force if force is not None else target_date not in all_dates
@@ -367,7 +364,7 @@ def _routine_meta(**values: Any) -> dict[str, Any]:
 
 def _replace_completions_section(body: str, completions: list[str]) -> str:
     lines = body.splitlines()
-    section = ["## Completions", *[f"- {day}" for day in sorted(set(completions))]]
+    wanted = set(completions)
     for idx, line in enumerate(lines):
         if not _COMPLETIONS_HEADING_RE.match(line):
             continue
@@ -376,12 +373,44 @@ def _replace_completions_section(body: str, completions: list[str]) -> str:
             if _NEXT_HEADING_RE.match(lines[cursor]):
                 end = cursor
                 break
-        combined = [*lines[:idx], *section, *lines[end:]]
+        section = _merge_completion_lines(lines[idx + 1:end], wanted)
+        combined = [*lines[:idx + 1], *section, *lines[end:]]
         return "\n".join(combined).rstrip() + "\n"
     if lines and lines[-1].strip():
         lines.append("")
-    lines.extend(section)
+    lines.extend(["## Completions", *[f"- {day}" for day in sorted(wanted)]])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _merge_completion_lines(section: list[str], wanted: set[str]) -> list[str]:
+    """Reconcile the bare ``- YYYY-MM-DD`` lines with ``wanted``.
+
+    Anything else in the section (an annotated ``- 2026-11-01 ran 5k``, prose,
+    blank lines) is the user's and is kept where it is.
+    """
+    kept: list[str] = []
+    present: set[str] = set()
+    for line in section:
+        match = _COMPLETION_RE.match(line)
+        day = _clean_date(match.group("date")) if match else None
+        if day is None:
+            kept.append(line)
+        elif day in wanted and day not in present:
+            present.add(day)
+            kept.append(line)
+    for day in sorted(wanted - present):
+        # Before the first later bare date, else after the last content line,
+        # so an already-sorted list stays sorted.
+        insert_at = len(kept)
+        while insert_at > 0 and not kept[insert_at - 1].strip():
+            insert_at -= 1
+        for idx, line in enumerate(kept):
+            match = _COMPLETION_RE.match(line)
+            if match and match.group("date") > day:
+                insert_at = idx
+                break
+        kept.insert(insert_at, f"- {day}")
+    return kept
 
 
 def _completion_dates_from_body(body: str) -> list[str]:

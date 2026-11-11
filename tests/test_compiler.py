@@ -147,11 +147,62 @@ def test_normalize_article_data_drops_malformed_entries():
     assert data["aka"] == ["alias"]
 
 
+def test_normalize_article_data_coerces_bad_numbers():
+    from mastisk.agents.compiler import _normalize_article_data
+
+    data = {"sections": [], "confidence": None, "reading_minutes": "about five"}
+    _normalize_article_data(data)
+    assert data["confidence"] == 0.6
+    assert data["reading_minutes"] == 5
+
+    data = {"sections": [], "confidence": "1.7", "reading_minutes": 0}
+    _normalize_article_data(data)
+    assert data["confidence"] == 1.0
+    assert data["reading_minutes"] == 1
+
+
 def test_strip_html_preserves_paragraph_boundaries():
     from mastisk.agents.compiler import _strip_html
 
     md = _strip_html("<p>One ends here.</p><p>Two starts here.</p>")
     assert md == "One ends here.\n\nTwo starts here."
+
+
+def test_strip_html_unescapes_entities():
+    from mastisk.agents.compiler import _strip_html
+
+    assert _strip_html("<p>He called it &quot;a browser&quot; &amp; more.</p>") == 'He called it "a browser" & more.'
+
+
+def test_strip_html_preserves_list_items():
+    from mastisk.agents.compiler import _strip_html
+
+    md = _strip_html("<p>Intro.</p><ul><li>(2026-07-03) one</li><li>two</li></ul><p>After.</p>")
+    assert md == "Intro.\n\n- (2026-07-03) one\n- two\n\nAfter."
+
+
+def test_enrich_stub_prompt_limits_specifics_to_the_note(compiler, db, vault_tmp):
+    """Audit 2026-11-01 finding 1: enrichment invented incidents and figures."""
+    from unittest.mock import patch as _patch
+
+    from mastisk.agents.base import wiki_voice
+
+    _seed_stub(db, stub_id="note-000001-x", note_id=7)
+    db.commit()
+    prompts = []
+
+    async def fake_run(prompt, **kw):
+        prompts.append(prompt)
+        return {"text": "no json"}, "test"
+
+    job = {"id": 1, "kind": "enrich_stub",
+           "payload_json": json.dumps({"article_id": "note-000001-x", "note_id": 7})}
+    with _patch("mastisk.agents.compiler.intelligence.run_intelligence", new=fake_run):
+        asyncio.run(compiler._handle(job))
+
+    assert "The note above is your only source." in prompts[0]
+    assert wiki_voice() in prompts[0]
+    assert prompts[0].index("Compounding knowledge systems") < prompts[0].index("only source")
 
 
 def test_maybe_generate_hero_skips_when_article_already_has_hero(compiler, db, vault_tmp):

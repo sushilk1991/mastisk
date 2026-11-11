@@ -115,11 +115,15 @@ need_brew=0
 missing=""
 
 check() {
-  local name="$1" hint="$2"
+  local name="$1" hint="$2" optional="${3:-}"
   if ! command -v "$name" >/dev/null 2>&1; then
     # Also check common non-PATH locations (e.g. Tailscale.app)
     if [ "$name" = "tailscale" ] && [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; then
       echo "✓ tailscale /Applications/Tailscale.app (not on PATH, that's fine)"
+      return
+    fi
+    if [ -n "$optional" ]; then
+      echo "- $name not found  — $hint"
       return
     fi
     echo "✗ $name missing  — $hint"
@@ -134,8 +138,8 @@ check() {
 check uv        "curl -LsSf https://astral.sh/uv/install.sh | sh"
 check node      "brew install node"
 check claude    "https://claude.com/claude-code  (log in with: claude login)"
-check ollama    "brew install ollama  (optional — enables local models + cloud proxy)"
-check tailscale "brew install --cask tailscale  (optional — for phone access from anywhere)"
+check ollama    "brew install ollama  (optional — enables local models + cloud proxy)" optional
+check tailscale "brew install --cask tailscale  (optional — for phone access from anywhere)" optional
 
 if [ -n "$missing" ]; then
   echo ""

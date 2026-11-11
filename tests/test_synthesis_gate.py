@@ -242,3 +242,69 @@ def test_visible_after_approval(client, db, verdict):
     assert "approved-proof" in {r["id"] for r in q.search_all(db, "Evidence", limit=100)}
     sources = ask._wiki_sources(db, ask.AskRequest(question="Evidence", article_id="approved-proof"))
     assert "approved-proof" in {r["id"] for r in sources}
+
+
+@pytest.mark.asyncio
+async def test_skipped_cluster_is_recorded_without_a_critic_call(db, monkeypatch):
+    """The drafter may decline a loose cluster; that must not publish or loop."""
+    from mastisk.bridges import intelligence
+
+    bridge = AsyncMock(return_value=_model_reply(
+        {"skip": True, "skip_reason": "Only two of these overlap."}
+    ))
+    monkeypatch.setattr(intelligence, "run_intelligence", bridge)
+    members = ["source-one", "source-two", "source-three"]
+    for article_id in members:
+        _seed(db, article_id)
+
+    assert await Synthesizer()._synthesize_once(cluster_override=members) is None
+    assert bridge.await_count == 1
+    run = db.execute("SELECT * FROM synthesis_runs").fetchone()
+    assert run["draft_article_id"] is None
+    assert "Only two of these overlap." in run["eval_rationale"]
+    assert db.execute("SELECT COUNT(*) FROM articles WHERE kind='Synthesis'").fetchone()[0] == 0
+    # The membership is remembered, so the same cluster is not re-drafted next tick.
+    assert await Synthesizer()._synthesize_once(cluster_override=members) is None
+    assert bridge.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_critic_sees_the_drafters_excerpts(db, monkeypatch):
+    """Grounding can only be judged against what the drafter was given."""
+    from mastisk.bridges import intelligence
+
+    bridge = AsyncMock(side_effect=[_model_reply(_draft()), ({"text": "SCORE: 4"}, "test")])
+    monkeypatch.setattr(intelligence, "run_intelligence", bridge)
+    members = [{
+        "id": "source-one", "kind": "Source", "title": "Evidence one",
+        "summary": "Short summary.", "body_md": "The retry budget was 3 attempts.",
+        "updated_at": "2026-10-31 12:00:00",
+    }]
+
+    await Synthesizer()._draft_critic_loop(members, [], [])
+
+    draft_prompt, critic_prompt = (call.args[0] for call in bridge.await_args_list)
+    assert "The retry budget was 3 attempts." in draft_prompt
+    assert "The retry budget was 3 attempts." in critic_prompt
+
+
+@pytest.mark.asyncio
+async def test_draft_id_cannot_overwrite_a_source_article(db, vault_tmp, monkeypatch):
+    """Live data had synthesis runs whose draft id was one of their own sources."""
+    from mastisk.bridges import intelligence
+
+    members = ["source-one", "source-two", "source-three"]
+    for article_id in members:
+        _seed(db, article_id)
+    draft = _draft() | {"id": "source-one"}
+    bridge = AsyncMock(side_effect=[_model_reply(draft), ({"text": "SCORE: 4"}, "test")])
+    monkeypatch.setattr(intelligence, "run_intelligence", bridge)
+
+    article_id = await Synthesizer()._synthesize_once(cluster_override=members)
+
+    assert article_id == "source-one-synthesis"
+    assert q.get_article(db, "source-one")["kind"] == "Source"
+    assert q.get_article(db, article_id)["kind"] == "Synthesis"
+    related = {r["to_article"] for r in db.execute(
+        "SELECT to_article FROM links WHERE from_article = ?", (article_id,))}
+    assert article_id not in related

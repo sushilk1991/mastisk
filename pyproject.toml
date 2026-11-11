@@ -32,7 +32,6 @@ dependencies = [
   "sse-starlette>=2.1",
   "markdown-it-py>=3.0",
   "python-slugify>=8.0",
-  "aiosqlite>=0.20",
   "yt-dlp>=2025.1.15",
   "pyyaml>=6.0",
   "tomli-w>=1.0",

@@ -18,6 +18,7 @@ from mastisk.markdown_sections import append_to_section
 from mastisk.paths import content_dir, journal_dir, projects_dir, vault_dir
 from mastisk.projects.sync import get_project, parse_project_file
 from mastisk.routes.notes import atomic_write
+from mastisk.routines.sync import local_today
 from mastisk.settings import get_settings
 from mastisk.tasks.parser import (
     ensure_task_uids,
@@ -306,14 +307,16 @@ def list_tasks(
 
 
 def journal_host_for_today(ts: str | None = None) -> Path:
+    # Same local day as journal captures: the configured capture timezone, not
+    # the timestamp's own offset (a late-evening "...Z" capture is tomorrow in
+    # UTC) or the process timezone.
+    moment = None
     if ts:
         try:
-            day = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+            moment = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         except ValueError:
-            day = date.today()
-    else:
-        day = date.today()
-    return ensure_day(day)
+            moment = None
+    return ensure_day(local_today(moment))
 
 
 def _task_row(row: dict[str, Any]) -> dict[str, Any]:

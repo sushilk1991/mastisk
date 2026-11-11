@@ -5,6 +5,7 @@ Draws a rounded indigo square with a white "M" glyph.
 Run with: uv run --with pillow python scripts/generate-icons.py
 """
 import os
+
 from PIL import Image, ImageDraw, ImageFont
 
 INDIGO = (99, 102, 241, 255)   # #6366F1

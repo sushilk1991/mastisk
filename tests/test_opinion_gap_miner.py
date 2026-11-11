@@ -6,11 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 
 # ───── seed helpers ─────
 
@@ -25,7 +24,7 @@ def _seed_note(
     slug: str | None = None,
 ) -> int:
     """Insert a classified note in the given hour-window."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ts = (now - timedelta(hours=hours_ago)).isoformat(sep=" ", timespec="seconds")
     slug = slug or f"n-{abs(hash(body)) % 100000}"
     db.execute(
@@ -58,7 +57,7 @@ def _seed_article(
     hours_ago: int = 4,
 ) -> None:
     """Insert an article with explicit updated_at."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ts = (now - timedelta(hours=hours_ago)).isoformat(sep=" ", timespec="seconds")
     db.execute(
         """INSERT INTO articles
@@ -512,3 +511,26 @@ def test_only_source_kind_articles_pulled(agent, db):
     assert "art-source" in refs
     assert "art-synthesis" not in refs
     assert len(items) == 1
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        lambda body: f"```json\n{body}\n```",
+        lambda body: f"Here are the topics:\n\n{body}",
+    ],
+    ids=["fenced", "prefixed"],
+)
+def test_llm_suggest_tolerates_fenced_or_prefixed_json(agent, db, wrap):
+    body = json.dumps({"topics": [{"title": "t"}]})
+
+    async def fake_llm(prompt, **kwargs):
+        return {"text": wrap(body)}, "claude"
+
+    with patch(
+        "mastisk.agents.opinion_gap_miner.intelligence.run_intelligence",
+        new_callable=AsyncMock, side_effect=fake_llm,
+    ):
+        topics = asyncio.run(agent._llm_suggest([]))
+
+    assert topics == [{"title": "t"}]

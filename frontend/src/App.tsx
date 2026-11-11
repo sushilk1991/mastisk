@@ -158,7 +158,10 @@ export function App() {
   // Refresh sidebar counts + digest whenever agents emit a new tick, so the
   // "Concepts 1 → 2" counter updates as articles are compiled without a reload.
   // Also polls on a 30s floor as a safety net in case the SSE stream drops.
-  const tickKey = liveRows[0] ? `${(liveRows[0] as FeedTick).t}-${liveRows.length}` : '';
+  // Keyed on the newest row's id: the list is capped and `t` is a coarse
+  // relative age, so neither changes reliably when a new tick arrives.
+  const newestTick = liveRows[0];
+  const tickKey = newestTick ? String(newestTick.id ?? `${newestTick.t}-${liveRows.length}`) : '';
   useEffect(() => {
     if (!tickKey) return;
     void api.sidebar().then(setSidebar).catch(() => {});

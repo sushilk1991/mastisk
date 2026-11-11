@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -9,7 +9,7 @@ router = APIRouter(tags=["search"])
 
 
 @router.get("/search")
-def search(q_param: str = "", limit: int = 20):
+def search(q_param: str = "", limit: int = Query(20, ge=1, le=100)):
     """Unified keyword search across wiki, notes, blog, and personal-OS mirrors.
 
     Returns ``{results: [{kind, id, title, excerpt, link_target, ...}, ...]}``.
@@ -23,6 +23,6 @@ def search(q_param: str = "", limit: int = 20):
 
 
 @router.get("/search/{q_param}")
-def search_path(q_param: str, limit: int = 20):
+def search_path(q_param: str, limit: int = Query(20, ge=1, le=100)):
     with connect() as conn:
         return {"results": q.search_all(conn, q_param, limit=limit)}

@@ -321,6 +321,53 @@ def test_tweet_writer_sanitizes_browser_traceback_warning():
     )
 
 
+def test_tweet_writer_redacts_local_paths_in_warnings():
+    from mastisk.agents.tweet_writer import _sanitize_warning
+
+    warning = "harness failed (see /Users/sushil/Library/Logs/harness.log) while capturing"
+    assert _sanitize_warning(warning) == "harness failed (see [local path]) while capturing"
+    assert _sanitize_warning("could not read /Users/sushil/x.py now") == (
+        "could not read [local path] now"
+    )
+
+
+def test_tweet_candidate_count_matches_gathered_sources(db, vault_tmp, data_tmp):
+    from mastisk.agents.tweet_writer import TweetWriter, candidate_count
+
+    assert candidate_count(7) == 0
+    _seed_note(db, body="a note", summary="note summary")
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, body_md, summary)
+           VALUES ('a1', 'Concept', 'A1', 'a1', 'body', 'summary')"""
+    )
+    db.execute(
+        """INSERT INTO articles (id, kind, title, slug, body_md, summary, updated_at)
+           VALUES ('old', 'Concept', 'Old', 'old', 'body', 'summary',
+                   datetime('now', '-30 days'))"""
+    )
+    assert candidate_count(7) == len(TweetWriter()._gather_local_sources(7)) == 2
+
+
+def test_tweet_gather_loads_article_prefix_and_hydrates_only_kept(db, vault_tmp, data_tmp):
+    from mastisk.agents.tweet_writer import _RANK_BODY_PREFIX_CHARS, TweetWriter
+
+    long_body = "word " * 2000
+    for article_id in ("kept", "dropped"):
+        db.execute(
+            """INSERT INTO articles (id, kind, title, slug, body_md, summary)
+               VALUES (?, 'Concept', ?, ?, ?, 'the summary')""",
+            (article_id, article_id, article_id, long_body),
+        )
+
+    writer = TweetWriter()
+    by_ref = {s["ref"]: s for s in writer._gather_local_sources(7)}
+    assert by_ref["kept"]["body"] == long_body[:_RANK_BODY_PREFIX_CHARS]
+
+    writer._hydrate_article_bodies([by_ref["kept"]])
+    assert by_ref["kept"]["body"] == long_body
+    assert by_ref["dropped"]["body"] == long_body[:_RANK_BODY_PREFIX_CHARS]
+
+
 def test_tweet_writer_ignores_mastisk_tweet_page_as_browser_context():
     from mastisk.agents.tweet_writer import _is_mastisk_app_context
 

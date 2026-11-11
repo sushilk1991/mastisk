@@ -715,3 +715,88 @@ def test_scheduled_calendar_sync_noops_once_when_token_removed(
         scheduler._scheduled_calendar_sync()
 
     assert caplog.text.count("scheduler: calendar_sync skipped (no token)") == 1
+
+
+_TRANSIENT_NOW = datetime(2026, 6, 12, 8, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+
+def _connected_with_tokens(*, expires_at: int) -> None:
+    from mastisk.google_calendar import mark_calendar_connected, write_calendar_tokens
+
+    write_calendar_tokens(
+        {
+            "access_token": "access",
+            "refresh_token": "refresh-ok",
+            "expires_at": expires_at,
+            "token_type": "Bearer",
+            "scope": "https://www.googleapis.com/auth/calendar.readonly",
+        }
+    )
+    mark_calendar_connected("2026-06-11T08:00:00+05:30")
+
+
+def _refresh_unreachable(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("network is unreachable", request=request)
+
+
+def _refresh_5xx(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(503, json={"error": "backend_error"})
+
+
+@pytest.mark.parametrize(
+    ("handler", "expected"),
+    [(_refresh_unreachable, "network is unreachable"), (_refresh_5xx, "backend_error")],
+)
+def test_transient_token_refresh_failure_does_not_disconnect(
+    vault_tmp, data_tmp, db, handler, expected
+):
+    """Wi-Fi down or a Google 5xx during refresh is a sync failure, not a revoked grant."""
+    _write_calendar_config(data_tmp)
+    from mastisk.google_calendar import CalendarSyncError, calendar_status, sync_calendar
+
+    _connected_with_tokens(expires_at=0)
+    with pytest.raises(CalendarSyncError):
+        sync_calendar(
+            now=_TRANSIENT_NOW,
+            http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+
+    status = calendar_status()
+    assert status["status"] == "connected"
+    assert expected in status["last_error"]
+    assert status["last_error_at"] == _TRANSIENT_NOW.isoformat()
+
+
+def test_event_fetch_network_failure_is_recorded_as_sync_error(vault_tmp, data_tmp, db):
+    _write_calendar_config(data_tmp)
+    from mastisk.google_calendar import CalendarSyncError, calendar_status, sync_calendar
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "www.googleapis.com"
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    _connected_with_tokens(expires_at=4102444800)
+    with pytest.raises(CalendarSyncError):
+        sync_calendar(
+            now=_TRANSIENT_NOW,
+            http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+
+    status = calendar_status()
+    assert status["status"] == "connected"
+    assert "timed out" in status["last_error"]
+
+
+def test_code_exchange_network_failure_still_reports_auth_error(data_tmp, db):
+    """The connect flows only handle CalendarAuthError from the code exchange."""
+    from mastisk.google_calendar import CalendarAuthError, exchange_authorization_code
+
+    with pytest.raises(CalendarAuthError, match="network is unreachable"):
+        exchange_authorization_code(
+            client_id="id",
+            client_secret="secret",
+            code="code",
+            redirect_uri="http://127.0.0.1:1/cb",
+            code_verifier="verifier",
+            http_client=httpx.Client(transport=httpx.MockTransport(_refresh_unreachable)),
+        )

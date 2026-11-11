@@ -14,11 +14,12 @@ the direct-API "anthropic" tier is auto-prepended unless the user already
 listed it explicitly — one HTTPS call beats spawning a CLI subprocess on
 every request.
 
-Two reliability layers on top of the raw order:
+One reliability layer sits on top of the raw order:
 
-- **Availability filter**: tiers whose prerequisite is visibly missing
-  (no API key, CLI binary not on PATH) are skipped without burning a
-  timeout on them.
+- **No availability filter**: tiers whose prerequisite is missing (no API
+  key, CLI binary not on PATH) are still attempted; they fail in
+  milliseconds and the fallback loop moves on. The only availability check
+  is the one that decides whether to auto-prepend the anthropic tier.
 - **Circuit breaker**: a provider that fails ``breaker_failure_threshold``
   times in a row is skipped for ``breaker_cooldown_s`` seconds. Observed in
   the field: a hung codex tier taxing every single call with a 180s timeout

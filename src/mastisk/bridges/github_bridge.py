@@ -107,7 +107,7 @@ async def fetch_recent_commits(owner: str, name: str, per_page: int = 20) -> lis
     for c in resp.json():
         out.append({
             "sha": c.get("sha"),
-            "message": (c.get("commit", {}).get("message") or "").splitlines()[0][:200],
+            "message": next(iter((c.get("commit", {}).get("message") or "").splitlines()), "")[:200],
             "author": (c.get("commit", {}).get("author", {}) or {}).get("name"),
             "date": (c.get("commit", {}).get("author", {}) or {}).get("date"),
         })

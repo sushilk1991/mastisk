@@ -60,7 +60,7 @@ async def _git(cwd: Path, *args: str, timeout: float = 10.0) -> str:
         raise LocalGitError(f"git not on PATH: {e}") from e
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         raise LocalGitError(f"git {args[0]} timed out after {timeout}s")

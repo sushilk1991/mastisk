@@ -1,7 +1,7 @@
 """RSS feeds + source management."""
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel
 
 from mastisk.db.queries import connect
@@ -19,12 +19,9 @@ class FeedIn(BaseModel):
 def list_feeds():
     with connect() as conn:
         rows = [dict(r) for r in conn.execute(
-            """SELECT url, title, last_fetched, last_etag, last_modified, enabled, added_at,
-                      (SELECT COUNT(*) FROM sources
-                         WHERE sources.url LIKE '%' || rss_feeds.url || '%' OR 0=1) AS items_ever
+            """SELECT url, title, last_fetched, last_etag, last_modified, enabled, added_at
                FROM rss_feeds ORDER BY added_at DESC"""
         )]
-    # items_ever is a rough count; useful enough for dashboard
     for r in rows:
         r["enabled"] = bool(r["enabled"])
     return {"feeds": rows}
@@ -84,7 +81,7 @@ async def fetch_now(feed: FeedIn, background: BackgroundTasks):
 
 
 @router.get("/sources")
-def list_sources(limit: int = 50):
+def list_sources(limit: int = Query(50, ge=1, le=500)):
     with connect() as conn:
         rows = [dict(r) for r in conn.execute(
             """SELECT id, kind, url, title, published_at, fetched_at, author
@@ -111,7 +108,7 @@ def get_job(job_id: int):
 
 
 @router.get("/jobs")
-def list_jobs(limit: int = 50):
+def list_jobs(limit: int = Query(50, ge=1, le=500)):
     """Return jobs with payload-derived detail so the queue view can show what's
     actually being compiled/scouted instead of opaque IDs."""
     import hashlib

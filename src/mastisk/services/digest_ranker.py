@@ -76,7 +76,7 @@ def _freshness(updated_at: str, reference_iso: str) -> float:
     try:
         u = datetime.fromisoformat(updated_at.replace(" ", "T"))
         r = datetime.fromisoformat(reference_iso)
-        delta_h = max(0.0, (r - u.date() if hasattr(u, "date") else r - u).total_seconds() / 3600)
+        delta_h = max(0.0, (r - u).total_seconds() / 3600)
     except Exception:
         # Same-day if parsing fails — don't penalize.
         return 1.0

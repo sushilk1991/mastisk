@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { localDateTime } from '../date';
 import type { RoundtableSummary, View } from '../types';
 
 interface Props {
@@ -47,7 +48,7 @@ export function RoundtablesListView({ onNavigate }: Props) {
             }}
           >
             <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--fg-faint)' }}>
-              #{r.id} · {new Date(r.created_at).toLocaleString()} · {r.input_type}
+              #{r.id} · {localDateTime(r.created_at)} · {r.input_type}
               {' · '}
               <span style={{
                 color: r.status === 'failed' ? 'var(--danger, crimson)'

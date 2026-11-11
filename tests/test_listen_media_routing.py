@@ -656,3 +656,23 @@ async def test_ytdlp_entry_points_bound_and_reject_playlists(monkeypatch, tmp_pa
     assert len(observed_options) == 3
     assert all(options["noplaylist"] is True for options in observed_options)
     assert all(options["playlist_items"] == "1" for options in observed_options)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["direct_audio", "rss_episode"])
+async def test_listener_checks_whisper_before_downloading_audio(db, monkeypatch, path):
+    from mastisk.agents import listener as listener_mod
+
+    download = AsyncMock()
+    monkeypatch.setattr(listener_mod, "_download_to", download)
+    monkeypatch.setattr(listener_mod.whisper, "is_available", lambda: False)
+
+    url = "https://example.com/episodes/big-file.mp3"
+    agent = listener_mod.Listener()
+    with pytest.raises(RuntimeError, match="mlx-whisper is not installed"):
+        if path == "direct_audio":
+            await agent._ingest_direct_audio(url)
+        else:
+            await agent._handle_audio_episode({"audio_url": url, "episode_title": "Big"})
+
+    download.assert_not_awaited()

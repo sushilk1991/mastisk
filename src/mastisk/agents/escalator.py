@@ -17,7 +17,7 @@ Evaluate (under class-level ``asyncio.Lock``):
       no prior escalation within ``dedup_hours`` with ≥ 0.4 word-Jaccard
   - Rule fail → ``skipped_cap`` / ``skipped_dup`` / ``none`` + failed row.
   - Rule pass → ``pending`` → run Claude → build stub article.
-  - On ClaudeError with retries remaining: ``retrying`` + backoff.
+  - On any failure after ``pending`` with retries remaining: ``retrying`` + backoff.
   - On exhausted retries: fall back to Ollama; if Ollama fails too → ``failed``.
 
 See §9.4 for the full state machine.
@@ -124,8 +124,8 @@ class Escalator(Agent):
                     """SELECT 1 FROM jobs
                        WHERE agent='escalator' AND kind='evaluate'
                          AND status IN ('queued', 'running')
-                         AND payload_json LIKE ?""",
-                    (f'%"note_id": {note_id}%',),
+                         AND json_extract(payload_json, '$.note_id') = ?""",
+                    (note_id,),
                 ).fetchone()
                 if existing:
                     continue
@@ -188,37 +188,52 @@ class Escalator(Agent):
             note=note,
         )
 
-        # Build prompt.
-        with connect() as conn:
-            article_rows = conn.execute(
-                "SELECT id FROM articles ORDER BY updated_at DESC LIMIT 500"
-            ).fetchall()
-        article_ids = [r["id"] for r in article_rows]
-        identity = self.load_identity()
-        prompt = resolve_prompt("escalator", "evaluate", ESCALATE_PROMPT).format(
-            identity=identity,
-            article_ids="\n".join(f"- {aid}" for aid in article_ids) or "(none yet)",
-            note_body=note["body"],
-        )
-
-        # Attempt Claude; on failure, roll through retry state machine.
+        # Everything from here runs with the note already ``pending``. Any
+        # failure (not just ClaudeError: iCloud reads raise OSError, the stub
+        # write can hit a locked DB) must leave through the retry machine,
+        # otherwise the note sits ``pending`` with no next_attempt_at and the
+        # reactivation scan never sees it again.
+        prompt: str | None = None
         try:
-            parsed = await self._call_claude(prompt)
-        except ClaudeError as err:
-            await self._handle_claude_error(
-                note_id=note_id,
-                trigger=trigger,
-                prompt=prompt,
-                error=err,
-                settings=settings,
+            with connect() as conn:
+                article_rows = conn.execute(
+                    "SELECT id FROM articles ORDER BY updated_at DESC LIMIT 500"
+                ).fetchall()
+            article_ids = [r["id"] for r in article_rows]
+            identity = self.load_identity()
+            prompt = resolve_prompt("escalator", "evaluate", ESCALATE_PROMPT).format(
+                identity=identity,
+                article_ids="\n".join(f"- {aid}" for aid in article_ids) or "(none yet)",
+                note_body=note["body"],
             )
-            return
-
-        # Claude succeeded.
-        self._finish_success(
-            note_id=note_id, note=note, trigger=trigger,
-            parsed=parsed, model="claude",
-        )
+            parsed = await self._call_claude(prompt)
+            self._finish_success(
+                note_id=note_id, note=note, trigger=trigger,
+                parsed=parsed, model="claude",
+            )
+        except Exception as err:
+            # Past ``pending`` (stub landed, then a later step failed): the
+            # note is not stranded, and retrying would mint a second stub.
+            if not self._is_pending(note_id):
+                raise
+            if not isinstance(err, ClaudeError):
+                log.exception(
+                    "escalator: note %s evaluate failed; routing to retry", note_id
+                )
+            try:
+                await self._handle_claude_error(
+                    note_id=note_id,
+                    trigger=trigger,
+                    prompt=prompt,
+                    error=err,
+                    settings=settings,
+                )
+            except Exception as fallback_err:
+                if self._is_pending(note_id):
+                    self._record_failed(
+                        note_id, trigger=trigger, error=fallback_err, model="claude",
+                    )
+                raise
 
     # ───── rule evaluation ─────
 
@@ -302,6 +317,35 @@ class Escalator(Agent):
                 params,
             )
 
+    @staticmethod
+    def _is_pending(note_id: int) -> bool:
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT escalation_state FROM notes WHERE id = ? AND deleted_at IS NULL",
+                (note_id,),
+            ).fetchone()
+        return row is not None and row["escalation_state"] == "pending"
+
+    def _record_failed(
+        self, note_id: int, *, trigger: str, error: Exception, model: str,
+    ) -> None:
+        """Terminal failure: ``failed`` state + escalation row + feed row."""
+        self._transition(note_id, state="failed", trigger=trigger)
+        now_iso = datetime.now().astimezone().isoformat()
+        with connect() as conn:
+            conn.execute(
+                """INSERT INTO note_escalations
+                     (note_id, triggered_at, trigger, result, error, model)
+                   VALUES (?, ?, ?, 'failed', ?, ?)""",
+                (note_id, now_iso, trigger, str(error)[:500], model),
+            )
+        self.emit_feed(
+            verb="failed",
+            obj=str(note_id),
+            kind="note",
+            payload={"error": str(error)[:200]},
+        )
+
     def _record_skip(self, note_id: int, state: str, *, reason: str) -> None:
         """Transition to ``state``, insert a failed ``note_escalations`` row,
         emit a feed row. One-shot composite for skip outcomes.
@@ -358,7 +402,21 @@ class Escalator(Agent):
         base_id = f"note-{note_id:06d}-{slugify(title)[:40]}" or f"note-{note_id:06d}"
         stub_id = base_id
         with connect() as conn:
-            inserted = q.ensure_note_stub_article(
+            # A retry after a failure past this point must land on the stub
+            # the first attempt already created, not mint "-2". A stub with a
+            # recorded escalation is a finished one; a manual re-escalation
+            # deliberately gets a new stub.
+            existing = conn.execute(
+                "SELECT id FROM articles WHERE source_note_id = ? "
+                "AND updated_by = 'escalator (stub)' AND id NOT IN ("
+                "  SELECT stub_article_id FROM note_escalations"
+                "  WHERE note_id = ? AND stub_article_id IS NOT NULL"
+                ") ORDER BY id LIMIT 1",
+                (note_id, note_id),
+            ).fetchone()
+            if existing:
+                stub_id = existing["id"]
+            inserted = bool(existing) or q.ensure_note_stub_article(
                 conn,
                 id=stub_id,
                 title=title,
@@ -487,8 +545,8 @@ class Escalator(Agent):
         *,
         note_id: int,
         trigger: str,
-        prompt: str,
-        error: ClaudeError,
+        prompt: str | None,
+        error: Exception,
         settings,
     ) -> None:
         """Retry with backoff, or fall back to Codex → Ollama on exhaustion.
@@ -531,6 +589,10 @@ class Escalator(Agent):
             trigger=trigger,
             retry_count=new_count,
         )
+        if prompt is None:
+            # Failed before a prompt existed, so the fallbacks have no input.
+            self._record_failed(note_id, trigger=trigger, error=error, model="claude")
+            return
         log.info(
             "escalator: note %s claude exhausted (count=%s), trying codex",
             note_id, new_count,
@@ -565,21 +627,7 @@ class Escalator(Agent):
             log.warning(
                 "escalator: note %s ollama fallback also failed: %s", note_id, oll_err
             )
-            self._transition(note_id, state="failed", trigger=trigger)
-            now_iso = datetime.now().astimezone().isoformat()
-            with connect() as conn:
-                conn.execute(
-                    """INSERT INTO note_escalations
-                         (note_id, triggered_at, trigger, result, error, model)
-                       VALUES (?, ?, ?, 'failed', ?, 'ollama')""",
-                    (note_id, now_iso, trigger, str(oll_err)[:500]),
-                )
-            self.emit_feed(
-                verb="failed",
-                obj=str(note_id),
-                kind="note",
-                payload={"error": str(oll_err)[:200]},
-            )
+            self._record_failed(note_id, trigger=trigger, error=oll_err, model="ollama")
             return
 
         # Ollama succeeded.

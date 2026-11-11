@@ -4,12 +4,16 @@ Ported from design-source/project/data.js. Idempotent — safe to re-run.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 
 from mastisk.db.queries import (
-    append_feed, connect, init_schema, pin_article, replace_sections,
-    set_related, txn, upsert_article,
+    connect,
+    init_schema,
+    pin_article,
+    replace_sections,
+    set_related,
+    txn,
+    upsert_article,
 )
 
 # ── the Test-time compute article (the one the design reader renders by default) ──
@@ -174,7 +178,7 @@ def seed() -> dict:
             conn.execute(
                 "INSERT OR IGNORE INTO links (from_article, to_article, weight, snippet) VALUES (?, ?, ?, ?)",
                 (r["id"], "ttc", r["weight"],
-                 f"…the strongest empirical case for [[Test-time compute]] appears in…"),
+                 "…the strongest empirical case for [[Test-time compute]] appears in…"),
             )
 
         # Sources used by TTC
@@ -188,13 +192,18 @@ def seed() -> dict:
                 ("ttc", sid),
             )
 
-        # Feed entries — space them out by minutes so 't' values vary
+        # Feed entries — space them out by minutes so 't' values vary. The feed
+        # table has no natural key, so skip rows a previous seed already wrote.
         now = datetime.utcnow()
         for i, (agent, verb, obj, kind, touched) in enumerate(SAMPLE_FEED):
             ts = now - timedelta(minutes=i * 7 + 2)
             conn.execute(
-                "INSERT INTO feed (ts, agent, verb, obj, kind, touched_pages) VALUES (?, ?, ?, ?, ?, ?)",
-                (ts.isoformat(sep=" "), agent, verb, obj, kind, touched),
+                """INSERT INTO feed (ts, agent, verb, obj, kind, touched_pages)
+                   SELECT ?, ?, ?, ?, ?, ?
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM feed WHERE agent = ? AND verb = ? AND obj = ? AND kind IS ?
+                   )""",
+                (ts.isoformat(sep=" "), agent, verb, obj, kind, touched, agent, verb, obj, kind),
             )
 
     conn.close()

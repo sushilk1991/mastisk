@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
+from functools import lru_cache
+from pathlib import Path
 from typing import ClassVar
 
 from mastisk.db import queries as q
@@ -12,6 +14,23 @@ from mastisk.paths import self_dir
 from mastisk.vault_io import read_vault_text
 
 log = logging.getLogger("mastisk.agent")
+
+IDENTITY_FILES = ("identity", "interests", "dislikes", "style", "learnings")
+
+
+@lru_cache(maxsize=1)
+def wiki_voice() -> str:
+    """Prose guide shared by every agent that writes wiki pages.
+
+    Shipped next to the agents as ``wiki_voice.md`` so it can be read and
+    edited as a document. A missing file degrades to no guidance rather
+    than failing a compile.
+    """
+    try:
+        return Path(__file__).with_name("wiki_voice.md").read_text().strip()
+    except OSError:
+        log.warning("wiki_voice.md is missing; wiki prompts run without prose guidance")
+        return ""
 
 
 class Agent(ABC):
@@ -83,9 +102,9 @@ class Agent(ABC):
     # ───── identity ─────
 
     @staticmethod
-    def load_identity() -> str:
+    def load_identity(files: tuple[str, ...] = IDENTITY_FILES) -> str:
         parts = []
-        for fname in ("identity", "interests", "dislikes", "style", "learnings"):
+        for fname in files:
             p = self_dir() / f"{fname}.md"
             if p.exists():
                 txt = read_vault_text(p).strip()

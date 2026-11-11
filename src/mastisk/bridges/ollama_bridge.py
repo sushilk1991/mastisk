@@ -10,7 +10,6 @@ models — which is what we want.
 from __future__ import annotations
 
 import logging
-import struct
 
 import httpx
 
@@ -118,7 +117,11 @@ async def run_ollama(
 
 
 async def embed(texts: list[str]) -> list[list[float]]:
-    """Try /api/embed (0.1.x+). Returns [] on failure — caller should fail open."""
+    """Try /api/embed (0.1.x+), falling back to /api/embeddings on 404.
+
+    Raises RuntimeError when every endpoint fails; callers that want to fail
+    open must catch it.
+    """
     s = get_settings()
     last_err: Exception | None = None
     for base, key in _endpoints():
@@ -160,15 +163,6 @@ async def embed(texts: list[str]) -> list[list[float]]:
             last_err = e
             continue
     raise RuntimeError(f"all ollama endpoints failed: {last_err}")
-
-
-def pack_vec(vec: list[float]) -> bytes:
-    return struct.pack(f"<{len(vec)}f", *vec)
-
-
-def unpack_vec(blob: bytes) -> list[float]:
-    n = len(blob) // 4
-    return list(struct.unpack(f"<{n}f", blob))
 
 
 def cosine(a: list[float], b: list[float]) -> float:

@@ -21,6 +21,7 @@ from mastisk.agents.base import Agent
 from mastisk.agents.blog_writer import STOP_WORDS
 from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import intelligence
+from mastisk.bridges.claude_bridge import extract_json_block
 from mastisk.db.queries import connect
 from mastisk.settings import get_settings
 
@@ -339,7 +340,9 @@ class TopicSuggester(Agent):
         try:
             result, _ = await intelligence.run_intelligence(prompt, timeout_s=180)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
-            parsed = json.loads(text.strip())
+            parsed = extract_json_block(text)
+            if parsed is None:
+                raise ValueError(f"no JSON object in response: {text[:200]!r}")
         except Exception as e:
             log.warning("topic_suggester: LLM call failed (%s)", e)
             return None

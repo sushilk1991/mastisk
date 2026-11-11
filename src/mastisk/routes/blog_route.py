@@ -6,7 +6,6 @@ endpoint contract.
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -164,31 +163,23 @@ async def save_blog_post_as_note_endpoint(bp_id: int) -> dict:
     # Write a note whose body reflects the draft. Same vault-inbox path as
     # Roundtable's save-as-note — the Notetaker will classify it on its next
     # tick and the escalator may research it later.
-    from mastisk.paths import notes_inbox_dir
-    from mastisk.routes.notes import atomic_write, derive_slug
+    from mastisk.routes.notes import persist_note_capture
 
     body_md, _err = _read_body(bp)
     preview_body = body_md or bp.get("body_preview") or ""
-    ts = datetime.now().astimezone()
-    body = _body_from_blog(bp, preview_body)
-    slug_source = bp.get("title") or f"blog-{bp_id}"
-    slug = derive_slug(slug_source, ts)
-    target = notes_inbox_dir() / f"{slug}.md"
-    atomic_write(target, body)
-    rel_path = str(target.relative_to(vault_dir()))
+    # persist_note_capture resolves slug collisions before touching disk, so a
+    # same-second, same-title save can't overwrite another note's file.
+    row = persist_note_capture(
+        body=_body_from_blog(bp, preview_body),
+        source="pwa",
+        slug_text=bp.get("title") or f"blog-{bp_id}",
+    )
+    note_id = row["id"]
     with connect() as conn:
-        note_id = q.insert_note(
-            conn, slug=slug, path=rel_path, body=body,
-            source="pwa", created_at=ts,
-        )
-        row = q.get_note(conn, note_id)
         conn.execute(
             "UPDATE blog_posts SET saved_as_note_id = ? WHERE id = ?",
             (note_id, bp_id),
         )
-    actual_path = vault_dir() / row["path"]
-    if actual_path != target:
-        target.rename(actual_path)
     return {"note_id": note_id, "slug": row["slug"], "reused": False}
 
 

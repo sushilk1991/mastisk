@@ -30,7 +30,7 @@ Prefer the HTTP API at `http://127.0.0.1:5555` over reading the vault, so signal
 curl -s "http://127.0.0.1:5555/api/search?q_param=autopilot+reliability&limit=10" | jq
 curl -s -X POST http://127.0.0.1:5555/api/ask -H 'Content-Type: application/json' \
   -d '{"question": "What does my wiki say about agent skill composition?"}' | jq
-curl -s http://127.0.0.1:5555/api/digest | jq '.items[] | {title, score}'
+curl -s http://127.0.0.1:5555/api/digest | jq '.threads[] | {title, article_id, score: .scores.final}'
 ```
 
 ## Settings model catalogs

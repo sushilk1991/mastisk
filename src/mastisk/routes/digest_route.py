@@ -11,7 +11,7 @@ import calendar as _calendar
 from datetime import date as _date
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from mastisk.db import queries as q
@@ -60,7 +60,10 @@ def _latest_feedback(conn, article_id: str, digest_date: str) -> str | None:
 
 
 @router.get("/digest")
-def digest(date: str | None = None, top_n: int = digest_ranker.DEFAULT_TOP_N):
+def digest(
+    date: str | None = None,
+    top_n: int = Query(digest_ranker.DEFAULT_TOP_N, ge=1, le=50),
+):
     d = _parse_date(date)
     d_iso = d.isoformat()
     with connect() as conn:
@@ -189,6 +192,11 @@ def feedback(body: FeedbackIn):
         raise HTTPException(status_code=400, detail=f"bad digest_date: {body.digest_date!r}") from e
 
     with connect() as conn:
+        # signals.article_id is an enforced foreign key.
+        if not conn.execute(
+            "SELECT 1 FROM articles WHERE id = ?", (body.article_id,)
+        ).fetchone():
+            raise HTTPException(status_code=404, detail="article not found")
         # 'clear' = undo prior verdict for this (article, date). We can't mutate
         # history, so we just record a signal of kind='edited' with the prior
         # info for the audit trail.

@@ -92,3 +92,69 @@ def test_title_guidance_requires_short_single_clause_titles():
     assert f"{MAX_GENERATED_ARTICLE_TITLE_CHARS} characters" in contract
     assert "No subtitles" in contract
     assert "no em-dash appendages" in contract
+
+
+def _member(article_id):
+    return {"id": article_id, "kind": "Source", "title": article_id.title(),
+            "summary": "", "body_md": "", "updated_at": "2026-10-31 12:00:00"}
+
+
+def test_draft_prompt_carries_the_shared_voice_guide_before_the_schema(synthesizer):
+    from mastisk.agents.base import wiki_voice
+
+    prompt = synthesizer._draft_prompt([_member("a")], [], [])
+
+    assert wiki_voice()
+    assert wiki_voice() in prompt
+    # The JSON contract stays last so prose guidance cannot displace it.
+    assert prompt.index(wiki_voice()) < prompt.index('"kind": "Synthesis"')
+
+
+def test_draft_prompt_omits_interest_themes(synthesizer, monkeypatch):
+    """learnings.md steered every synthesis toward the same few subjects."""
+    seen = {}
+
+    def fake_identity(files=("identity", "interests", "dislikes", "style", "learnings")):
+        seen["files"] = files
+        return "# About the user"
+
+    monkeypatch.setattr(type(synthesizer), "load_identity", staticmethod(fake_identity))
+    synthesizer._draft_prompt([_member("a")], [], [])
+
+    assert seen["files"] == ("identity", "style")
+
+
+def test_related_links_exclude_members_the_draft_left_out(synthesizer):
+    members = [_member("used"), _member("linked"), _member("unused")]
+    data = {
+        "title": "T",
+        "sections": [{"h": "H", "body": '<p><span class="link" data-target="linked">x</span></p>'}],
+        "related": [{"id": "used", "label": "Used", "weight": 0.9}],
+    }
+
+    related = synthesizer._normalise_draft(data, members)["related"]
+
+    assert [r["id"] for r in related] == ["used", "linked"]
+
+
+def test_related_links_fall_back_to_whole_cluster_when_draft_names_none(synthesizer):
+    members = [_member("a"), _member("b")]
+
+    related = synthesizer._normalise_draft({"title": "T", "sections": []}, members)["related"]
+
+    assert [r["id"] for r in related] == ["a", "b"]
+
+
+def test_synthesis_markdown_keeps_paragraph_breaks():
+    """The Synthesizer's private copy of the renderer had lost this fix."""
+    from mastisk.agents.synthesizer import _sections_to_md
+
+    md = _sections_to_md([{"h": "H", "body": "<p>One ends.</p><p>Two starts.</p>"}])
+
+    assert "One ends.\n\nTwo starts." in md
+
+
+def test_drafter_reads_member_articles_whole(synthesizer):
+    member = _member("a") | {"body_md": "start " + "middle " * 2000 + "THE-LAST-FACT"}
+
+    assert "THE-LAST-FACT" in synthesizer._draft_prompt([member], [], [])

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { OpenQuestion, View } from '../types';
 import { NoteCaptureModal, type CaptureContext } from './NoteCaptureModal';
+import { SafeHtml } from './SafeHtml';
 
 interface Props {
   onNavigate: (view: View, id?: string) => void;
@@ -126,9 +127,10 @@ export function OpenQuestionsView({ onNavigate }: Props) {
                       + add thoughts
                     </button>
                   </div>
-                  <p
+                  <SafeHtml
+                    as="p"
                     style={{margin:0,fontFamily:'var(--serif)',lineHeight:1.55}}
-                    dangerouslySetInnerHTML={{ __html: q.body }}
+                    html={q.body}
                   />
                 </div>
               ))}

@@ -166,8 +166,8 @@ flowchart LR
 | **GitHub Ideator** | daily per repo | Reads the latest `context_md` and generates ~4 idea-notes per repo per day. Each idea flows back through the Notetaker → Escalator pipeline. |
 | **Blog Writer** | on demand | Drafts a personal blog post in your style from recent synthesis pages. |
 | **Artifact Agent** | per article | Generates 1–3 visual artifacts (diagrams, charts) per article via a heavy local model. |
-| **Linter** | hourly | Health checks: dead links, stale stubs, articles with too-low confidence, etc. |
-| **Vault Integrity** | hourly | Tombstones notes whose vault file was deleted from outside Mastisk (e.g. you cleaned up in Obsidian). |
+| **Linter** | 15 min | Health checks: dead links, stale stubs, articles with too-low confidence, etc. |
+| **Vault Integrity** | 5 min | Tombstones notes whose vault file was deleted from outside Mastisk (e.g. you cleaned up in Obsidian). |
 | **Roundtable** | on demand | Fans a prompt to Claude / Codex / Gemini / Ollama in parallel and synthesizes. |
 
 ---
@@ -241,6 +241,10 @@ Settings updates validate routing and atomically preserve unrelated nested confi
 ### Synthesis critic gate
 
 A new synthesis needs a valid critic score of **4/5 or higher** before it becomes an article or vault page. A lower score permits one revision using the critic's feedback, followed by another critique. Missing, malformed, out-of-range, or unavailable scores withhold publication. Failed repair calls do not publish the earlier failed draft.
+
+A cluster is an automatic grouping, so the drafter may build the page from only the members that share something, or skip the cluster when nothing does. A skip is recorded like any other withheld attempt, with the drafter's reason as the rationale. The drafter and the critic both read each member article in full, and the critic scores grounding, whether the connection is specific, and whether the page can be followed without the sources.
+
+How wiki pages should read is written down once, in [`src/mastisk/agents/wiki_voice.md`](src/mastisk/agents/wiki_voice.md). The Compiler, Synthesizer and Gardener all include it in their prompts; edit that file to change the prose.
 
 Withheld attempts retain their source article IDs, final score, and available critic rationale in `synthesis_runs`; the activity feed reports `withheld`. Their draft body is not saved as a wiki page. An unchanged cluster is not retried every tick.
 
@@ -352,7 +356,7 @@ A classic PAT with `public_repo` scope gets you 5,000 GitHub API requests/hour. 
 - shared intelligence routing (`[intelligence] provider_order = ["codex", "claude", "ollama"]` by default)
 - subsystem-specific config blocks: `[notes]`, `[roundtable]`, `[github]`, `[blog]`, `[calendar]`
 
-Safe to edit. Mastisk reloads config on the next agent tick — no restart needed.
+Safe to edit. Changes saved from the Settings page apply immediately. Edits made to the file by hand are read at startup, so they need `mastisk restart`.
 
 ### What you do *not* need a key for
 
@@ -651,7 +655,7 @@ Three ways:
 - **CLI:** `mastisk roundtable "a prompt"` (or `--note 42` / `--article slug`).
 - **Any editor:** not supported — the roundtable is a transient research artifact, not user-authored content.
 
-Configure backends, timeouts, and per-backend models in `config.toml` under `[roundtable]`. A missing CLI (e.g. `gemini` not installed) is skipped silently; results are stored with `error='backend not available'`.
+Configure backends, timeouts, and per-backend models in `config.toml` under `[roundtable]`. A missing CLI (e.g. `gemini` not installed) is recorded as a failed perspective with the bridge's error (for example `gemini binary not on PATH`); the other backends still run.
 
 Saved roundtables live in the **Roundtables** sidebar entry. Each perspective is kept in full so you can compare side-by-side.
 
@@ -667,7 +671,7 @@ vault/_self/
 ├─ interests.md     topics Scout should track (embedding similarity gate)
 ├─ dislikes.md      topics to filter out (substring match on title+summary)
 ├─ style.md         how you want content written
-└─ learnings.md     auto-appended by the Reflection agent (M2)
+└─ learnings.md     auto-appended by the Gardener (daily reflection + feedback rules)
 ```
 
 Open the folder on Mac:
@@ -898,6 +902,9 @@ them to the new month end. Done tasks are not changed.
 ## CLI reference
 
 ```
+mastisk ask <question>      answer from the wiki with cited sources (--json for agents)
+mastisk ingest [target]     save a verified learning, URL or file into the wiki
+mastisk learn               today's Guru lesson and due reviews
 mastisk doctor              check preconditions
 mastisk status              full content + agents + bridges report
 mastisk status --ping       same, plus live Claude + Ollama smoke test
@@ -916,13 +923,18 @@ mastisk add-feed <url>      subscribe an RSS feed
 mastisk add-youtube <url>   queue a video for Listener
 mastisk add-podcast <url>   queue a podcast (RSS / Apple / direct audio)
 mastisk note [text]         capture a note (opens $EDITOR if no text)
+mastisk blog                draft a blog post from recent material
+mastisk list-blogs          list blog drafts
 mastisk capture-token       generate the /api/capture bearer token
 mastisk calendar-connect    connect read-only Google Calendar
 mastisk roundtable [text]   fan a prompt out to all LLM backends + synthesize
 mastisk add-repo <slug>     track a GitHub repo (hourly poll + daily ideation)
+mastisk add-local-repo <path>  track a local git repo
 mastisk list-repos          list tracked repos
 mastisk remove-repo <slug>  tombstone a tracked repo
-mastisk logs                tail agent activity
+mastisk logs [-n 50]        tail agent activity
+mastisk backfill-segments   backfill transcript segments for listened media
+mastisk repair-graph        rebuild missing link-graph edges
 mastisk vault-path          show where the vault lives
 mastisk backup              tar the DB + config to ./mastisk-backup-*.tar.gz
 mastisk enable-autostart    install launchd agent (opt-in)
@@ -970,4 +982,4 @@ rm -rf ~/Library/Mobile\ Documents/com~apple~CloudDocs/Mastisk
 
 ## License
 
-MIT. See `pyproject.toml`.
+MIT. See [`LICENSE`](LICENSE).

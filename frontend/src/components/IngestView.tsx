@@ -144,7 +144,8 @@ export function IngestView() {
       const trimmed = importText.trim();
       const singleUrl = parseSingleUrl(trimmed);
       if (singleUrl) {
-        const res = await api.listen(singleUrl);
+        // "link -> source article": ingest this page, not a feed it advertises.
+        const res = await api.listen(singleUrl, { exactUrl: true });
         const queued: ListenResult = { jobId: res.job_id, kind: res.kind, message: res.message };
         setImportText('');
         setImportResult({ kind: 'url', jobId: queued.jobId, message: queued.message });

@@ -99,7 +99,7 @@ def parse_person_file(path: Path) -> dict[str, Any]:
         "anniversary": _clean_person_date(meta.get("anniversary")),
         "facts": facts,
         "follow_up_at": _clean_datetime(meta.get("follow_up_at")),
-        "archived": bool(meta.get("archived", False)),
+        "archived": meta.get("archived") is True,
         "interactions": interactions,
         "interaction_lines": interaction_lines,
         "body": notes_body,

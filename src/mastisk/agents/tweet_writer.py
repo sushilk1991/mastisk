@@ -49,6 +49,10 @@ X_THREAD_CRAFT = """X thread craft rules:
 - End with a concrete next thought, a caveat, or a genuine open question. No tidy maxim.
 """
 
+# Chars of a local source body the keyword ranker reads; _gather_local_sources
+# loads only this much per article.
+_RANK_BODY_PREFIX_CHARS = 1200
+
 # browser-harness daemon name. A separate name keeps Mastisk from reusing a
 # daemon the user's shell started against a different Chrome.
 HARNESS_DAEMON_NAME = "mastisk"
@@ -286,6 +290,7 @@ class TweetWriter(Agent):
             ranked_local = self._rank_local_sources(
                 local_sources, theme=theme, intent=intent,
             )[: settings.max_local_sources]
+            self._hydrate_article_bodies(ranked_local)
 
             browser_context: dict[str, Any] | None = None
             browser_warning: str | None = None
@@ -395,7 +400,12 @@ class TweetWriter(Agent):
                     ORDER BY created_at DESC"""
             ).fetchall()
             articles = conn.execute(
-                f"""SELECT id, title, summary, body_md, updated_at AS ts
+                # Ranking reads only a body prefix; the kept sources get their
+                # full body back in _hydrate_article_bodies. Loading every
+                # in-window body_md here costs tens of MB per draft.
+                f"""SELECT id, title, summary,
+                           substr(body_md, 1, {_RANK_BODY_PREFIX_CHARS}) AS body_md,
+                           updated_at AS ts
                     FROM articles
                     WHERE updated_at >= {cutoff_expr}
                     ORDER BY updated_at DESC"""
@@ -440,6 +450,22 @@ class TweetWriter(Agent):
         return out
 
     @staticmethod
+    def _hydrate_article_bodies(sources: list[dict[str, Any]]) -> None:
+        """Swap the ranking prefix for the full ``body_md`` on kept articles."""
+        ids = [s["ref"] for s in sources if s.get("kind") == "article"]
+        if not ids:
+            return
+        with connect() as conn:
+            rows = conn.execute(
+                f"SELECT id, body_md FROM articles WHERE id IN ({','.join('?' * len(ids))})",
+                ids,
+            ).fetchall()
+        bodies = {r["id"]: r["body_md"] for r in rows}
+        for s in sources:
+            if s.get("kind") == "article" and bodies.get(s["ref"]):
+                s["body"] = bodies[s["ref"]]
+
+    @staticmethod
     def _rank_local_sources(
         sources: list[dict[str, Any]], *, theme: str, intent: ThreadIntent | None = None,
     ) -> list[dict[str, Any]]:
@@ -449,7 +475,7 @@ class TweetWriter(Agent):
         tokens = _tokens(theme)
         scored: list[tuple[float, str, dict[str, Any]]] = []
         for source in sources:
-            hay = f"{source.get('title') or ''} {source.get('summary') or ''} {(source.get('body') or '')[:1200]}"
+            hay = f"{source.get('title') or ''} {source.get('summary') or ''} {(source.get('body') or '')[:_RANK_BODY_PREFIX_CHARS]}"
             hay_lower = hay.lower()
             overlap = len(tokens & _tokens(hay))
             intent_bonus = 0.0
@@ -614,22 +640,6 @@ class TweetWriter(Agent):
         if not actions:
             log.warning("tweet_writer: %s returned no usable browser research actions", provider)
         return actions
-
-    async def _plan_x_browser_searches(
-        self,
-        *,
-        theme: str,
-        intent: ThreadIntent,
-        local_sources: list[dict[str, Any]],
-        browser_context: dict[str, Any] | None,
-    ) -> list[str]:
-        actions = await self._plan_browser_research_actions(
-            theme=theme,
-            intent=intent,
-            local_sources=local_sources,
-            browser_context=browser_context,
-        )
-        return [action.query for action in actions if action.type == "x_search"]
 
     @staticmethod
     def _web_search_query(
@@ -836,7 +846,24 @@ class TweetWriter(Agent):
 
 
 def candidate_count(window_days: int) -> int:
-    return len(TweetWriter()._gather_local_sources(window_days))
+    """In-window notes + articles + roundtables, mirroring _gather_local_sources."""
+    cutoff_expr = f"datetime('now', '-{int(window_days)} days')"
+    with connect() as conn:
+        n_notes = conn.execute(
+            f"""SELECT COUNT(*) AS n FROM notes
+                WHERE deleted_at IS NULL
+                  AND classified_at IS NOT NULL
+                  AND (classified_at >= {cutoff_expr} OR created_at >= {cutoff_expr})"""
+        ).fetchone()["n"]
+        n_articles = conn.execute(
+            f"SELECT COUNT(*) AS n FROM articles WHERE updated_at >= {cutoff_expr}"
+        ).fetchone()["n"]
+        n_rts = conn.execute(
+            f"""SELECT COUNT(*) AS n FROM roundtables
+                WHERE status = 'done' AND synthesis IS NOT NULL
+                  AND finished_at >= {cutoff_expr}"""
+        ).fetchone()["n"]
+    return int(n_notes + n_articles + n_rts)
 
 
 def _browser_context(url: str | None) -> dict[str, Any]:
@@ -1550,23 +1577,6 @@ def _planned_browser_research_actions(
     return actions
 
 
-def _planned_x_search_queries(
-    parsed: dict[str, Any],
-    *,
-    theme: str,
-    max_actions: int,
-) -> list[str]:
-    return [
-        action.query
-        for action in _planned_browser_research_actions(
-            parsed,
-            theme=theme,
-            max_actions=max_actions,
-        )
-        if action.type == "x_search"
-    ]
-
-
 def _normalize_planned_x_query(raw_query: str, *, theme: str) -> str:
     query = _collapse_ws(raw_query).strip("`\"'“”‘’")
     if not query:
@@ -1697,7 +1707,7 @@ def _sanitize_warning(text: str) -> str:
         return "Browser capture unavailable; generated without browser context."
     if first.startswith("authenticated browser unavailable; used plain URL fetch instead:"):
         return "Authenticated browser unavailable; used plain URL fetch instead."
-    first = re.sub(r"/Users/[^\\s)]+", "[local path]", first)
+    first = re.sub(r"/Users/[^\s)]+", "[local path]", first)
     return first[:220]
 
 

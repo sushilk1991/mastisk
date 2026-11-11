@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from mastisk.db.queries import connect, init_schema, txn
+from mastisk.db.queries import connect, txn
 from mastisk.paths import data_dir
 from mastisk.settings import get_settings
 
@@ -129,7 +129,12 @@ def exchange_authorization_code(
         "grant_type": "authorization_code",
         "redirect_uri": redirect_uri,
     }
-    return _token_request(form, http_client=http_client, now=now, require_refresh=True)
+    try:
+        return _token_request(form, http_client=http_client, now=now, require_refresh=True)
+    except CalendarSyncError as e:
+        # A connection attempt has nothing to fall back to: the connect flows
+        # report any exchange failure as CalendarAuthError.
+        raise CalendarAuthError(str(e)) from e
 
 
 def refresh_access_token(
@@ -152,6 +157,8 @@ def refresh_access_token(
     try:
         refreshed = _token_request(form, http_client=http_client, now=now, require_refresh=False)
     except CalendarAuthError as e:
+        # Only a real rejection disconnects. A transient failure surfaces as
+        # CalendarSyncError and leaves the stored grant usable for the next sync.
         mark_calendar_disconnected(str(e))
         raise
     refreshed["refresh_token"] = refreshed.get("refresh_token") or tokens["refresh_token"]
@@ -171,10 +178,14 @@ def _token_request(
     try:
         resp = client.post(TOKEN_URL, data=form)
     except httpx.HTTPError as e:
-        raise CalendarAuthError(f"token request failed: {e}") from e
+        raise CalendarSyncError(f"token request failed: {e}") from e
     finally:
         if close:
             client.close()
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise CalendarSyncError(
+            f"Google token endpoint returned {resp.status_code}: {_response_error(resp)}"
+        )
     if not resp.is_success:
         detail = _response_error(resp)
         raise CalendarAuthError(detail)
@@ -195,7 +206,6 @@ def sync_calendar(
     now: datetime | None = None,
     http_client: httpx.Client | None = None,
 ) -> dict[str, int]:
-    init_schema()
     settings = get_settings()
     tokens = read_calendar_tokens()
     if not tokens:
@@ -250,7 +260,6 @@ def sync_calendar(
 
 
 def calendar_status() -> dict[str, str | None]:
-    init_schema()
     with connect() as conn:
         row = conn.execute("SELECT * FROM calendar_state WHERE id = 1").fetchone()
     state = dict(row) if row else {}
@@ -297,13 +306,11 @@ def calendar_status() -> dict[str, str | None]:
 
 
 def mark_calendar_connected(last_synced_at: str) -> None:
-    init_schema()
     with connect() as conn:
         _mark_calendar_connected(conn, last_synced_at)
 
 
 def mark_calendar_disconnected(error: str) -> None:
-    init_schema()
     with connect() as conn:
         conn.execute(
             """INSERT INTO calendar_state (id, status, error, updated_at)
@@ -333,7 +340,6 @@ def _mark_calendar_connected(conn, last_synced_at: str) -> None:
 
 
 def mark_calendar_sync_error(error: str, *, at: str | None = None) -> None:
-    init_schema()
     failed_at = at or datetime.now(UTC).isoformat()
     with connect() as conn:
         conn.execute(
@@ -405,6 +411,25 @@ def _valid_access_tokens(
     )
 
 
+def _get_events_page(
+    client: httpx.Client,
+    tokens: dict[str, Any],
+    calendar_id: str,
+    params: dict[str, str],
+) -> httpx.Response:
+    try:
+        return client.get(
+            f"{CALENDAR_API}/calendars/{quote(calendar_id, safe='@._-')}/events",
+            params=params,
+            headers={
+                "Authorization": f"Bearer {tokens['access_token']}",
+                "Accept": "application/json",
+            },
+        )
+    except httpx.HTTPError as e:
+        raise CalendarSyncError(f"Google Calendar request failed: {e}") from e
+
+
 def _fetch_events(
     *,
     client: httpx.Client,
@@ -424,14 +449,7 @@ def _fetch_events(
         }
         if page_token:
             params["pageToken"] = page_token
-        resp = client.get(
-            f"{CALENDAR_API}/calendars/{quote(calendar_id, safe='@._-')}/events",
-            params=params,
-            headers={
-                "Authorization": f"Bearer {tokens['access_token']}",
-                "Accept": "application/json",
-            },
-        )
+        resp = _get_events_page(client, tokens, calendar_id, params)
         if resp.status_code == 401:
             settings = get_settings()
             tokens = refresh_access_token(
@@ -441,14 +459,7 @@ def _fetch_events(
                 http_client=client,
                 now=datetime.now(UTC),
             )
-            resp = client.get(
-                f"{CALENDAR_API}/calendars/{quote(calendar_id, safe='@._-')}/events",
-                params=params,
-                headers={
-                    "Authorization": f"Bearer {tokens['access_token']}",
-                    "Accept": "application/json",
-                },
-            )
+            resp = _get_events_page(client, tokens, calendar_id, params)
         if not resp.is_success:
             raise CalendarSyncError(f"Google Calendar returned {resp.status_code}: {_response_error(resp)}")
         payload = resp.json()
@@ -620,7 +631,6 @@ def _stored_datetime(value: datetime) -> str:
 
 
 def _clear_calendar_cache_and_state() -> None:
-    init_schema()
     with connect() as conn:
         conn.execute("DELETE FROM calendar_state WHERE id = 1")
         conn.execute("DELETE FROM calendar_events")

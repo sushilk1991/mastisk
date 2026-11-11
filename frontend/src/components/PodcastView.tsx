@@ -5,6 +5,7 @@ import { api, ApiError } from '../api';
 import type { PodcastView as PodcastViewT, View, TranscriptAnchor, TranscriptSegment } from '../types';
 import { Icon } from './icons';
 import { MermaidBlock } from './MermaidBlock';
+import { SafeHtml } from './SafeHtml';
 import { NoteCaptureModal, type CaptureContext } from './NoteCaptureModal';
 
 interface Props {
@@ -173,7 +174,7 @@ export function PodcastView({ articleId, onAsk, onNavigate }: Props) {
               <h3>{s.h}</h3>
               {s.kind === 'diagram'
                 ? <MermaidBlock source={s.body} />
-                : <div dangerouslySetInnerHTML={{ __html: s.body }} />}
+                : <SafeHtml html={s.body} />}
             </div>
           ))
         )}

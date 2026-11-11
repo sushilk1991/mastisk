@@ -346,8 +346,6 @@ def _persist_person_capture(
             "destination": updated["path"],
             "needs_triage": needs_triage,
         }
-    if needs_triage:
-        return None
     name = (capture.title or "").strip()
     if not name:
         return None

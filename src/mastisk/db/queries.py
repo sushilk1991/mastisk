@@ -1496,21 +1496,6 @@ def _search_personal_os_mirrors(
     return rows
 
 
-def search_personal_os_context(
-    conn: sqlite3.Connection,
-    q: str,
-    *,
-    per_kind: int = 2,
-) -> list[dict]:
-    """Compact Ask/RAG retrieval over personal-OS mirror tables.
-
-    This intentionally reuses the LIKE-over-mirror machinery from palette
-    search, but uses any-term matching because natural-language questions
-    contain extra words beyond the entity names.
-    """
-    return _search_personal_os_mirrors(conn, q, per_kind=per_kind, any_term=True)
-
-
 def search_all(
     conn: sqlite3.Connection,
     q: str,
@@ -2466,11 +2451,22 @@ def insert_repo(
     default_branch: str | None,
     is_private: int,
 ) -> None:
+    # Upsert, not INSERT OR REPLACE: REPLACE deletes the row, which cascades to
+    # repo_snapshots / repo_idea_runs and resets poll + ideation state. The
+    # poller calls this on every successful poll.
     conn.execute(
-        """INSERT OR REPLACE INTO repos
-           (slug, owner, name, display_name, description, default_branch, is_private, added_at, deleted_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT added_at FROM repos WHERE slug = ?), CURRENT_TIMESTAMP), NULL)""",
-        (slug, owner, name, display_name, description, default_branch, is_private, slug),
+        """INSERT INTO repos
+           (slug, owner, name, display_name, description, default_branch, is_private)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(slug) DO UPDATE SET
+             owner = excluded.owner,
+             name = excluded.name,
+             display_name = excluded.display_name,
+             description = excluded.description,
+             default_branch = excluded.default_branch,
+             is_private = excluded.is_private,
+             deleted_at = NULL""",
+        (slug, owner, name, display_name, description, default_branch, is_private),
     )
 
 

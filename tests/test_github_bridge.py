@@ -86,6 +86,19 @@ async def test_fetch_recent_commits():
 
 
 @pytest.mark.asyncio
+async def test_fetch_recent_commits_tolerates_empty_message():
+    """An empty commit message must not fail the whole poll."""
+    from mastisk.bridges import github_bridge
+    fake = _fake_response(200, json_data=[
+        {"sha": "abc", "commit": {"message": "", "author": {"name": "A", "date": "2026-04-22T10:00:00Z"}}},
+        {"sha": "def", "commit": {"message": None, "author": None}},
+    ])
+    with patch("httpx.AsyncClient.get", new=AsyncMock(return_value=fake)):
+        commits = await github_bridge.fetch_recent_commits("a", "b")
+    assert [c["message"] for c in commits] == ["", ""]
+
+
+@pytest.mark.asyncio
 async def test_fetch_open_issues_excludes_prs():
     from mastisk.bridges import github_bridge
     fake = _fake_response(200, json_data=[
@@ -104,6 +117,7 @@ async def test_fetch_open_issues_excludes_prs():
 @pytest.mark.asyncio
 async def test_fetch_readme_decodes_base64_and_hashes():
     import base64 as b64
+
     from mastisk.bridges import github_bridge
     content = "# My Project\n\nA cool thing."
     encoded = b64.b64encode(content.encode()).decode()

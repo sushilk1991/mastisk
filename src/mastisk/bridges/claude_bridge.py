@@ -1,11 +1,9 @@
 """Claude Code subprocess bridge.
 
-Each call spawns `claude -p <prompt>` inside a disposable workdir seeded with:
-  - SOURCE.md  (raw input)
-  - PROMPT.md  (agent-specific task spec)
-  - SCHEMA.md  (expected output contract)
-
-Claude reads, writes OUTPUT.json (or streams JSON on stdout via --output-format json).
+Each call spawns `claude -p <prompt> --output-format json` with an empty,
+disposable workdir as its cwd. The whole task travels in the prompt argument;
+the reply is the JSON envelope on stdout, whose "result" field is returned as
+text. The workdir is deleted when the call ends.
 """
 from __future__ import annotations
 
@@ -40,8 +38,6 @@ def _resolve_cmd(cmd: str) -> str:
 async def run_claude(
     prompt: str,
     *,
-    source_md: str | None = None,
-    schema_md: str | None = None,
     timeout_s: int = 300,
     classification: bool = False,
     model: str | None = None,
@@ -59,12 +55,6 @@ async def run_claude(
     workdir.mkdir(parents=True, exist_ok=True)
 
     try:
-        if source_md is not None:
-            (workdir / "SOURCE.md").write_text(source_md)
-        if schema_md is not None:
-            (workdir / "SCHEMA.md").write_text(schema_md)
-        (workdir / "PROMPT.md").write_text(prompt)
-
         permission_mode = "plan" if classification else "acceptEdits"
         cmd = [
             claude_cmd, "-p", prompt,
@@ -98,7 +88,13 @@ async def run_claude(
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
         except TimeoutError as e:
             proc.kill()
+            await proc.wait()
             raise ClaudeError(f"claude timed out after {timeout_s}s") from e
+        except asyncio.CancelledError:
+            # An outer wait_for cancelled us; don't leave the CLI running.
+            proc.kill()
+            await proc.wait()
+            raise
 
         if proc.returncode != 0:
             raise ClaudeError(

@@ -75,6 +75,7 @@ async def add_repo_endpoint(req: AddRepoRequest) -> dict:
 @router.post("/local", status_code=201)
 async def add_local_repo_endpoint(req: AddLocalRepoRequest) -> dict:
     from pathlib import Path
+
     from mastisk.bridges import local_git_bridge
     p = Path(req.path).expanduser().resolve()
     if not p.is_dir():
@@ -83,15 +84,22 @@ async def add_local_repo_endpoint(req: AddLocalRepoRequest) -> dict:
         raise HTTPException(status_code=422, detail=f"not a git repo: {p}")
     slug = local_git_bridge.derive_local_slug(p)
     with connect() as conn:
-        # Insert (or un-tombstone) a local repo row
+        # Insert (or un-tombstone) a local repo row. Upsert, not INSERT OR
+        # REPLACE: REPLACE deletes the row first, which cascades to
+        # repo_snapshots / repo_idea_runs and drops context_md.
         conn.execute(
-            """INSERT OR REPLACE INTO repos
+            """INSERT INTO repos
                (slug, source_type, owner, name, display_name, description,
-                default_branch, is_private, local_path, added_at, deleted_at)
-               VALUES (?, 'local', 'local', ?, ?, NULL, NULL, 0, ?,
-                       COALESCE((SELECT added_at FROM repos WHERE slug = ?), CURRENT_TIMESTAMP),
-                       NULL)""",
-            (slug, p.name, f"local:{p.name}", str(p), slug),
+                default_branch, is_private, local_path)
+               VALUES (?, 'local', 'local', ?, ?, NULL, NULL, 0, ?)
+               ON CONFLICT(slug) DO UPDATE SET
+                   source_type = excluded.source_type,
+                   owner = excluded.owner,
+                   name = excluded.name,
+                   display_name = excluded.display_name,
+                   local_path = excluded.local_path,
+                   deleted_at = NULL""",
+            (slug, p.name, f"local:{p.name}", str(p)),
         )
     enqueue("github_poller", "poll", {"repo_slug": slug})
     return {"slug": slug, "local_path": str(p), "display_name": f"local:{p.name}"}

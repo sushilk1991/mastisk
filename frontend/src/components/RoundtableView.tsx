@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api, ApiError } from '../api';
+import { localDateTime } from '../date';
 import type { Roundtable, View } from '../types';
 
 interface Props {
@@ -102,7 +103,7 @@ export function RoundtableView({ roundtableId, onNavigate }: Props) {
       <div className="view-h">Roundtable #{rt.id}</div>
       <h1 className="view-title">{rt.prompt.length > 80 ? rt.prompt.slice(0, 80) + '…' : rt.prompt}</h1>
       <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--fg-faint)', marginBottom: 12 }}>
-        {new Date(rt.created_at).toLocaleString()} · input: {inputLink} · status: <strong>{rt.status}</strong>
+        {localDateTime(rt.created_at)} · input: {inputLink} · status: <strong>{rt.status}</strong>
         {rt.synthesis_model && <> · synth: {rt.synthesis_model}</>}
       </div>
 

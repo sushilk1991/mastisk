@@ -1,4 +1,4 @@
-"""Notetaker — scans vault/_notes/inbox/ every 30s, classifies stable files via Claude Code.
+"""Notetaker — scans vault/_notes/inbox/ every 30s, classifies stable files via the LLM fallback chain.
 
 Behavior per spec §9.1, §10, §11, §12:
 - Scan inbox for *.md; skip .icloud, dotfiles, conflict copies.
@@ -11,8 +11,8 @@ Behavior per spec §9.1, §10, §11, §12:
   frontmatter (preserving prose) → move inbox→YYYY-MM-DD/ → update DB → insert
   ``note_links`` → emit feed row.
 
-Phase 4-5 hand-off to the Escalator is marked with a TODO and left commented
-out until that agent exists.
+After a successful classify the note is handed to the Escalator as an
+``evaluate`` job (trigger ``auto``); the Escalator decides whether to act.
 """
 from __future__ import annotations
 
@@ -42,6 +42,9 @@ from mastisk.paths import notes_daily_dir, notes_dir, notes_inbox_dir, vault_dir
 from mastisk.settings import get_settings
 
 log = logging.getLogger("mastisk.notetaker")
+
+_CLASSIFY_BACKOFF_BASE_S = 60
+_CLASSIFY_BACKOFF_MAX_S = 3600
 
 VALID_CLASSIFICATIONS = {
     "insight", "question", "idea", "todo", "observation", "rant",
@@ -179,26 +182,57 @@ class Notetaker(Agent):
                 continue
             if has_typed_capture_frontmatter(text):
                 continue
-            payload_json = json.dumps({"note_id": note["id"]})
-            with connect() as conn:
-                pending = conn.execute(
-                    """SELECT 1
-                       FROM jobs
-                       WHERE agent = 'notetaker'
-                         AND kind = 'classify'
-                         AND status IN ('queued', 'running')
-                         AND payload_json = ?
-                       LIMIT 1""",
-                    (payload_json,),
-                ).fetchone()
-                if pending is not None:
-                    continue
-                conn.execute(
-                    "INSERT INTO jobs (agent, kind, payload_json) VALUES (?, ?, ?)",
-                    ("notetaker", "classify", payload_json),
-                )
-            enqueued += 1
+            if self._enqueue_classify(note["id"]):
+                enqueued += 1
         return enqueued
+
+    @staticmethod
+    def _enqueue_classify(note_id: int) -> bool:
+        """Queue one classify job for ``note_id`` unless one is already
+        queued/running or recent failures put the note in backoff.
+
+        Both scans run every tick, so without the backoff a note whose
+        classification keeps failing gets a fresh job (and LLM call) every
+        30 s. The wait doubles per failure in the last day, capped at
+        ``_CLASSIFY_BACKOFF_MAX_S``.
+        """
+        payload_json = json.dumps({"note_id": note_id})
+        with connect() as conn:
+            pending = conn.execute(
+                """SELECT 1
+                   FROM jobs
+                   WHERE agent = 'notetaker'
+                     AND kind = 'classify'
+                     AND status IN ('queued', 'running')
+                     AND payload_json = ?
+                   LIMIT 1""",
+                (payload_json,),
+            ).fetchone()
+            if pending is not None:
+                return False
+            failed = conn.execute(
+                """SELECT COUNT(*) AS n,
+                          (julianday('now') - julianday(MAX(finished_at))) * 86400.0 AS age_s
+                   FROM jobs
+                   WHERE agent = 'notetaker'
+                     AND kind = 'classify'
+                     AND status = 'failed'
+                     AND payload_json = ?
+                     AND finished_at >= datetime('now', '-1 day')""",
+                (payload_json,),
+            ).fetchone()
+            if failed["n"]:
+                wait_s = min(
+                    _CLASSIFY_BACKOFF_BASE_S * 2 ** (failed["n"] - 1),
+                    _CLASSIFY_BACKOFF_MAX_S,
+                )
+                if failed["age_s"] < wait_s:
+                    return False
+            conn.execute(
+                "INSERT INTO jobs (agent, kind, payload_json) VALUES (?, ?, ?)",
+                ("notetaker", "classify", payload_json),
+            )
+        return True
 
     # ───── scan + enqueue ─────
 
@@ -308,9 +342,8 @@ class Notetaker(Agent):
                     return
                 note_id = row["id"]
 
-        # Enqueue outside any transaction. `enqueue` opens its own connection.
-        from mastisk.agents.base import enqueue
-        enqueue("notetaker", "classify", {"note_id": note_id})
+        # Enqueue outside the transaction above; the helper opens its own connection.
+        self._enqueue_classify(note_id)
 
     # ───── classify handler ─────
 

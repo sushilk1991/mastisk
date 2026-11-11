@@ -58,13 +58,13 @@ def test_fetch_local_repo_state(tmp_path):
 
 
 def test_fetch_local_repo_state_raises_on_non_repo(tmp_path):
-    from mastisk.bridges.local_git_bridge import fetch_local_repo_state, LocalGitError
+    from mastisk.bridges.local_git_bridge import LocalGitError, fetch_local_repo_state
     with pytest.raises(LocalGitError, match="not a git repo"):
         asyncio.run(fetch_local_repo_state(tmp_path))
 
 
 def test_fetch_local_repo_state_raises_on_missing_dir(tmp_path):
-    from mastisk.bridges.local_git_bridge import fetch_local_repo_state, LocalGitError
+    from mastisk.bridges.local_git_bridge import LocalGitError, fetch_local_repo_state
     with pytest.raises(LocalGitError):
         asyncio.run(fetch_local_repo_state(tmp_path / "does-not-exist"))
 

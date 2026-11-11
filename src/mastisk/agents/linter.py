@@ -40,6 +40,11 @@ class Linter(Agent):
     # local model. The structural pass always runs; the LLM pass is best-effort.
     max_llm_suggestions = 5
 
+    # Cap on orphans newly flagged per tick, so a vault with hundreds of
+    # orphans doesn't flood the feed in one scan. Already-flagged orphans are
+    # tracked without limit.
+    max_new_orphans_per_tick = 10
+
     async def run_once(self) -> None:
         if self.disabled_tick():
             return
@@ -120,9 +125,24 @@ class Linter(Agent):
                     "title": row["title"], "target": None,
                 })
 
+        # orphan_ids is the full set: the housekeeping below resolves any
+        # open orphan finding outside it, so a truncated list would resolve
+        # (then re-flag) articles that are still orphans.
         orphans = self._orphans() if article_id is None else []
         orphan_ids = {o["id"] for o in orphans}
+        with connect() as conn:
+            open_orphan_ids = {
+                r["article_id"] for r in conn.execute(
+                    """SELECT article_id FROM lint_findings
+                       WHERE kind = 'orphan' AND resolved_at IS NULL"""
+                )
+            }
+        new_orphans = 0
         for o in orphans:
+            if o["id"] not in open_orphan_ids:
+                if new_orphans >= self.max_new_orphans_per_tick:
+                    continue
+                new_orphans += 1
             findings.append({
                 "kind": "orphan", "article_id": o["id"],
                 "title": o["title"], "target": None,
@@ -255,15 +275,6 @@ class Linter(Agent):
                     seen.add(t)
         return sorted(seen)
 
-    def _resolvable_in_body(self, sections: list[dict], known: set[str], *, self_id: str) -> list[str]:
-        seen: set[str] = set()
-        for s in sections:
-            for m in LINK_RE.finditer(s.get("body", "") or ""):
-                t = m.group(1)
-                if t and t != self_id and t in known:
-                    seen.add(t)
-        return sorted(seen)
-
     def _is_empty(self, sections: list[dict], body_md: str) -> bool:
         if not sections:
             return not body_md.strip()
@@ -277,7 +288,7 @@ class Linter(Agent):
                              WHERE from_article = a.id AND to_article != a.id) = 0
                      AND (SELECT COUNT(*) FROM links
                              WHERE to_article = a.id AND from_article != a.id) = 0
-                   ORDER BY a.updated_at DESC LIMIT 10"""
+                   ORDER BY a.updated_at DESC"""
             ).fetchall()
         return [dict(r) for r in rows]
 

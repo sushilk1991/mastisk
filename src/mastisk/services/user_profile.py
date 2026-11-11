@@ -28,7 +28,6 @@ import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Iterable
 
 # Permissive tokenizer: word chars, len >= 3. Lowercased. Tuned for titles +
 # summaries + tags, not dense prose, so we don't need stopword lists beyond

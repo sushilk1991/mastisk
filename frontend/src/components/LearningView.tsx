@@ -5,6 +5,7 @@ import type {
   LessonChatMessage, LessonQuestion, View,
 } from '../types';
 import { MermaidBlock } from './MermaidBlock';
+import { SafeHtml } from './SafeHtml';
 
 interface NavProps {
   onNavigate: (view: View, id?: string) => void;
@@ -543,7 +544,7 @@ export function LessonView({ lessonId, onNavigate }: { lessonId: number | null }
               <aside key={i} className="learn-mnemonic">
                 <div className="learn-mnemonic-label">◈ Memory hook</div>
                 {s.heading && <div className="learn-mnemonic-heading">{s.heading}</div>}
-                <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body_html }} />
+                <SafeHtml className="sec-body" html={s.body_html} />
               </aside>
             );
           }
@@ -552,7 +553,7 @@ export function LessonView({ lessonId, onNavigate }: { lessonId: number | null }
               {s.heading && <h2 className="learn-sec-heading">{s.heading}</h2>}
               {s.kind === 'diagram'
                 ? <MermaidBlock source={s.body_md} />
-                : <div className="sec-body" dangerouslySetInnerHTML={{ __html: s.body_html }} />}
+                : <SafeHtml className="sec-body" html={s.body_html} />}
             </section>
           );
         })}
@@ -705,7 +706,7 @@ function GuruChat({ lessonId }: { lessonId: number }) {
         )}
         {messages.map((m) => (
           m.role === 'assistant' && m.content_html
-            ? <div key={m.id} className="learn-chat-msg guru sec-body" dangerouslySetInnerHTML={{ __html: m.content_html }} />
+            ? <SafeHtml key={m.id} className="learn-chat-msg guru sec-body" html={m.content_html} />
             : <div key={m.id} className={`learn-chat-msg ${m.role === 'user' ? 'me' : 'guru'}`}>{m.content}</div>
         ))}
         {pending && <div className="learn-chat-msg me">{pending}</div>}

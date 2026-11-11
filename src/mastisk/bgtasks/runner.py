@@ -20,7 +20,6 @@ wiki is the automation's primary data source).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -106,10 +105,10 @@ _FORBIDDEN_MARKERS = ("task.yaml", "_automations/", "background task", "automati
 # a run outliving the tick interval). Without this, one logical run doubles up
 # — two LLM calls, two run rows, two push notifications. Single-threaded
 # asyncio makes the locked()-check-then-acquire safe (no await between them).
-_run_locks: dict[str, "asyncio.Lock"] = {}
+_run_locks: dict[str, asyncio.Lock] = {}
 
 
-def _lock_for(slug: str) -> "asyncio.Lock":
+def _lock_for(slug: str) -> asyncio.Lock:
     lock = _run_locks.get(slug)
     if lock is None:
         lock = asyncio.Lock()
@@ -204,7 +203,7 @@ async def _run_task_locked(slug: str, *, trigger: str) -> dict:
             raise ValueError(f"unusable reply from {provider}")
     except Exception as e:
         sync.write_runtime_fields(slug, last_run_error=str(e)[:500])
-        return _record_run(slug, trigger, mode=None, error=str(e)[:500])
+        return _record_run(slug, trigger, started=started, mode=None, error=str(e)[:500])
 
     mode = data["mode"]
     summary = str(data.get("summary") or "").strip()[:500] or f"{mode} run"
@@ -246,7 +245,7 @@ async def _run_task_locked(slug: str, *, trigger: str) -> dict:
             slug, last_run_at=finished, last_run_summary=summary, last_run_error=None,
         )
 
-    q_row = _record_run(slug, trigger, mode=mode, summary=summary)
+    q_row = _record_run(slug, trigger, started=started, mode=mode, summary=summary)
     with connect() as conn:
         q.append_feed(
             conn, agent="automations", verb="ran" if mode != "skip" else "skipped",
@@ -257,13 +256,17 @@ async def _run_task_locked(slug: str, *, trigger: str) -> dict:
     return q_row
 
 
-def _record_run(slug: str, trigger: str, *, mode: str | None,
+def _record_run(slug: str, trigger: str, *, started: str, mode: str | None,
                 summary: str | None = None, error: str | None = None) -> dict:
+    # Same "YYYY-MM-DD HH:MM:SS" UTC shape as CURRENT_TIMESTAMP: the daily-cap
+    # query compares started_at to datetime('now', ...) as text.
+    started_at = datetime.fromisoformat(started).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
     with connect() as conn:
         cur = conn.execute(
-            """INSERT INTO bg_task_runs (slug, trigger, finished_at, mode, summary, error)
-               VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?)""",
-            (slug, trigger, mode, summary, error),
+            """INSERT INTO bg_task_runs
+                 (slug, trigger, started_at, finished_at, mode, summary, error)
+               VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)""",
+            (slug, trigger, started_at, mode, summary, error),
         )
         row = conn.execute(
             "SELECT * FROM bg_task_runs WHERE id = ?", (cur.lastrowid,),
@@ -272,17 +275,30 @@ def _record_run(slug: str, trigger: str, *, mode: str | None,
 
 
 def _in_backoff(task: dict, *, now: datetime, backoff_minutes: int) -> bool:
-    """Failure backoff anchored on last_attempt_at (Rowboat's retry-storm guard):
-    only applies while the last run errored."""
-    if not task.get("last_run_error") or not task.get("last_attempt_at"):
+    """Retry backoff anchored on last_attempt_at (Rowboat's retry-storm guard).
+
+    Applies while the last attempt did not land a run: it errored, or it was a
+    window skip, which leaves last_run_at behind the attempt so the band stays
+    due. Without the second case a skipped window calls the LLM on every tick
+    until the band closes."""
+    attempted = _parse_utc(task.get("last_attempt_at"))
+    if attempted is None:
         return False
-    try:
-        attempted = datetime.fromisoformat(task["last_attempt_at"])
-    except ValueError:
-        return False
-    if attempted.tzinfo is None:
-        attempted = attempted.replace(tzinfo=UTC)
+    if not task.get("last_run_error"):
+        last_run = _parse_utc(task.get("last_run_at"))
+        if last_run is not None and last_run >= attempted:
+            return False
     return (now - attempted).total_seconds() < backoff_minutes * 60
+
+
+def _parse_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _trigger_line(trigger: str) -> str:

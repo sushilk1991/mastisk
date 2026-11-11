@@ -41,10 +41,15 @@ async def run_gemini(
         raise GeminiError(f"gemini not executable: {e}") from e
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         raise GeminiError(f"gemini timed out after {timeout}s")
+    except asyncio.CancelledError:
+        # An outer wait_for cancelled us; don't leave the CLI running.
+        proc.kill()
+        await proc.wait()
+        raise
     if proc.returncode != 0:
         raise GeminiError(stderr.decode("utf-8", errors="replace")[:500] or f"exit {proc.returncode}")
     text = stdout.decode("utf-8", errors="replace")

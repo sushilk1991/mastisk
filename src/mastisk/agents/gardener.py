@@ -31,7 +31,7 @@ from datetime import datetime
 from typing import ClassVar
 from zoneinfo import ZoneInfo
 
-from mastisk.agents.base import Agent
+from mastisk.agents.base import Agent, wiki_voice
 from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import claude_bridge, intelligence
 from mastisk.db.queries import connect
@@ -72,7 +72,8 @@ kind: __ARTICLE_KIND__
 __CONTEXT__
 
 Structure guidance:
-- 300–800 words. Lead with what this thing IS, then what the wiki's articles
+- 300–800 words (this replaces the depth target in the schema below). Lead
+  with what this thing IS, then what the wiki's articles
   collectively say about it, then how the views differ (attribute claims to
   their source articles with <span class="link"> references).
 - Include a "Key facts" section when the excerpts carry durable specifics.
@@ -134,6 +135,20 @@ Return STRICT JSON only: {{"rules": ["...", "..."]}} (or {{"rules": []}}).
 """
 
 PREFERENCE_RULES_HEADING = "## Preference rules"
+
+# Models copy the "- (2026-07-21) " prefix from the tail they are shown; we
+# add our own date, so a copied one produced "(2026-07-21) - (2026-07-22) …".
+_ENTRY_PREFIX_RE = re.compile(r"^(?:[-*]\s*|\(\d{4}-\d{2}-\d{2}\)\s*)+")
+
+
+def _clean_entries(raw: list, limit: int) -> list[str]:
+    cleaned = []
+    for entry in raw:
+        if isinstance(entry, str):
+            text = _ENTRY_PREFIX_RE.sub("", entry.strip()).strip()
+            if text:
+                cleaned.append(text)
+    return cleaned[:limit]
 
 
 class Gardener(Agent):
@@ -262,7 +277,12 @@ class Gardener(Agent):
         # braces that would blow up str.format.
         prompt = (
             resolve_prompt("gardener", "weave", WEAVE_PROMPT)
-            .format(identity=self.load_identity(), registry=compiler._known_articles_block())
+            .format(
+                # The voice guide rides with the reader profile so a
+                # user-overridden weave template still receives it.
+                identity=f"{self.load_identity()}\n\n{wiki_voice()}".rstrip(),
+                registry=compiler._known_articles_block(),
+            )
             .replace("__ARTICLE_ID__", cand["id"])
             .replace("__ARTICLE_TITLE__", cand["title"] or cand["id"])
             .replace("__ARTICLE_KIND__", cand["kind"])
@@ -337,10 +357,7 @@ class Gardener(Agent):
         if not isinstance(learnings, list):
             log.warning("gardener: reflection reply from %s not parseable", provider)
             return
-        cleaned = [
-            entry.strip() for entry in learnings
-            if isinstance(entry, str) and entry.strip()
-        ][: cfg.reflect_max_learnings]
+        cleaned = _clean_entries(learnings, cfg.reflect_max_learnings)
 
         if cleaned:
             self._append_learnings(cleaned)
@@ -359,7 +376,8 @@ class Gardener(Agent):
         with connect() as conn:
             wrote = conn.execute(
                 """SELECT verb, obj FROM feed
-                   WHERE agent IN ('compiler', 'synthesizer') AND verb IN ('wrote', 'updated', 'enriched')
+                   WHERE agent IN ('compiler', 'synthesizer')
+                     AND verb IN ('wrote', 'updated', 'enriched', 'synthesized')
                      AND ts >= datetime('now', '-7 days')
                    ORDER BY ts DESC LIMIT 15""",
             ).fetchall()
@@ -380,6 +398,7 @@ class Gardener(Agent):
             escalated = conn.execute(
                 """SELECT obj FROM feed
                    WHERE agent = 'escalator' AND ts >= datetime('now', '-7 days')
+                     AND verb NOT IN ('skipped', 'failed')
                    ORDER BY ts DESC LIMIT 8""",
             ).fetchall()
             if escalated:
@@ -430,9 +449,7 @@ class Gardener(Agent):
         if not isinstance(rules, list):
             log.warning("gardener: distill reply from %s not parseable", provider)
             return
-        cleaned = [
-            r.strip() for r in rules if isinstance(r, str) and r.strip()
-        ][: cfg.distill_max_rules]
+        cleaned = _clean_entries(rules, cfg.distill_max_rules)
 
         if cleaned:
             self._append_preference_rules(cleaned)
@@ -507,7 +524,15 @@ class Gardener(Agent):
         path.parent.mkdir(parents=True, exist_ok=True)
         existing = read_vault_text(path) if path.exists() else "# Learnings\n"
         block = "".join(f"- ({today}) {entry}\n" for entry in learnings)
-        write_vault_text(path, existing.rstrip("\n") + "\n" + block)
+        # Learnings belong above the preference rules. Appending at the end
+        # of the file filed them under that heading, where the distill pass
+        # then read them back as existing rules.
+        idx = existing.find(PREFERENCE_RULES_HEADING)
+        if idx == -1:
+            write_vault_text(path, existing.rstrip("\n") + "\n" + block)
+            return
+        head = existing[:idx].rstrip("\n") + "\n" + block
+        write_vault_text(path, head + "\n" + existing[idx:])
 
 
 def _strip_tags(html: str) -> str:

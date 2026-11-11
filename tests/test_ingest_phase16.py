@@ -1005,3 +1005,34 @@ def test_journal_photo_unavailable_path_maps_bad_frontmatter_to_409(
 
     assert res.status_code == 409, res.text
     assert "frontmatter" in res.json()["detail"]
+
+
+def test_availability_checks_do_not_import_optional_modules(monkeypatch):
+    """Availability is answered from find_spec; the heavy import only happens
+    when a conversion or transcription actually runs."""
+    import importlib
+    import importlib.util
+
+    from mastisk.ingest import converters
+    from mastisk.integrations import whisper
+
+    def no_import(name, *args, **kwargs):
+        raise AssertionError(f"availability check imported {name}")
+
+    monkeypatch.setattr(importlib, "import_module", no_import)
+
+    monkeypatch.setattr(
+        importlib.util, "find_spec",
+        lambda name, *a, **k: object() if name in {"markitdown", "mlx_whisper"} else None,
+    )
+    assert converters.document_converter_available() is True
+    assert whisper.is_available() is True
+
+    def missing(name, *args, **kwargs):
+        if name == "docling.document_converter":
+            raise ModuleNotFoundError("No module named 'docling'")
+        return None
+
+    monkeypatch.setattr(importlib.util, "find_spec", missing)
+    assert converters.document_converter_available() is False
+    assert whisper.is_available() is False

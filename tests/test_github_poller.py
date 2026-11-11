@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -44,8 +43,8 @@ def mock_bridge():
 
 
 def test_poller_writes_snapshot_and_context(db, vault_tmp, mock_bridge):
-    from mastisk.agents.github_poller import GithubPoller
     from mastisk.agents.base import enqueue
+    from mastisk.agents.github_poller import GithubPoller
     _seed_repo(db)
     enqueue("github_poller", "poll", {"repo_slug": "a/b"})
 
@@ -67,8 +66,8 @@ def test_poller_writes_snapshot_and_context(db, vault_tmp, mock_bridge):
 
 
 def test_poller_handles_not_found(db, vault_tmp):
-    from mastisk.agents.github_poller import GithubPoller
     from mastisk.agents.base import enqueue
+    from mastisk.agents.github_poller import GithubPoller
     from mastisk.bridges import github_bridge
     _seed_repo(db, slug="gone/zero", owner="gone", name="zero")
     enqueue("github_poller", "poll", {"repo_slug": "gone/zero"})
@@ -86,8 +85,8 @@ def test_poller_handles_not_found(db, vault_tmp):
 
 
 def test_poller_handles_auth_error(db, vault_tmp):
-    from mastisk.agents.github_poller import GithubPoller
     from mastisk.agents.base import enqueue
+    from mastisk.agents.github_poller import GithubPoller
     from mastisk.bridges import github_bridge
     _seed_repo(db)
     enqueue("github_poller", "poll", {"repo_slug": "a/b"})
@@ -106,8 +105,8 @@ def test_poller_handles_auth_error(db, vault_tmp):
 
 def test_poller_rate_limited_defers(db, vault_tmp):
     """Rate limit → no snapshot written; will retry next tick."""
-    from mastisk.agents.github_poller import GithubPoller
     from mastisk.agents.base import enqueue
+    from mastisk.agents.github_poller import GithubPoller
     from mastisk.bridges import github_bridge
     _seed_repo(db)
     enqueue("github_poller", "poll", {"repo_slug": "a/b"})
@@ -126,6 +125,7 @@ def test_poller_rate_limited_defers(db, vault_tmp):
 def test_poller_polls_local_repo(db, vault_tmp, tmp_path):
     """End-to-end: add a local repo row, run poller, expect snapshot + context_md."""
     import subprocess
+
     from mastisk.agents.base import enqueue
     from mastisk.agents.github_poller import GithubPoller
 

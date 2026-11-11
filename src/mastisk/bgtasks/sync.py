@@ -27,6 +27,7 @@ from typing import Any
 import yaml
 from slugify import slugify
 
+from mastisk.bgtasks.triggers import cron_trigger
 from mastisk.db.queries import connect
 from mastisk.file_locks import host_file_lock
 from mastisk.paths import automations_dir, vault_dir
@@ -135,8 +136,11 @@ def validate_triggers(raw: Any) -> dict[str, Any]:
     cron = raw.get("cron")
     if cron:
         cron = str(cron).strip()
-        if len(cron.split()) != 5:
-            raise ValueError(f"cron must be a 5-field expression, got {cron!r}")
+        try:
+            # Only parseability matters here, so the timezone is arbitrary.
+            cron_trigger(cron, UTC)
+        except ValueError as exc:
+            raise ValueError(f"invalid cron {cron!r}: {exc}") from exc
         out["cron"] = cron
     windows = raw.get("windows")
     if windows:

@@ -537,13 +537,13 @@ def test_capture_journal_rejects_bad_frontmatter_without_rewriting(
     path = vault_tmp / "journal" / "2026-06-11.md"
     path.parent.mkdir()
     original = (
-        "---\n"
-        "mood: [bad\n"
-        "---\n\n"
-        "## Tasks\n\n"
-        "## Log\n\n"
-        "## Reflections\n"
-    ).encode()
+        b"---\n"
+        b"mood: [bad\n"
+        b"---\n\n"
+        b"## Tasks\n\n"
+        b"## Log\n\n"
+        b"## Reflections\n"
+    )
     path.write_bytes(original)
     fake_capture_router.side_effect = None
     fake_capture_router.return_value = _capture(

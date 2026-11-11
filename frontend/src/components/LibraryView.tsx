@@ -81,7 +81,8 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
 
   async function loadAll() {
     setErr(null);
-    setLoading(true);
+    // `loading` starts true and only gates the first paint; live refetches keep
+    // the tab bodies mounted so forms, focus and scroll survive.
     try {
       await Promise.all([loadBooks(), loadQuotes(), loadReview()]);
     } catch (e) {

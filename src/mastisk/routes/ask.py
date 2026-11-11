@@ -12,7 +12,7 @@ from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -23,6 +23,7 @@ router = APIRouter(tags=["ask"])
 log = logging.getLogger("mastisk.ask")
 
 _MAX_CONTEXT_CHARS = 56_000
+_MAX_HISTORY_CHARS = 6_000
 _KIND_CAPS = {
     "article": 10,
     "note": 6,
@@ -54,7 +55,17 @@ _WEB_QUERY_NOISE = frozenset({
 
 class AskMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=6_000)
+    content: str = Field(min_length=1, max_length=_MAX_HISTORY_CHARS)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _truncate(cls, value: object) -> object:
+        # Clients replay prior turns verbatim, and questions (8k) and answers
+        # (uncapped) can exceed the history budget. Rejecting would fail every
+        # later ask until the long turn scrolls out, so trim instead.
+        if isinstance(value, str):
+            return value[:_MAX_HISTORY_CHARS]
+        return value
 
 
 class AskRequest(BaseModel):
@@ -104,7 +115,9 @@ async def ask(req: AskRequest) -> dict:
             effective_req,
             extra_queries=plan["queries"],
         )
-        if req.article_id:
+        # signals.article_id is an enforced FK; a stale or unknown id must not
+        # fail the question, so only record the signal for a real article.
+        if req.article_id and _article_exists(conn, req.article_id):
             q.add_signal(
                 conn,
                 article_id=req.article_id,
@@ -898,6 +911,12 @@ def _web_search_queries(question: str) -> list[str]:
     return [original] if original else []
 
 
+def _article_exists(conn: sqlite3.Connection, article_id: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM articles WHERE id = ?", (article_id,),
+    ).fetchone() is not None
+
+
 def _render_sources(sources: list[dict]) -> tuple[list[dict], str]:
     included: list[dict] = []
     chunks: list[str] = []
@@ -915,7 +934,10 @@ def _render_sources(sources: list[dict]) -> tuple[list[dict], str]:
             "web_page": 6_000,
         }.get(str(source["kind"]), 1_500)
         content = content[: min(per_source_limit, remaining)]
-        if len(content) < 40 or remaining < 200:
+        # The 40-char floor drops retrieval noise; text the user handed us
+        # directly (a highlighted phrase, the open page) is never noise.
+        user_supplied = source.get("current") or source["kind"] in {"selection", "web_page"}
+        if (len(content) < 40 and not user_supplied) or remaining < 200:
             continue
         ref = f"S{len(included) + 1}"
         source = {**source, "ref": ref}

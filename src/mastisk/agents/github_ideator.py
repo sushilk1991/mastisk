@@ -1,7 +1,8 @@
 """GithubIdeator — reads repo context_md and generates idea-notes.
 
-Per spec §9, §10. Each idea becomes a note in vault/_notes/inbox/, picked up
-by the Notetaker on the next 30s scan — so ideas flow through classification,
+Per spec §9, §10. Each idea is written to vault/_notes/inbox/ and inserted as
+a ``notes`` row (source='file') here; the Notetaker's next scan queues that
+unclassified row for classification — so ideas flow through classification,
 escalation, and are roundtable-able exactly like user-authored notes.
 """
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
 from mastisk.agents.base import Agent, enqueue
@@ -109,7 +110,7 @@ class GithubIdeator(Agent):
         if self.disabled_tick():
             return
         settings = get_settings().github
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Cutoff for 'last_ideated_at'
         cutoff = now - timedelta(hours=settings.ideate_min_interval_hours)
 
@@ -175,7 +176,7 @@ class GithubIdeator(Agent):
         )
 
         # Call Claude → Codex → Ollama
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         ideas: list[dict] = []
         model_used = ""
         error_msg: str | None = None

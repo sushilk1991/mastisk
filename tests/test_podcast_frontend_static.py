@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -14,11 +13,11 @@ def test_diagram_branch_uses_mermaid_and_keeps_html_for_other_sections():
     branch = re.compile(
         r"s\.kind\s*===\s*['\"]diagram['\"]\s*\?\s*"
         r"<MermaidBlock\s+source=\{s\.body\}\s*/>\s*:\s*"
-        r"<div\s+dangerouslySetInnerHTML=\{\{\s*__html:\s*s\.body\s*\}\}\s*/>",
+        r"<SafeHtml\s+html=\{s\.body\}\s*/>",
         re.DOTALL,
     )
 
     assert branch.search(source), (
         "PodcastView must route diagram bodies to MermaidBlock and only render "
-        "non-diagram section bodies as HTML"
+        "non-diagram section bodies as sanitized HTML"
     )

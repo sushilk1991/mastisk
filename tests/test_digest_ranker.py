@@ -5,6 +5,7 @@ schema + migrations to a tmp SQLite, so triggers and indices match production.
 """
 from __future__ import annotations
 
+import math
 import sqlite3
 from collections import Counter
 from datetime import date, timedelta
@@ -75,6 +76,26 @@ class TestQualityScore:
         one = digest_ranker.quality_score({**base, "sources_count": 1}, today)
         four = digest_ranker.quality_score({**base, "sources_count": 4}, today)
         assert four > one
+
+    def test_older_article_scores_lower_than_fresh_one(self):
+        base = {
+            "kind": "Concept", "body_md": "x" * 2000, "sources_count": 2,
+            "backlinks_count": 1, "forwardlinks_count": 1,
+        }
+        reference = "2026-04-21"
+        fresh = digest_ranker.quality_score(
+            {**base, "updated_at": "2026-04-20 12:00:00"}, reference,
+        )
+        stale = digest_ranker.quality_score(
+            {**base, "updated_at": "2026-04-17 12:00:00"}, reference,
+        )
+        assert stale < fresh
+        # 48 h before the reference is one decay constant.
+        assert digest_ranker._freshness("2026-04-19 00:00:00", reference) == pytest.approx(
+            math.exp(-1)
+        )
+        # Updated after the reference: clamped, never a bonus.
+        assert digest_ranker._freshness("2026-04-21 09:00:00", reference) == 1.0
 
 
 class TestUserProfile:

@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
 # ─────────────────────────────── fixtures / helpers ───────────────────────────────
 
 
@@ -57,7 +56,7 @@ def _seed_note(
     write_file: bool = True,
 ) -> int:
     """Insert a classified note + its on-disk file. Returns the note id."""
-    from mastisk.paths import notes_dir, vault_dir
+    from mastisk.paths import vault_dir
     ts = created_at or datetime(2026, 4, 21, 14, 35, 22).astimezone()
     if slug is None:
         slug = f"143522-seed-{id(body) if body else note_id or 'n'}"
@@ -602,3 +601,115 @@ def test_manual_escalate_on_already_done_creates_second_stub(escalator, db, vaul
     assert escs[1]["trigger"] == "manual"
     assert escs[1]["result"] == "stub_created"
     assert escs[1]["stub_article_id"] == f"{prior_stub_id}-2"
+
+
+# ─────────────────────────────── non-Claude failures / retry scan ───────────────────────────────
+
+
+def test_non_claude_error_after_pending_schedules_retry(escalator, db, vault_tmp):
+    """An OSError while building the prompt must not strand the note in
+    ``pending`` with no ``escalation_next_attempt_at``."""
+    note_id = _seed_note(db)
+    _enqueue_evaluate(note_id)
+    with patch.object(
+        type(escalator), "load_identity",
+        side_effect=OSError(11, "Resource deadlock avoided"),
+    ), _patch_claude() as mock_claude:
+        asyncio.run(escalator.run_once())
+    assert mock_claude.call_count == 0
+
+    row = db.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+    assert row["escalation_state"] == "retrying"
+    assert row["escalation_retry_count"] == 1
+    assert row["escalation_next_attempt_at"] is not None
+
+
+def test_non_claude_error_with_retries_exhausted_marks_failed(escalator, db, vault_tmp):
+    """No prompt was built, so there is nothing to hand the fallbacks: the
+    note ends ``failed`` rather than ``pending``."""
+    note_id = _seed_note(
+        db,
+        escalation_state="retrying",
+        escalation_retry_count=2,
+        escalation_trigger="auto",
+    )
+    _enqueue_evaluate(note_id)
+    with patch.object(
+        type(escalator), "load_identity",
+        side_effect=OSError(11, "Resource deadlock avoided"),
+    ), _patch_claude(), _patch_codex() as mock_codex, _patch_ollama() as mock_ollama:
+        asyncio.run(escalator.run_once())
+    assert mock_codex.call_count == 0
+    assert mock_ollama.call_count == 0
+
+    row = db.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+    assert row["escalation_state"] == "failed"
+    esc = db.execute(
+        "SELECT * FROM note_escalations WHERE note_id=? ORDER BY id DESC LIMIT 1",
+        (note_id,),
+    ).fetchone()
+    assert esc["result"] == "failed"
+    assert "Resource deadlock avoided" in (esc["error"] or "")
+
+
+def test_stub_write_failure_after_claude_success_schedules_retry(escalator, db, vault_tmp):
+    """A failure writing the stub (note still ``pending``) is retried too."""
+    note_id = _seed_note(db)
+    _enqueue_evaluate(note_id)
+    with _patch_claude(), patch(
+        "mastisk.agents.escalator.q.ensure_note_stub_article",
+        side_effect=RuntimeError("database is locked"),
+    ):
+        asyncio.run(escalator.run_once())
+
+    row = db.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+    assert row["escalation_state"] == "retrying"
+    assert row["escalation_next_attempt_at"] is not None
+
+
+def test_retry_scan_matches_note_id_exactly(escalator, db, vault_tmp):
+    """A queued job for note 120 must not hide the due retry for note 12."""
+    due = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat()
+    short = _seed_note(
+        db, slug="short-id", escalation_state="retrying",
+        escalation_trigger="auto", escalation_next_attempt_at=due,
+    )
+    long = _seed_note(db, slug="long-id")
+    db.execute("UPDATE notes SET id = 120 WHERE id = ?", (long,))
+    db.execute("UPDATE notes SET id = 12 WHERE id = ?", (short,))
+    _enqueue_evaluate(120)
+
+    escalator._reenqueue_due_retries()
+
+    queued = [
+        json.loads(r["payload_json"])["note_id"]
+        for r in db.execute(
+            "SELECT payload_json FROM jobs WHERE agent='escalator' AND status='queued'"
+        ).fetchall()
+    ]
+    assert sorted(queued) == [12, 120]
+
+
+def test_retry_after_failed_state_transition_reuses_the_stub(escalator, db, vault_tmp, monkeypatch):
+    """The stub commits before the note leaves `pending`; a retry must not mint "-2"."""
+    note_id = _seed_note(db)
+    _enqueue_evaluate(note_id, trigger="auto")
+    real_transition = type(escalator)._transition
+    calls = {"n": 0}
+
+    def flaky(self, *args, **kwargs):
+        if kwargs.get("escalation_state", args[1] if len(args) > 1 else None) in ("auto_done", "manual_done"):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("database is locked")
+        return real_transition(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(escalator), "_transition", flaky)
+    with _patch_claude():
+        asyncio.run(escalator.run_once())
+        db.execute("UPDATE notes SET escalation_next_attempt_at = '2000-01-01T00:00:00+00:00' WHERE id=?", (note_id,))
+        asyncio.run(escalator.run_once())
+        asyncio.run(escalator.run_once())
+
+    stubs = db.execute("SELECT id FROM articles WHERE source_note_id=?", (note_id,)).fetchall()
+    assert len(stubs) == 1

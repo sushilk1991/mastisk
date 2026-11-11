@@ -132,7 +132,12 @@ async def test_personal_os_scan_includes_inventory_and_content(db, monkeypatch):
     monkeypatch.setattr(scheduler, "_catch_up_daily_cron_engines", lambda: None, raising=False)
     monkeypatch.setattr(scheduler, "_graph_repair_once", lambda: None)
     monkeypatch.setattr("mastisk.routes.domains.sync_config_domains", lambda: calls.append("domains"))
-    monkeypatch.setattr("mastisk.projects.sync.scan_projects", lambda: calls.append("projects"))
+
+    def broken_projects():
+        calls.append("projects")
+        raise ValueError("malformed frontmatter")  # must not stop later mirrors
+
+    monkeypatch.setattr("mastisk.projects.sync.scan_projects", broken_projects)
     monkeypatch.setattr("mastisk.tasks.sync.scan_tasks", lambda: calls.append("tasks"))
     monkeypatch.setattr("mastisk.routines.sync.scan_routines", lambda: calls.append("routines"))
     monkeypatch.setattr("mastisk.people.sync.scan_people", lambda: calls.append("people"))

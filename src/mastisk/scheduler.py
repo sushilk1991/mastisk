@@ -134,9 +134,9 @@ async def start_scheduler(gate: _RunGate | None = None):
 
     try:
         from mastisk.agents.studio import scan_agent_profiles, scan_agent_skills
+        from mastisk.bgtasks.sync import scan_bg_tasks
         from mastisk.content.sync import scan_content
         from mastisk.inventory.sync import scan_inventory
-        from mastisk.bgtasks.sync import scan_bg_tasks
         from mastisk.journal import scan_journal_days
         from mastisk.library.sync import scan_library
         from mastisk.people.sync import scan_people
@@ -146,18 +146,26 @@ async def start_scheduler(gate: _RunGate | None = None):
         from mastisk.tasks.sync import scan_tasks
 
         def personal_os_scan() -> None:
-            sync_config_domains()
-            scan_projects()
-            scan_tasks()
-            scan_routines()
-            scan_people()
-            scan_library()
-            scan_inventory()
-            scan_agent_skills()
-            scan_agent_profiles()
-            scan_content()
-            scan_journal_days()
-            scan_bg_tasks()
+            # One unreadable or malformed file (bad YAML, an evicted iCloud
+            # file) must not stop the mirrors that come after it.
+            for scan in (
+                sync_config_domains,
+                scan_projects,
+                scan_tasks,
+                scan_routines,
+                scan_people,
+                scan_library,
+                scan_inventory,
+                scan_agent_skills,
+                scan_agent_profiles,
+                scan_content,
+                scan_journal_days,
+                scan_bg_tasks,
+            ):
+                try:
+                    scan()
+                except Exception:
+                    log.exception("personal_os_scan: %s failed", scan.__name__)
 
         sched.add_job(
             personal_os_scan, "interval",

@@ -158,3 +158,29 @@ def test_save_as_note_409_when_no_synthesis(client, db):
     rt_id = cur.lastrowid
     r = client.post(f"/api/roundtables/{rt_id}/save-as-note", json={})
     assert r.status_code == 409
+
+
+def test_save_as_note_slug_collision_keeps_both_files(client, db, vault_tmp, monkeypatch):
+    # Two saves landing on the same HHMMSS-slug: the second must get its own
+    # file instead of overwriting and renaming the first note's.
+    monkeypatch.setattr(
+        "mastisk.routes.notes.derive_slug", lambda text, ts: "120000-same-prompt",
+    )
+    saved = []
+    for synthesis in ("first synthesis", "second synthesis"):
+        cur = db.execute(
+            """INSERT INTO roundtables (input_type, input_ref, prompt, status, synthesis, synthesis_model)
+               VALUES ('prompt', '', 'same prompt', 'done', ?, 'claude')""",
+            (synthesis,),
+        )
+        db.commit()
+        r = client.post(f"/api/roundtables/{cur.lastrowid}/save-as-note", json={})
+        assert r.status_code == 201, r.text
+        saved.append((r.json(), synthesis))
+
+    assert [body["slug"] for body, _ in saved] == [
+        "120000-same-prompt", "120000-same-prompt-2",
+    ]
+    for body, synthesis in saved:
+        note = db.execute("SELECT path FROM notes WHERE id = ?", (body["note_id"],)).fetchone()
+        assert synthesis in (vault_tmp / note["path"]).read_text(encoding="utf-8")

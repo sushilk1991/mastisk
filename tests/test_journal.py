@@ -422,13 +422,13 @@ def test_journal_route_rejects_bad_frontmatter_without_rewriting(
     path = vault_tmp / "journal" / "2026-06-11.md"
     path.parent.mkdir()
     original = (
-        "---\n"
-        "mood: [bad\n"
-        "---\n\n"
-        "## Tasks\n\n"
-        "## Log\n\n"
-        "## Reflections\n"
-    ).encode()
+        b"---\n"
+        b"mood: [bad\n"
+        b"---\n\n"
+        b"## Tasks\n\n"
+        b"## Log\n\n"
+        b"## Reflections\n"
+    )
     path.write_bytes(original)
 
     with _client(vault_tmp, data_tmp, db) as client:

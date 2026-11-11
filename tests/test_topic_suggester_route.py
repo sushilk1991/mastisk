@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -47,7 +47,7 @@ def _insert_active(
 
 
 def _seed_note_for_route(db, *, summary: str = "summary") -> int:
-    now = datetime.now(timezone.utc).isoformat(sep=" ", timespec="seconds")
+    now = datetime.now(UTC).isoformat(sep=" ", timespec="seconds")
     db.execute(
         """INSERT INTO notes (slug, path, body, body_sha256, source, created_at,
                               classified_at, classification, summary, tags_json)

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from mastisk.db import queries as q
@@ -29,8 +29,13 @@ class SignalIn(BaseModel):
 @router.post("/signals")
 def record(sig: SignalIn):
     if sig.kind not in _ALLOWED:
-        return {"ok": False, "error": f"unknown signal kind: {sig.kind}"}
+        raise HTTPException(422, f"unknown signal kind: {sig.kind}")
     with connect() as conn:
+        # signals.article_id is an enforced foreign key.
+        if sig.article_id is not None and not conn.execute(
+            "SELECT 1 FROM articles WHERE id = ?", (sig.article_id,)
+        ).fetchone():
+            raise HTTPException(404, "article not found")
         q.add_signal(conn, article_id=sig.article_id, kind=sig.kind, value=sig.value)
     return {"ok": True}
 

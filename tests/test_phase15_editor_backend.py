@@ -503,7 +503,7 @@ def test_note_editor_save_keeps_typed_capture_frontmatter_notes_skipped(
     path.parent.mkdir(parents=True)
     updated = "---\ncapture:\n  type: task\n---\n\nUpdated task body"
     path.write_text(updated, encoding="utf-8")
-    body_sha = hashlib.sha256("Original task body".encode("utf-8")).hexdigest()
+    body_sha = hashlib.sha256(b"Original task body").hexdigest()
     cur = db.execute(
         """INSERT INTO notes
            (slug, path, body, body_sha256, source, created_at, classified_at,

@@ -1,8 +1,8 @@
 """Generic article extraction — fetch any HTML URL, pull main text + images.
 
-Powers two ingestion paths:
-  * Scout's RSS-driven clipping (one item per feed entry)
-  * Listener's universal /api/listen URL (any web page the user pastes)
+``fetch_and_extract`` powers the Listener's universal /api/listen URL path (any
+web page the user pastes), and the Twitter extractor falls back to it. Scout
+does its own fetching and shares only the image helpers at the bottom.
 
 Wraps trafilatura for the main-text extraction and reuses Scout's regex-based
 image picking. Intentionally narrow: we don't try to render JS, follow paywalls,

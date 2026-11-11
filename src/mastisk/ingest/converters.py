@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,10 +38,11 @@ def convert_document(path: Path) -> ConversionResult:
 
 
 def _module_available(name: str) -> bool:
+    # find_spec, not import_module: this runs on the event loop inside upload
+    # handlers, and importing docling/markitdown for real takes seconds.
     try:
-        importlib.import_module(name)
-        return True
-    except ImportError:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
         return False
 
 

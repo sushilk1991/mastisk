@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -128,8 +129,9 @@ def test_add_repo_404_message_with_pat(client, monkeypatch):
     async def raise_nf(o, n): raise github_bridge.GithubNotFound("nope")
     monkeypatch.setenv("MASTISK_GITHUB_PAT", "ghp_fake_for_test")
     # pydantic-settings may or may not read this env; if not, patch settings directly:
-    from mastisk.settings import get_settings
     from unittest.mock import patch as _patch
+
+    from mastisk.settings import get_settings
     s = get_settings()
     with _patch.object(s.github, "pat", "ghp_fake_for_test"):
         with patch("mastisk.routes.repos_route.github_bridge.fetch_repo_metadata", side_effect=raise_nf):
@@ -310,3 +312,42 @@ def test_browse_hides_hidden_except_git(client, monkeypatch, tmp_path):
     assert ".hidden" not in names
     # .git is not filtered; it should be present.
     assert ".git" in names
+
+
+def test_readd_local_repo_keeps_history_and_untombstones(client, db, tmp_path):
+    import subprocess
+    p = tmp_path / "myproj"
+    p.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=p, check=True)
+
+    slug = client.post("/api/repos/local", json={"path": str(p)}).json()["slug"]
+    db.execute(
+        "UPDATE repos SET context_md = 'ctx', last_polled_at = '2026-01-01 00:00:00',"
+        " added_at = '2025-12-31 00:00:00' WHERE slug = ?",
+        (slug,),
+    )
+    db.execute(
+        "INSERT INTO repo_snapshots (repo_slug, polled_at) VALUES (?, '2026-01-01 00:00:00')",
+        (slug,),
+    )
+    db.execute(
+        "INSERT INTO repo_idea_runs (repo_slug, ideated_at) VALUES (?, '2026-01-01 00:00:00')",
+        (slug,),
+    )
+    db.commit()
+    assert client.delete(f"/api/repos/by-slug/{slug}").status_code == 204
+
+    r = client.post("/api/repos/local", json={"path": str(p)})
+    assert r.status_code == 201, r.text
+    assert r.json()["slug"] == slug
+
+    row = db.execute("SELECT * FROM repos WHERE slug = ?", (slug,)).fetchone()
+    assert row["deleted_at"] is None
+    assert row["context_md"] == "ctx"
+    assert row["last_polled_at"] == "2026-01-01 00:00:00"
+    assert row["added_at"] == "2025-12-31 00:00:00"
+    for table in ("repo_snapshots", "repo_idea_runs"):
+        n = db.execute(
+            f"SELECT COUNT(*) AS n FROM {table} WHERE repo_slug = ?", (slug,),
+        ).fetchone()["n"]
+        assert n == 1, table

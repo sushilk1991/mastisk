@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import re
 import threading
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from mastisk.file_locks import host_file_lock
 from mastisk.paths import inventory_dir, vault_dir
 from mastisk.projects.sync import split_frontmatter
 from mastisk.routes.notes import atomic_write
+from mastisk.routines.sync import local_today
 
 _CREATE_INVENTORY_LOCK = threading.Lock()
 _VALID_STATUSES = {"owned", "sold", "discarded"}
@@ -99,7 +100,7 @@ def create_inventory_file(
     clean_name = _clean_text(name)
     if not clean_name:
         raise ValueError("name must be non-blank")
-    clean_acquired = _clean_patch_date(acquired, field="acquired") if acquired else date.today().isoformat()
+    clean_acquired = _clean_patch_date(acquired, field="acquired") if acquired else local_today()
     meta = {
         "name": clean_name,
         "acquired": clean_acquired,

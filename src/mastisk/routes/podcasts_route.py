@@ -9,7 +9,7 @@ backfill has run.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from mastisk.db import queries as q
 from mastisk.db.queries import connect
@@ -18,7 +18,7 @@ router = APIRouter(tags=["podcasts"])
 
 
 @router.get("/podcasts")
-def list_podcasts(limit: int = 100):
+def list_podcasts(limit: int = Query(100, ge=1, le=500)):
     """List articles compiled from podcast/video sources, newest first."""
     with connect() as conn:
         return {"items": q.list_podcast_articles(conn, limit=limit)}

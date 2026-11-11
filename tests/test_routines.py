@@ -430,3 +430,51 @@ def test_stale_day_routine_missed_reminder_is_cancelled(
         "status": "cancelled",
         "last_error": "routine_missed stale day",
     }
+
+
+def test_routine_toggle_preserves_annotated_completion_lines(db, vault_tmp):
+    from mastisk.routines.sync import scan_routines, toggle_routine_completion
+
+    path = vault_tmp / "routines" / "run.md"
+    path.parent.mkdir(parents=True)
+    original = (
+        "---\n"
+        "name: Run\n"
+        "---\n\n"
+        "## Completions\n"
+        "- 2026-11-01 ran 5k\n"
+        "- 2026-11-02\n"
+        "Felt slow this week.\n"
+        "- 2026-11-04\n"
+        "\n"
+        "## Notes\n"
+        "Keep going.\n"
+    )
+    path.write_text(original, encoding="utf-8")
+    scan_routines([path])
+
+    toggle_routine_completion("run", date_value="2026-11-03")
+    with_third = original.replace("- 2026-11-04\n", "- 2026-11-03\n- 2026-11-04\n")
+    assert path.read_text(encoding="utf-8") == with_third
+
+    toggle_routine_completion("run", date_value="2026-11-05")
+    with_fifth = with_third.replace("- 2026-11-04\n", "- 2026-11-04\n- 2026-11-05\n")
+    assert path.read_text(encoding="utf-8") == with_fifth
+
+    toggle_routine_completion("run", date_value="2026-11-02")
+    assert path.read_text(encoding="utf-8") == with_fifth.replace("- 2026-11-02\n", "")
+
+
+def test_routine_scan_does_not_archive_quoted_false_frontmatter(db, vault_tmp):
+    from mastisk.routines.sync import get_routine, scan_routines, toggle_routine_completion
+
+    path = vault_tmp / "routines" / "stretch.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '---\nname: Stretch\narchived: "false"\n---\n\n## Completions\n',
+        encoding="utf-8",
+    )
+    scan_routines([path])
+
+    assert get_routine("stretch") is not None
+    assert toggle_routine_completion("stretch", date_value="2026-11-03")["completed"] is True

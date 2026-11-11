@@ -182,7 +182,8 @@ export function TodayView({
 
   async function load() {
     setErr(null);
-    setLoading(true);
+    // `loading` starts true and only gates the first paint; live refetches keep
+    // the rendered subtree mounted so forms, focus and scroll survive.
     const calendarLoad = loadCalendarToday();
     try {
       const [taskRows, routineRows, reminderRows, focusRows, slippingRows, resurfaceItem] = await Promise.all([
@@ -1241,14 +1242,11 @@ export function PeopleView({ liveKey }: LiveProps) {
   async function loadDetail(slug: string | null) {
     if (!slug) {
       setDetail(null);
-      setFollowUpAt('');
       return;
     }
     setErr(null);
     try {
-      const row = await api.peopleApi.get(slug);
-      setDetail(row);
-      setFollowUpAt(followUpIsoToDatetimeLocal(row.follow_up_at));
+      setDetail(await api.peopleApi.get(slug));
     } catch (e) {
       setDetail(null);
       setErr(errorMessage(e));
@@ -1257,6 +1255,11 @@ export function PeopleView({ liveKey }: LiveProps) {
 
   useEffect(() => { void loadList(); }, [liveKey]);
   useEffect(() => { void loadDetail(selected); }, [selected, liveKey]);
+  // Reset the draft only when a different person is shown; live refetches of
+  // the same person must not overwrite an in-progress edit.
+  useEffect(() => {
+    setFollowUpAt(followUpIsoToDatetimeLocal(detail?.follow_up_at ?? null));
+  }, [detail?.slug]);
 
   async function createPerson(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1482,16 +1485,20 @@ export function InventoryView({ liveKey }: LiveProps) {
 
   useEffect(() => { void loadList(); }, [liveKey, statusFilter, locationFilter]);
   useEffect(() => { void loadDetail(selected); }, [selected, liveKey]);
+  function resetEdits(row: InventoryDetail) {
+    setEditName(row.name);
+    setEditAcquired(row.acquired ?? '');
+    setEditValue(row.value == null ? '' : String(row.value));
+    setEditStatus(INVENTORY_STATUSES.includes(row.status as InventoryStatus) ? row.status as InventoryStatus : 'owned');
+    setEditLocation(row.location ?? '');
+    setEditPhoto(row.photo ?? '');
+    setEditNotes(row.body ?? '');
+  }
+  // Reset the form only when a different item is shown; live refetches of the
+  // same item must not overwrite in-progress edits.
   useEffect(() => {
-    if (!detail) return;
-    setEditName(detail.name);
-    setEditAcquired(detail.acquired ?? '');
-    setEditValue(detail.value == null ? '' : String(detail.value));
-    setEditStatus(INVENTORY_STATUSES.includes(detail.status as InventoryStatus) ? detail.status as InventoryStatus : 'owned');
-    setEditLocation(detail.location ?? '');
-    setEditPhoto(detail.photo ?? '');
-    setEditNotes(detail.body ?? '');
-  }, [detail]);
+    if (detail) resetEdits(detail);
+  }, [detail?.id]);
 
   async function createItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1542,6 +1549,7 @@ export function InventoryView({ liveKey }: LiveProps) {
       notes: editNotes,
     });
     setDetail(updated);
+    resetEdits(updated);
     await loadList();
   }
 
@@ -1714,13 +1722,20 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
 
   useEffect(() => { void loadList(); }, [liveKey, kindFilter, statusFilter, domainFilter]);
   useEffect(() => { void loadDetail(selected); }, [selected, liveKey]);
+  function editStatusOf(row: ContentDetail): ContentStatus {
+    return CONTENT_STATUSES.includes(row.status as ContentStatus) ? row.status as ContentStatus : 'idea';
+  }
+  function resetEdits(row: ContentDetail) {
+    setEditStatus(editStatusOf(row));
+    setEditChannel(row.channel ?? '');
+    setEditUrl(row.url ?? '');
+    setEditPublishDate(row.publish_date ?? '');
+  }
+  // Reset the form only when a different item is shown; live refetches of the
+  // same item must not overwrite in-progress edits.
   useEffect(() => {
-    if (!detail) return;
-    setEditStatus(CONTENT_STATUSES.includes(detail.status as ContentStatus) ? detail.status as ContentStatus : 'idea');
-    setEditChannel(detail.channel ?? '');
-    setEditUrl(detail.url ?? '');
-    setEditPublishDate(detail.publish_date ?? '');
-  }, [detail]);
+    if (detail) resetEdits(detail);
+  }, [detail?.slug]);
 
   async function createItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1765,12 +1780,17 @@ export function ContentView({ liveKey, onNavigate }: LiveProps & NavProps) {
       publish_date: editPublishDate || null,
     });
     setDetail(updated);
+    resetEdits(updated);
     await loadList();
   }
 
   async function moveStatus(slug: string, status: ContentStatus) {
     const updated = await api.contentApi.patch(slug, { status });
-    if (detail?.slug === slug) setDetail(updated);
+    if (detail?.slug === slug) {
+      setDetail(updated);
+      // A status move is its own save; keep the form's status in step with it.
+      setEditStatus(editStatusOf(updated));
+    }
     await loadList();
   }
 

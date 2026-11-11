@@ -142,9 +142,7 @@ def delete_article_artifact(artifact_id: int):
 
 @router.post("/articles/{article_id}/artifacts/regenerate")
 def regenerate_article_artifacts(article_id: str):
-    """Enqueue an artifact-agent job. The agent doesn't exist yet — this puts
-    the row in ``jobs`` so the wire is in place for the upcoming implementation.
-    """
+    """Enqueue an artifact-agent job (``agents/artifact_agent.py``)."""
     with connect() as conn:
         _ensure_article(conn, article_id)
     job_id = enqueue("artifact-agent", "generate", {"article_id": article_id})

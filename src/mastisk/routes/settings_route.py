@@ -7,7 +7,6 @@ model/URL/budget changes).
 """
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 import tomllib
@@ -196,19 +195,6 @@ def write_settings(body: SettingsIn):
 def _dump_toml(data: dict[str, Any]) -> str:
     """Preserve arbitrary nested TOML values when saving user-facing controls."""
     return "# Mastisk config — secrets remain local.\n" + tomli_w.dumps(data)
-
-
-def _toml_scalar(v: Any) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return str(v)
-    if isinstance(v, str):
-        # json.dumps handles escaping + quoting correctly for TOML basic strings
-        return json.dumps(v, ensure_ascii=False)
-    if isinstance(v, list):
-        return "[" + ", ".join(_toml_scalar(x) for x in v) + "]"
-    raise TypeError(f"unsupported config value type: {type(v).__name__}")
 
 
 # ───── GitHub PAT management ─────

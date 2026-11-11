@@ -18,12 +18,14 @@ KIND_COLOR = {
 }
 
 GRAPH_CACHE_TTL_SEC = 30
-_graph_cache: dict[str, object] = {"expires_at": 0.0, "full": b"", "compact": b""}
+_graph_cache: dict[str, bytes] = {"full": b"", "compact": b""}
+# Per-format expiry: a shared one let refreshing "full" extend a stale "compact".
+_graph_cache_expires: dict[str, float] = {"full": 0.0, "compact": 0.0}
 
 
 def _cached_response(key: str) -> Response | None:
     cached_body = _graph_cache.get(key)
-    if cached_body and time.monotonic() < float(_graph_cache.get("expires_at", 0.0)):
+    if cached_body and time.monotonic() < _graph_cache_expires.get(key, 0.0):
         return Response(
             content=cached_body,
             media_type="application/json",
@@ -119,4 +121,4 @@ def _refresh_cache(format_: str) -> None:
             "edges": compact_edges,
             "stats": stats,
         }, separators=(",", ":")).encode()
-    _graph_cache["expires_at"] = time.monotonic() + GRAPH_CACHE_TTL_SEC
+    _graph_cache_expires[format_] = time.monotonic() + GRAPH_CACHE_TTL_SEC

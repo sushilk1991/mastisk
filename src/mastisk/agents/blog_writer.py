@@ -41,6 +41,10 @@ log = logging.getLogger("mastisk.blog_writer")
 # Stoplist for the keyword-overlap pass (spec §6.2). Deliberately short — the
 # ranker only needs to strip the noise words that would otherwise dominate the
 # overlap count. English-only for v1; revisit if theme inputs drift multilingual.
+# Chars of an article body the keyword pre-rank reads; _gather_sources loads
+# only this much per candidate.
+_RANK_BODY_PREFIX_CHARS = 1000
+
 STOP_WORDS: frozenset[str] = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "and", "or", "but",
     "in", "on", "at", "to", "for", "of", "with", "from", "by", "as",
@@ -296,6 +300,7 @@ class BlogWriter(Agent):
                 ranked = [content_source, *ranked[:remaining_slots]]
             else:
                 ranked = ranked[: settings.max_sources]
+            self._hydrate_article_bodies(ranked)
             web_context = await self._gather_public_web_context(
                 theme=bp["theme"], ranked=ranked,
             )
@@ -444,7 +449,12 @@ class BlogWriter(Agent):
                    ORDER BY created_at DESC"""
             ).fetchall()
             article_rows = conn.execute(
-                f"""SELECT id, slug, title, summary, body_md, updated_at AS ts
+                # Ranking reads only a body prefix; the drafted sources get
+                # their full body back in _hydrate_article_bodies. Loading
+                # every in-window body_md here costs tens of MB per draft.
+                f"""SELECT id, slug, title, summary,
+                           substr(body_md, 1, {_RANK_BODY_PREFIX_CHARS}) AS body_md,
+                           updated_at AS ts
                     FROM articles
                     WHERE updated_at >= {cutoff_expr}"""
             ).fetchall()
@@ -509,6 +519,22 @@ class BlogWriter(Agent):
             })
         return candidates
 
+    @staticmethod
+    def _hydrate_article_bodies(ranked: list[dict]) -> None:
+        """Swap the ranking prefix for the full ``body_md`` on chosen articles."""
+        ids = [c["ref"] for c in ranked if c.get("kind") == "article"]
+        if not ids:
+            return
+        with connect() as conn:
+            rows = conn.execute(
+                f"SELECT id, body_md FROM articles WHERE id IN ({','.join('?' * len(ids))})",
+                ids,
+            ).fetchall()
+        bodies = {r["id"]: r["body_md"] or "" for r in rows}
+        for c in ranked:
+            if c.get("kind") == "article" and c["ref"] in bodies:
+                c["body"] = bodies[c["ref"]]
+
     # ───── ranking ─────
 
     async def _rank(self, candidates: list[dict], *, theme: str) -> list[dict]:
@@ -539,7 +565,7 @@ class BlogWriter(Agent):
         scored: list[tuple[float, dict]] = []
         for c in candidates:
             summary_tokens = self._tokenize(c.get("summary") or "")
-            body_head_tokens = self._tokenize((c.get("body") or "")[:1000])
+            body_head_tokens = self._tokenize((c.get("body") or "")[:_RANK_BODY_PREFIX_CHARS])
             overlap_summary = len(tokens & summary_tokens)
             overlap_body = len(tokens & body_head_tokens)
             score = overlap_summary + 0.5 * overlap_body
@@ -784,7 +810,9 @@ class BlogWriter(Agent):
             model = settings.ollama_model or get_settings().summarize_model_heavy
             result = await ollama_bridge.run_ollama(prompt, model)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
-            parsed = json.loads(text.strip())
+            parsed = claude_bridge.extract_json_block(text)
+            if parsed is None:
+                raise ValueError(f"no JSON object in response: {text[:200]!r}")
         except Exception as e:
             log.warning("blog_writer: rerank LLM call failed (%s)", e)
             return None

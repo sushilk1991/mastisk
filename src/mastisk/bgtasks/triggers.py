@@ -13,10 +13,13 @@ a hand-rolled matcher. Semantics copied from Rowboat's scheduler:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, tzinfo
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
+
+_DOW_PART_RE = re.compile(r"^(?:\*|(?P<first>\d+)(?:-(?P<last>\d+))?)(?:/(?P<step>\d+))?$")
 
 
 def due_trigger(
@@ -40,6 +43,47 @@ def due_trigger(
     return None
 
 
+def cron_trigger(expr: str, tz: tzinfo) -> CronTrigger:
+    """Build a CronTrigger from a standard 5-field crontab; ValueError if invalid."""
+    fields = expr.split()
+    if len(fields) != 5:
+        raise ValueError(f"cron must be a 5-field expression, got {expr!r}")
+    fields[4] = _apscheduler_day_of_week(fields[4])
+    return CronTrigger.from_crontab(" ".join(fields), timezone=tz)
+
+
+def _apscheduler_day_of_week(field: str) -> str:
+    """Translate a numeric crontab day-of-week field for APScheduler.
+
+    Crontab counts 0 or 7 = Sunday, 1 = Monday; APScheduler counts 0 = Monday
+    and rejects 7, so "0 9 * * 1" would fire on Tuesday. Numeric parts are
+    expanded to an explicit day list because a crontab range such as 0-2
+    (Sun-Tue) wraps in APScheduler's numbering. Day names mean the same in
+    both and pass through.
+    """
+    if not re.search(r"\d", field):
+        return field
+    if re.search(r"[A-Za-z]", field):
+        raise ValueError(f"cron day-of-week mixes names and numbers: {field!r}")
+    days: set[int] = set()
+    for part in field.split(","):
+        match = _DOW_PART_RE.match(part)
+        if not match:
+            raise ValueError(f"invalid cron day-of-week {field!r}")
+        step = int(match.group("step") or 1)
+        if match.group("first") is None:
+            first, last = 0, 6
+        else:
+            first = int(match.group("first"))
+            last = int(match.group("last") or (6 if match.group("step") else first))
+        if step < 1 or first > last or last > 7:
+            raise ValueError(f"invalid cron day-of-week {field!r}")
+        days.update(day % 7 for day in range(first, last + 1, step))
+    if len(days) == 7:
+        return "*"
+    return ",".join(str(day) for day in sorted((day - 1) % 7 for day in days))
+
+
 def _cron_due(
     expr: str,
     last_run_at: str | None,
@@ -49,7 +93,7 @@ def _cron_due(
     grace_seconds: int,
 ) -> bool:
     try:
-        trigger = CronTrigger.from_crontab(expr, timezone=tz)
+        trigger = cron_trigger(expr, tz)
     except ValueError:
         return False
     local_now = now.astimezone(tz)

@@ -248,15 +248,16 @@ class Listener(Agent):
                 payload={"source_id": src_id, "url": url},
             )
             return
+        # Check before downloading: the file is useless without a transcriber.
+        if not whisper.is_available():
+            raise RuntimeError(
+                "mlx-whisper is not installed. "
+                "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
+            )
         work_dir = tmp_dir() / f"audio-{_hash16(url)}"
         work_dir.mkdir(parents=True, exist_ok=True)
         try:
             audio_path = await _download_to(url, work_dir)
-            if not whisper.is_available():
-                raise RuntimeError(
-                    "mlx-whisper is not installed. "
-                    "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
-                )
             result = await whisper.transcribe(audio_path)
             title = Path(url).stem or url
             src_context = {
@@ -297,15 +298,16 @@ class Listener(Agent):
                 payload={"source_id": src_id, "url": audio_url},
             )
             return
+        # Check before downloading: the file is useless without a transcriber.
+        if not whisper.is_available():
+            raise RuntimeError(
+                "mlx-whisper is not installed. "
+                "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
+            )
         work_dir = tmp_dir() / f"podcast-{_hash16(audio_url)}"
         work_dir.mkdir(parents=True, exist_ok=True)
         try:
             audio_path = await _download_to(audio_url, work_dir)
-            if not whisper.is_available():
-                raise RuntimeError(
-                    "mlx-whisper is not installed. "
-                    "Install with: uv tool install --force --reinstall --with mlx-whisper mastisk"
-                )
             result = await whisper.transcribe(audio_path)
 
             src_context = {

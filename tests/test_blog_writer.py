@@ -1845,3 +1845,44 @@ def test_get_recent_blog_post_source_refs_excludes_deleted(db):
     got = get_recent_blog_post_source_refs(db, 5)
     assert ("note", "alive") in got
     assert ("note", "dead") not in got
+
+
+def test_llm_rerank_tolerates_fenced_json(agent, db, vault_tmp):
+    """Ollama often fences the rerank object; a bare json.loads rejected it."""
+    candidates = [
+        {"kind": "note", "ref": 1, "title": None, "summary": "first", "body": "a"},
+        {"kind": "note", "ref": 2, "title": None, "summary": "second", "body": "b"},
+    ]
+    reply = "```json\n" + json.dumps(
+        {"scored": [{"i": 1, "score": 0.9}, {"i": 0, "score": 0.2}]}
+    ) + "\n```"
+
+    with patch(
+        "mastisk.agents.blog_writer.ollama_bridge.run_ollama",
+        new_callable=AsyncMock, return_value={"text": reply},
+    ):
+        scored = asyncio.run(agent._llm_rerank(candidates, theme="anything"))
+
+    assert scored is not None
+    assert {c["ref"]: s for c, s in scored} == {2: 0.9, 1: 0.2}
+
+
+def test_gather_loads_article_prefix_and_hydrates_only_chosen(agent, db, vault_tmp):
+    """Ranking sees a bounded body prefix; full bodies come back only for
+    the articles that made the cut."""
+    from mastisk.agents.blog_writer import _RANK_BODY_PREFIX_CHARS
+
+    long_body = "word " * 2000
+    for article_id in ("kept", "dropped"):
+        db.execute(
+            """INSERT INTO articles (id, kind, title, slug, body_md, summary)
+               VALUES (?, 'Concept', ?, ?, ?, 'the summary')""",
+            (article_id, article_id, article_id, long_body),
+        )
+
+    by_ref = {c["ref"]: c for c in agent._gather_sources(14)}
+    assert by_ref["kept"]["body"] == long_body[:_RANK_BODY_PREFIX_CHARS]
+
+    agent._hydrate_article_bodies([by_ref["kept"]])
+    assert by_ref["kept"]["body"] == long_body
+    assert by_ref["dropped"]["body"] == long_body[:_RANK_BODY_PREFIX_CHARS]

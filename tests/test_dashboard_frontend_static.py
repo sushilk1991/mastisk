@@ -91,7 +91,7 @@ def test_system_rail_exposes_calendar_health_actions():
 def test_people_followup_datetime_local_uses_timezone_helpers():
     source = _dashboard_source()
 
-    assert "followUpIsoToDatetimeLocal(row.follow_up_at)" in source
+    assert "followUpIsoToDatetimeLocal(detail?.follow_up_at" in source
     assert "followUpDatetimeLocalToIso(followUpAt)" in source
     assert "datetime-local has no zone" in source
     assert "getTimezoneOffset()" in source

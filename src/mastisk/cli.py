@@ -12,7 +12,6 @@ import subprocess
 import sys
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -297,7 +296,7 @@ def dev(port: int = typer.Option(5555)):
                            "--factory", "--reload", "--host", "0.0.0.0", "--port", str(port)])
 
 
-def _run(cmd, cwd: Optional[Path] = None):
+def _run(cmd, cwd: Path | None = None):
     proc = subprocess.Popen(cmd, cwd=cwd)
     proc.wait()
 
@@ -310,6 +309,7 @@ def status(
 ):
     """Full status report: DB contents, agents, identity files, bridges."""
     import asyncio
+
     from mastisk.db.queries import connect, user_info
 
     _ensure_db()
@@ -483,7 +483,7 @@ def doctor():
 
 @app.command()
 def init(
-    ollama_key: Optional[str] = typer.Option(None, "--ollama-key", help="Ollama Cloud API key"),
+    ollama_key: str | None = typer.Option(None, "--ollama-key", help="Ollama Cloud API key"),
     demo: bool = typer.Option(False, "--demo", help="Also load the demo wiki (Test-time compute + friends)"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing config + self files"),
 ):
@@ -711,14 +711,14 @@ def update(
     current = _git_output(repo, ["rev-parse", "--short", "HEAD"]).strip()
 
     console.print(f"[dim]current:[/dim] {current}  [dim]behind:[/dim] {behind}  [dim]ahead:[/dim] {ahead}"
-                  + (f"  [yellow]local changes[/yellow]" if dirty else ""))
+                  + ("  [yellow]local changes[/yellow]" if dirty else ""))
 
     if check:
         if behind == "0":
             console.print("[green]up to date[/green]")
         else:
             console.print(f"[yellow]{behind} new commit(s) available[/yellow] — run `mastisk update`")
-            _run_in(repo, ["git", "log", "--oneline", f"HEAD..@{{u}}"], capture=False)
+            _run_in(repo, ["git", "log", "--oneline", "HEAD..@{u}"], capture=False)
         raise typer.Exit(0)
 
     if behind == "0" and not dirty:
@@ -770,7 +770,7 @@ def update(
         raise typer.Exit(1) from exc
 
 
-def _load_install_source() -> Optional[str]:
+def _load_install_source() -> str | None:
     p = data_dir() / "install_source"
     if p.exists():
         return p.read_text().strip()
@@ -852,7 +852,7 @@ def reset(
             if d.exists():
                 shutil.rmtree(d)
                 d.mkdir()
-        console.print(f"[green]wiped vault[/green] (kept _self/)")
+        console.print("[green]wiped vault[/green] (kept _self/)")
 
 
 def _seed_demo() -> None:
@@ -864,7 +864,7 @@ def _seed_demo() -> None:
 # ═════════════════════════════════ add-feed / add-youtube ═════════════════════════════════
 
 @app.command(name="add-feed")
-def add_feed(url: str, title: Optional[str] = typer.Option(None, "--title", "-t")):
+def add_feed(url: str, title: str | None = typer.Option(None, "--title", "-t")):
     """Subscribe to an RSS feed."""
     from mastisk.db.queries import connect
     _ensure_db()
@@ -902,6 +902,7 @@ def add_youtube(url: str):
 def add_podcast(url: str):
     """Queue a podcast URL (RSS feed, Apple Podcasts, or direct audio) for the Listener agent."""
     import asyncio
+
     from mastisk.agents.base import enqueue
     from mastisk.integrations import podcasts
 
@@ -953,7 +954,7 @@ def backfill_segments(
     Skips sources whose URL we can't re-download (private/expired audio).
     """
     import asyncio
-    from pathlib import Path
+
     from mastisk.agents.listener import _download_to, _hash16
     from mastisk.db.queries import connect
     from mastisk.integrations import whisper
@@ -1017,7 +1018,7 @@ def backfill_segments(
 
             result = asyncio.run(whisper.transcribe(audio_path))
             if not result.segments:
-                console.print(f"    [yellow]skip[/yellow] — whisper returned no segments")
+                console.print("    [yellow]skip[/yellow] — whisper returned no segments")
                 continue
             with connect() as conn:
                 conn.executemany(
@@ -1264,6 +1265,7 @@ def roundtable(
 def add_repo(slug: str = typer.Argument(..., help="GitHub slug like 'owner/repo'")) -> None:
     """Register a GitHub repo for ingestion + daily ideation."""
     import asyncio
+
     from mastisk.agents.base import enqueue
     from mastisk.bridges import github_bridge
     from mastisk.db import queries as q
@@ -1301,6 +1303,7 @@ def add_repo(slug: str = typer.Argument(..., help="GitHub slug like 'owner/repo'
 def add_local_repo(path: str = typer.Argument(..., help="Absolute path to a local git repo")) -> None:
     """Track a local git repository. Mastisk polls its state and generates idea-notes like it does for GitHub repos."""
     from pathlib import Path as _P
+
     from mastisk.agents.base import enqueue
     from mastisk.bridges import local_git_bridge
     from mastisk.db.queries import connect
@@ -1381,7 +1384,7 @@ def url():
 
 
 @app.command()
-def logs(n: int = 50):
+def logs(n: int = typer.Option(50, "-n", "--n", help="Number of feed entries")):
     """Tail the latest N feed entries (agent activity)."""
     from mastisk.db import queries as q
     from mastisk.db.queries import connect
@@ -1418,9 +1421,10 @@ def repair_graph_cmd(
     """
     import re
     from collections import Counter, defaultdict
+
+    from mastisk.agents.linter import Linter
     from mastisk.db import queries as q
     from mastisk.db.queries import connect
-    from mastisk.agents.linter import Linter
 
     _ensure_db()
     LINK_RE = re.compile(
@@ -1483,17 +1487,27 @@ def repair_graph_cmd(
 
 
 @app.command()
-def backup(output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o")):
+def backup(output_dir: Path | None = typer.Option(None, "--output-dir", "-o")):
     """Tar the DB + config to a timestamped archive."""
+    import sqlite3
     import tarfile
+    import tempfile
+    from contextlib import closing
     from datetime import datetime
     target_dir = output_dir or Path.cwd()
     target_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     out = target_dir / f"mastisk-backup-{ts}.tar.gz"
-    with tarfile.open(out, "w:gz") as tar:
+    with tempfile.TemporaryDirectory(prefix="mastisk-backup-") as tmp, tarfile.open(out, "w:gz") as tar:
         if db_path().exists():
-            tar.add(db_path(), arcname="mastisk.db")
+            # The DB runs in WAL mode and the daemon may be writing: the main
+            # file alone can be stale or torn. The online backup API yields a
+            # consistent snapshot that includes uncheckpointed WAL frames.
+            snapshot = Path(tmp) / "mastisk.db"
+            with closing(sqlite3.connect(db_path(), timeout=30)) as src, \
+                 closing(sqlite3.connect(snapshot)) as dst:
+                src.backup(dst)
+            tar.add(snapshot, arcname="mastisk.db")
         if config_path().exists():
             tar.add(config_path(), arcname="config.toml")
     console.print(f"[green]backup[/green] {out}")
@@ -1537,7 +1551,7 @@ def _ensure_db() -> None:
     init_schema()
 
 
-def _lan_ip() -> Optional[str]:
+def _lan_ip() -> str | None:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -1548,7 +1562,7 @@ def _lan_ip() -> Optional[str]:
         return None
 
 
-def _tailscale_binary() -> Optional[str]:
+def _tailscale_binary() -> str | None:
     for candidate in [
         shutil.which("tailscale"),
         "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
@@ -1559,7 +1573,7 @@ def _tailscale_binary() -> Optional[str]:
     return None
 
 
-def _tailscale_hostname() -> Optional[str]:
+def _tailscale_hostname() -> str | None:
     ts = _tailscale_binary()
     if not ts:
         return None

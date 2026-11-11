@@ -17,3 +17,8 @@ export function formatApiDateTime(value: string | null | undefined): string | nu
     minute: '2-digit',
   });
 }
+
+/** Full local date-time for an API timestamp; falls back to the raw value. */
+export function localDateTime(value: string): string {
+  return parseApiDate(value)?.toLocaleString() ?? value;
+}

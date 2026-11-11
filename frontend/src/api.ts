@@ -131,11 +131,16 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
 
-  listen: async (url: string): Promise<{ job_id: number | null; kind: string; message: string }> => {
+  // `exactUrl` ingests the page itself; without it the daemon swaps a page
+  // that advertises an RSS feed for that feed.
+  listen: async (
+    url: string,
+    opts: { exactUrl?: boolean } = {},
+  ): Promise<{ job_id: number | null; kind: string; message: string }> => {
     const r = await fetch(`${BASE}/listen`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, ...(opts.exactUrl ? { exact_url: true } : {}) }),
     });
     if (!r.ok) {
       let detail = `${r.status}`;
@@ -426,28 +431,30 @@ export const api = {
   artifacts: (articleId: string) =>
     j<{ artifacts: Artifact[] }>(`${BASE}/articles/${articleId}/artifacts`),
 
-  createArtifact: (
+  // The daemon reads the spec object from `spec_json`, returns it parsed as
+  // `spec`, and wraps the row in `{ artifact }`.
+  createArtifact: async (
     articleId: string,
-    body: { kind: ArtifactKind; title: string; description?: string | null; spec: Record<string, unknown> },
-  ) =>
-    j<Artifact>(`${BASE}/articles/${articleId}/artifacts`, {
+    { spec, ...rest }: { kind: ArtifactKind; title: string; description?: string | null; spec: Record<string, unknown> },
+  ): Promise<Artifact> =>
+    (await j<{ artifact: Artifact }>(`${BASE}/articles/${articleId}/artifacts`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+      body: JSON.stringify({ ...rest, spec_json: spec }),
+    })).artifact,
 
-  updateArtifact: (
+  updateArtifact: async (
     id: number,
-    patch: { title?: string; description?: string | null; spec?: Record<string, unknown> },
-  ) =>
-    j<Artifact>(`${BASE}/artifacts/${id}`, {
+    { spec, ...rest }: { title?: string; description?: string | null; spec?: Record<string, unknown> },
+  ): Promise<Artifact> =>
+    (await j<{ artifact: Artifact }>(`${BASE}/artifacts/${id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(patch),
-    }),
+      body: JSON.stringify({ ...rest, ...(spec ? { spec_json: spec } : {}) }),
+    })).artifact,
 
   deleteArtifact: (id: number) =>
-    fetch(`${BASE}/artifacts/${id}`, { method: 'DELETE' }),
+    j<{ ok: boolean }>(`${BASE}/artifacts/${id}`, { method: 'DELETE' }),
 
   regenerateArtifacts: (articleId: string) =>
     j<{ queued: boolean; job_id?: number | string }>(
@@ -496,8 +503,7 @@ export const api = {
         }),
       }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); }),
 
-    list: (limit = 50): Promise<Note[]> =>
-      fetch(`/api/notes?limit=${limit}`).then(r => r.json()),
+    list: (limit = 50): Promise<Note[]> => j<Note[]>(`${BASE}/notes?limit=${limit}`),
 
     get: (id: number): Promise<Note> =>
       fetch(`/api/notes/${id}`).then(r => {
@@ -511,7 +517,7 @@ export const api = {
       }),
 
     forArticle: (articleId: string, limit = 50): Promise<Note[]> =>
-      fetch(`/api/articles/${encodeURIComponent(articleId)}/notes?limit=${limit}`).then(r => r.json()),
+      j<Note[]>(`${BASE}/articles/${encodeURIComponent(articleId)}/notes?limit=${limit}`),
 
     escalate: (id: number): Promise<{ note_id: number; escalation_state: string }> =>
       fetch(`/api/notes/${id}/escalate`, { method: 'POST' }).then(r => {
@@ -907,7 +913,7 @@ export const api = {
       }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); }),
 
     list: (limit = 50): Promise<RoundtableSummary[]> =>
-      fetch(`/api/roundtables?limit=${limit}`).then(r => r.json()),
+      j<RoundtableSummary[]>(`${BASE}/roundtables?limit=${limit}`),
 
     get: (id: number): Promise<Roundtable> =>
       fetch(`/api/roundtables/${id}`).then(async r => {
@@ -1175,7 +1181,7 @@ export const api = {
       pat_set: boolean; pat_last4: string | null;
       poll_interval_minutes: number; ideate_min_interval_hours: number; ideas_per_run: number;
     }> =>
-      fetch(`${BASE}/settings/github`).then(r => r.json()),
+      j(`${BASE}/settings/github`),
 
     setPat: (pat: string): Promise<{ pat_set: boolean; pat_last4: string | null }> =>
       fetch(`${BASE}/settings/github/pat`, {
@@ -1230,8 +1236,7 @@ export const api = {
         return r.json();
       }),
 
-    list: (): Promise<RepoSummary[]> =>
-      fetch('/api/repos').then(r => r.json()),
+    list: (): Promise<RepoSummary[]> => j<RepoSummary[]>(`${BASE}/repos`),
 
     get: (slug: string): Promise<RepoDetail> =>
       // Slugs can be `owner/name` or `local:/Users/...`; the `{slug:path}`

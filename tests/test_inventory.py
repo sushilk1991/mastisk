@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import date
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -415,17 +414,30 @@ def test_capture_inventory_command_creates_item_and_medium_confidence_triages(
         assert dict(inventory_row) == {"name": "Vintage lamp", "status": "owned"}
 
 
-def test_create_inventory_defaults_acquired_to_today(db, vault_tmp, monkeypatch):
+def test_create_inventory_defaults_acquired_to_capture_timezone_today(
+    db, vault_tmp, data_tmp, monkeypatch
+):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     import mastisk.inventory.sync as inventory_sync
+    import mastisk.routines.sync as routines_sync
+    from mastisk.settings import reload_settings
 
-    class FixedDate(date):
+    (data_tmp / "config.toml").write_text(
+        '[capture]\ndefault_timezone = "America/Los_Angeles"\n', encoding="utf-8"
+    )
+    reload_settings()
+
+    class FixedDateTime(datetime):
         @classmethod
-        def today(cls):
-            return cls(2026, 6, 12)
+        def now(cls, tz=None):
+            value = datetime(2026, 6, 12, 0, 30, tzinfo=ZoneInfo("Asia/Kolkata"))
+            return value.astimezone(tz) if tz is not None else value
 
-    monkeypatch.setattr(inventory_sync, "date", FixedDate)
+    monkeypatch.setattr(routines_sync, "datetime", FixedDateTime)
 
     item = inventory_sync.create_inventory_file(name="Passport holder")
 
-    assert item["acquired"] == "2026-06-12"
+    assert item["acquired"] == "2026-06-11"
     assert item["status"] == "owned"

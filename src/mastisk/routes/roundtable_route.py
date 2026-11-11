@@ -1,7 +1,6 @@
 """Roundtable API — fan-out sessions across Claude/Codex/Gemini/Ollama."""
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -78,10 +77,6 @@ async def get_roundtable_endpoint(rt_id: int) -> dict:
     return {**_detail(rt), "perspectives": perspectives}
 
 
-class SaveAsNoteRequest(BaseModel):
-    pass
-
-
 @router.post("/{rt_id}/save-as-note", status_code=201)
 async def save_as_note_endpoint(rt_id: int) -> dict:
     with connect() as conn:
@@ -98,34 +93,25 @@ async def save_as_note_endpoint(rt_id: int) -> dict:
         raise HTTPException(status_code=409, detail="roundtable has no synthesis yet")
 
     # Write synthesis as a note via the Phase 1 capture pipeline
-    from mastisk.paths import notes_inbox_dir, vault_dir
-    from mastisk.routes.notes import atomic_write, derive_slug
+    from mastisk.routes.notes import persist_note_capture
 
-    ts = datetime.now().astimezone()
-    body = _body_from_roundtable(rt)
     # Derive slug from the prompt (or synthesis if no prompt) so each saved
     # roundtable note has a distinguishable filename instead of sharing the
-    # 'from-roundtable-N' preamble prefix.
-    slug_source = rt["prompt"] or rt.get("synthesis") or f"roundtable-{rt['id']}"
-    slug = derive_slug(slug_source, ts)
-    target = notes_inbox_dir() / f"{slug}.md"
-    atomic_write(target, body)
-    rel_path = str(target.relative_to(vault_dir()))
+    # 'from-roundtable-N' preamble prefix. persist_note_capture resolves slug
+    # collisions before touching disk, so a same-second, same-prompt save
+    # can't overwrite another note's file.
+    row = persist_note_capture(
+        body=_body_from_roundtable(rt),
+        source="pwa",
+        slug_text=rt["prompt"] or rt.get("synthesis") or f"roundtable-{rt['id']}",
+    )
+    note_id = row["id"]
     with connect() as conn:
-        note_id = q.insert_note(
-            conn, slug=slug, path=rel_path, body=body,
-            source="pwa", created_at=ts,
-        )
-        # Reconcile filename if slug-collision suffix was applied
-        row = q.get_note(conn, note_id)
         # Link back to the roundtable
         conn.execute(
             "UPDATE roundtables SET saved_as_note_id = ? WHERE id = ?",
             (note_id, rt_id),
         )
-    actual_path = vault_dir() / row["path"]
-    if actual_path != target:
-        target.rename(actual_path)
     return {"note_id": note_id, "slug": row["slug"], "reused": False}
 
 

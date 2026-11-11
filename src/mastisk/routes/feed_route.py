@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from mastisk.agents.registry import agent_catalog
@@ -16,7 +16,7 @@ router = APIRouter(tags=["feed"])
 
 
 @router.get("/feed")
-def feed(limit: int = 50):
+def feed(limit: int = Query(50, ge=1, le=500)):
     with connect() as conn:
         return {"feed": q.recent_feed(conn, limit=limit), "agents": _agents_snapshot(conn)}
 

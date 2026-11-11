@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -594,8 +593,8 @@ def test_enabled_false_noops_capture_router(db, vault_tmp, data_tmp) -> None:
 
 
 def test_disabled_capture_router_still_records_routine_command(db, vault_tmp, data_tmp) -> None:
-    from mastisk.routines.sync import create_routine_file
     from mastisk.routes.capture import route_and_persist_capture
+    from mastisk.routines.sync import create_routine_file
 
     create_routine_file(name="Morning Vitamins", time_of_day="morning")
     with _client(vault_tmp, data_tmp, db) as client:

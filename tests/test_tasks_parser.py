@@ -139,3 +139,43 @@ def test_duplicate_uids_are_reassigned_after_the_first_occurrence():
         "- [ ] original 🆔 dup1",
         "- [ ] copied line 🆔 new222",
     ]
+
+
+def test_checkboxes_inside_code_fences_are_not_tasks():
+    from mastisk.tasks.parser import ensure_task_uids, parse_markdown_tasks
+
+    markdown = (
+        "- [ ] real task\n"
+        "```markdown\n"
+        "- [ ] sample in backticks\n"
+        "```\n"
+        "~~~~\n"
+        "- [x] sample in tildes\n"
+        "```\n"
+        "- [ ] still fenced, the backtick fence does not close a tilde one\n"
+        "~~~~\n"
+        "  ```\n"
+        "  - [ ] indented fence\n"
+        "  ```\n"
+        "- [ ] another real task\n"
+    )
+    uids = iter(["uid1", "uid2", "uid3", "uid4", "uid5", "uid6"])
+
+    stamped, assigned = ensure_task_uids(markdown, uid_factory=lambda: next(uids))
+
+    assert assigned == ["uid1", "uid2"]
+    assert stamped == markdown.replace(
+        "- [ ] real task\n", "- [ ] real task 🆔 uid1\n"
+    ).replace("- [ ] another real task\n", "- [ ] another real task 🆔 uid2\n")
+    assert [task["text"] for task in parse_markdown_tasks(stamped)] == [
+        "real task",
+        "another real task",
+    ]
+
+
+def test_inline_triple_backticks_do_not_open_a_fence():
+    from mastisk.tasks.parser import parse_markdown_tasks
+
+    text = "- [ ] a\n```inline``` is how you write code\n- [ ] b\n~~~\n- [ ] hidden\n~~~\n- [ ] c\n"
+    titles = [t["text"] for t in parse_markdown_tasks(text)]
+    assert titles == ["a", "b", "c"]

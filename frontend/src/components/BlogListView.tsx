@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
+import { localDateTime } from '../date';
 import type { BlogPostSummary, View } from '../types';
 import { TopicSuggestionsPanel } from './TopicSuggestionsPanel';
 
@@ -128,7 +129,7 @@ function Row({ row, onNavigate }: { row: BlogPostSummary; onNavigate: Props['onN
       }}
     >
       <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--fg-faint)' }}>
-        #{row.id} · {new Date(row.created_at).toLocaleString()} · {row.window_days}d window
+        #{row.id} · {localDateTime(row.created_at)} · {row.window_days}d window
         {' · '}
         <span style={{ color: statusColor }}>{row.status}</span>
         {row.model && <> · {row.model}</>}

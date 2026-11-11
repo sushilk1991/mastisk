@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
 from mastisk.agents.base import Agent, enqueue
@@ -89,7 +89,7 @@ class GithubPoller(Agent):
         if self.disabled_tick():
             return
         settings = get_settings().github
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         due_cutoff = now - timedelta(minutes=settings.poll_interval_minutes)
 
         with connect() as conn:
@@ -140,7 +140,7 @@ class GithubPoller(Agent):
         slug = repo["slug"]
         owner = repo["owner"]
         name = repo["name"]
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
 
         # Fetch everything we need. Any failure writes an error snapshot + updates last_polled_at.
         try:
@@ -219,13 +219,14 @@ class GithubPoller(Agent):
 
     async def _poll_local(self, repo: dict) -> None:
         from pathlib import Path
+
         from mastisk.bridges import local_git_bridge
         slug = repo["slug"]
         local_path = repo.get("local_path")
         if not local_path:
             log.warning("github_poller(local): no local_path for %s", slug)
             return
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         try:
             state = await local_git_bridge.fetch_local_repo_state(Path(local_path))
         except local_git_bridge.LocalGitError as e:

@@ -424,6 +424,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_domain ON tasks(domain);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project);
+CREATE INDEX IF NOT EXISTS idx_tasks_host_path ON tasks(host_path);
 
 -- ─────────────────────────────── Personal OS Phase 10 ───────────────────────────────
 -- Project depth mirrors. Project markdown remains canonical.

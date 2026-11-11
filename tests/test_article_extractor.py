@@ -6,7 +6,6 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-
 SAMPLE_HTML = """<!DOCTYPE html>
 <html><head>
   <title>The State of Agentic Coding in 2026</title>
@@ -87,18 +86,16 @@ async def test_fetch_and_extract_pulls_title_text_meta_and_images():
 async def test_fetch_and_extract_raises_on_paywall_with_no_text():
     from mastisk.integrations import article
 
-    with _patch_get(PAYWALL_HTML):
-        with pytest.raises(RuntimeError, match="no extractable text"):
-            await article.fetch_and_extract("https://example.com/locked")
+    with _patch_get(PAYWALL_HTML), pytest.raises(RuntimeError, match="no extractable text"):
+        await article.fetch_and_extract("https://example.com/locked")
 
 
 @pytest.mark.asyncio
 async def test_fetch_and_extract_raises_on_http_error():
     from mastisk.integrations import article
 
-    with _patch_get("Not found", status=404):
-        with pytest.raises(RuntimeError, match="HTTP 404"):
-            await article.fetch_and_extract("https://example.com/missing")
+    with _patch_get("Not found", status=404), pytest.raises(RuntimeError, match="HTTP 404"):
+        await article.fetch_and_extract("https://example.com/missing")
 
 
 def test_extract_inline_images_resolves_relative_dedupes_and_caps():

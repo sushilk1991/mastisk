@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import type { ArticlePreview } from '../types';
+import { SafeHtml } from './SafeHtml';
 
 // Tuning knobs. Defaults match the spec — 300ms to open, 150ms grace to move
 // the cursor from the link into the card without it disappearing mid-traverse.
@@ -291,7 +292,7 @@ function WikiHoverBody({ preview, targetId }: { preview: ArticlePreview | null; 
       </div>
       <div className="wh-title">{preview.title}</div>
       {preview.summary && (
-        <div className="wh-summary" dangerouslySetInnerHTML={{ __html: preview.summary }}/>
+        <SafeHtml className="wh-summary" html={preview.summary}/>
       )}
     </>
   );

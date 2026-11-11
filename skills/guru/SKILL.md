@@ -17,9 +17,8 @@ the API or write the DB directly.
    ```bash
    curl -sf http://localhost:5555/api/learning/today
    ```
-   If the daemon is down, say so and stop. Restarting means reinstalling with
-   `uv tool install --reinstall ~/Code/mastisk` then
-   `launchctl kickstart -k gui/$UID/com.mastisk.agents`, so ask first.
+   If the daemon is down, say so and stop. Starting or restarting it needs the
+   user's approval; then use `mastisk restart`, which drains active runs.
 2. If `lesson` is null and `active_goals > 0`: offer to trigger generation
    (`POST /api/learning/generate-now`), then poll `/api/learning/today`
    every ~20s until the lesson appears (a few minutes at most).

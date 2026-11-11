@@ -5,6 +5,7 @@ response matching the article schema; writes into SQLite + mirrors to vault/.
 """
 from __future__ import annotations
 
+import html as html_lib
 import json
 import logging
 import re
@@ -13,7 +14,7 @@ from pathlib import Path
 from slugify import slugify
 
 from mastisk import wiki_suggestions
-from mastisk.agents.base import Agent
+from mastisk.agents.base import Agent, wiki_voice
 from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import claude_bridge, imagegen_bridge, intelligence
 from mastisk.db import queries as q
@@ -45,7 +46,7 @@ Return a single JSON object in a ```json``` fenced block, matching this shape:
   "reading_minutes": 5,
   "sections": [
     {"h": "TL;DR", "kind": "callout", "body": "HTML-safe paragraph."},
-    {"h": "Mechanism", "body": "HTML-safe paragraphs. Use <span class=\\"link\\" data-target=\\"slug\\">wiki link</span> for cross-references."},
+    {"h": "A heading that states this section's point", "body": "HTML-safe paragraphs. Use <span class=\\"link\\" data-target=\\"slug\\">wiki link</span> for cross-references."},
     {"h": "How it works", "kind": "diagram", "body": "flowchart TD\\n  A[Input] --> B{Decision}\\n  B -->|yes| C[Outcome]"},
     {"h": "Open questions", "kind": "open", "body": "HTML-safe paragraph."}
   ],
@@ -61,14 +62,14 @@ Rules:
 - "id" and slugs must be kebab-case, ASCII, no spaces.
 - Weight in [0, 1]. Confidence in [0, 1] — your subjective calibration of how solid this page is.
 - Never invent sources you didn't see. Never hallucinate URLs.
-- Write body text in HTML. Use <em> for emphasis, <span class="link" data-target="slug"> for cross-references.
-- Match the user's writing style from their profile.
+- Write body text in HTML. Use <em> for emphasis, <code> for commands and flags, <span class="link" data-target="slug"> for cross-references. No markdown inside bodies.
+- Follow the writing guide above and the style section of the user's profile. The user's profile decides structure (TL;DR first, Open questions, linking). The writing guide decides how sentences are written.
 
 Depth — this is a reference wiki, not a feed of summaries:
-- Aim for 700–1400 words across 4–8 sections for a substantive source; fewer only when the source is genuinely thin.
-- A section body may contain MULTIPLE <p> paragraphs. Develop the ideas: the mechanism behind the claim, concrete numbers and examples from the source, what the author gets right or misses, and how it connects to concepts already in the wiki.
-- Prefer analytical headings ("Why the bottleneck is memory bandwidth") over generic ones ("Details", "More").
-- Include one section that situates the topic in the wider wiki: how it relates to, extends, or contradicts existing articles (use wiki links).
+- Aim for 700–1400 words across 4–8 sections for a substantive source. A thin source gets a short page: length comes from what the source contains, never from elaboration.
+- A section body may contain MULTIPLE <p> paragraphs. Develop the ideas: the mechanism behind the claim, concrete numbers and examples from the source, and what the author gets right or misses.
+- Prefer headings that state the section's point ("Why the bottleneck is memory bandwidth") over generic ones ("Details", "More").
+- Link to existing wiki articles where the source really touches them. Add a section relating the topic to the wider wiki only when there is a specific overlap or contradiction to report; do not bend the topic toward the user's usual themes to create one.
 
 Diagrams — visualize structure whenever the source has it:
 - Sections with "kind": "diagram" have a body that is PURE Mermaid source (no ``` fences, no HTML). Escape newlines as \\n inside the JSON string.
@@ -132,6 +133,28 @@ ARTICLE_JSON_SCHEMA = {
 }
 
 
+# The note is the only evidence an enrichment has: nothing fetches the commit
+# or document it mentions. Without this rule the 700-word depth target got
+# met with invented incidents and measured-looking figures
+# (docs/audits/2026-11-01-content-quality.md, finding 1).
+_NOTE_EVIDENCE_RULE = (
+    "The note above is your only source. Every specific on the page (numbers, "
+    "measurements, incidents, dates, names, what a commit or document contains) "
+    "must come from the note. You may add general background a practitioner "
+    "would already know, as long as the page says it is background and not "
+    "something the note reported. Do not open the commits, files or links the "
+    "note mentions, and do not guess what they contain. If the note is a "
+    "question or a proposal, the page stays a question or a proposal: keep its "
+    "uncertainty, and keep the page short if the note is short. The depth "
+    "target in the rules below does not apply to a short note."
+)
+
+
+def _voice_block() -> str:
+    voice = wiki_voice()
+    return f"# How to write the page\n{voice}\n\n" if voice else ""
+
+
 class Compiler(Agent):
     name = "compiler"
     tick_seconds = 300  # 5 min
@@ -189,6 +212,7 @@ class Compiler(Agent):
             f"{registry}\n\n"
             f"# Raw source\nTitle: {src['title']}\nURL: {src['url']}\nKind: {src['kind']}\n\n"
             f"{raw_text[:max_chars]}\n\n"
+            f"{_voice_block()}"
             f"{schema}"
         )
 
@@ -228,9 +252,10 @@ class Compiler(Agent):
         data["hero_image_url"] = src["hero_image_url"]
         if not data["hero_image_url"]:
             data["hero_image_url"] = await self._maybe_generate_hero(data)
+        is_new = self._is_new(data["id"])  # before persisting, or it is never new
         self._persist_article(data, source_id=source_id)
         self.emit_feed(
-            verb="wrote" if self._is_new(data["id"]) else "updated",
+            verb="wrote" if is_new else "updated",
             obj=data["title"][:80],
             kind=data["kind"].lower(),
             touched=1,
@@ -284,6 +309,8 @@ class Compiler(Agent):
             f"{note_body}\n\n"
             f"Use the existing article id `{article_id}` exactly — do not coin a new slug, "
             f"this enrichment overwrites the stub in place.\n\n"
+            f"{_NOTE_EVIDENCE_RULE}\n\n"
+            f"{_voice_block()}"
             f"{schema}"
         )
 
@@ -305,6 +332,8 @@ class Compiler(Agent):
         # ignored — the user already escalated this note; refusing to enrich
         # would leave the stub forever.
         data["id"] = article_id
+        if not data.get("kind"):
+            data["kind"] = stub["kind"]
         if data.get("kind") == "Synthesis":
             data["kind"] = "Concept"
 
@@ -513,6 +542,19 @@ def _normalize_article_data(data: dict) -> None:
     aka = data.get("aka") or []
     data["aka"] = [a for a in (aka if isinstance(aka, list) else []) if isinstance(a, str)]
 
+    # CLI tiers return null or prose for these; persisting float(None) failed
+    # the job after the model call was already paid for.
+    data["confidence"] = _coerce_number(data.get("confidence"), 0.6, 0.0, 1.0)
+    data["reading_minutes"] = int(_coerce_number(data.get("reading_minutes"), 5, 1, 60))
+
+
+def _coerce_number(value: object, default: float, low: float, high: float) -> float:
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
 
 def _extract_link_refs(sections: list[dict]) -> dict[str, str]:
     """Walk section bodies and return {target_slug: best_display_label}.
@@ -560,12 +602,18 @@ def _strip_html(html: str) -> str:
     # Preserve link targets as markdown-like refs
     s = re.sub(r'<span class="link" data-target="([^"]+)">([^<]+)</span>', r"[[\2|\1]]", html)
     s = re.sub(r"<em>([^<]+)</em>", r"*\1*", s)
+    s = re.sub(r"<code>([^<]+)</code>", r"`\1`", s)
     # Keep block boundaries: multi-paragraph bodies would otherwise collapse
     # into a single run of words ("...end.Next paragraph...").
     s = re.sub(r"</p>\s*<p[^>]*>", "\n\n", s)
     s = re.sub(r"<br\s*/?>", "\n", s)
+    # Lists (every "Key facts" section is one) get the same treatment.
+    s = re.sub(r"\s*<li[^>]*>\s*", "\n- ", s)
+    s = re.sub(r"\s*<(?:ul|ol)[^>]*>", "\n", s)
+    s = re.sub(r"</(?:ul|ol)>\s*", "\n\n", s)
     s = re.sub(r"<[^>]+>", "", s)
-    return s.strip()
+    # Entities are valid in the HTML body but literal noise in markdown.
+    return html_lib.unescape(re.sub(r"\n{3,}", "\n\n", s)).strip()
 
 
 def _render_markdown(data: dict) -> str:

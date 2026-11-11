@@ -13,7 +13,11 @@ Cluster selection: Personalized PageRank (HippoRAG2-style).
 
 Generation: draft -> critique -> at most one revision -> critique.
   - The intelligence bridge supplies both drafting and critique.
-  - Critic writes rationale bullets, then ``SCORE: <1-5>``.
+  - The cluster is a loose automatic grouping, so the drafter may use only
+    the members that share something, or skip the cluster outright.
+  - Prose guidance comes from ``wiki_voice.md`` (shared with the Compiler).
+  - Critic checks grounding, the connection, and readability against the
+    same full articles the drafter saw, then writes ``SCORE: <1-5>``.
   - Publication requires at least 4/5; missing or invalid scores fail closed.
 
 Withheld attempts retain cluster IDs, score, and rationale in synthesis_runs,
@@ -34,7 +38,8 @@ import re
 
 from slugify import slugify
 
-from mastisk.agents.base import Agent
+from mastisk.agents.base import Agent, wiki_voice
+from mastisk.agents.compiler import _render_markdown, _sections_to_md
 from mastisk.agents.registry import resolve_prompt
 from mastisk.bridges import intelligence
 from mastisk.db import queries as q
@@ -55,7 +60,7 @@ log = logging.getLogger("mastisk.synthesizer")
 # clusters' cached outputs. Cluster-hash dedup still applies, but a version
 # bump means we *could* decide to re-run historic clusters — we currently
 # don't, but the column is there for future replays.
-PROMPT_VERSION = 4
+PROMPT_VERSION = 5
 
 # PPR hyperparameters. Tuned for a small-to-medium wiki (hundreds of nodes).
 # On a larger graph we'd want to trim the adjacency to high-weight edges
@@ -76,25 +81,46 @@ _SEED_LIMIT = 10
 # overlap with the next tick.
 _MAX_QUEUED_JOBS_PER_TICK = 3
 
+# The drafter and the critic read each member article whole: the page can
+# only be as concrete as its inputs, and at 1,200 chars the drafter saw
+# little more than each lead paragraph and filled the rest with abstraction.
+# The cap is a guard against a runaway page, not a budget. The longest
+# article on 2026-11-11 was 17k chars, so eight full members stay near 35k
+# tokens.
+_MEMBER_BODY_MAX_CHARS = 24_000
+
+# The reader profile for a Synthesis. Interests, dislikes and learnings pick
+# what enters the wiki; here the cluster is already chosen, and that long list
+# of recurring themes pulled every page toward the same few subjects.
+_READER_PROFILE_FILES = ("identity", "style")
+
+_LINK_TARGET_RE = re.compile(r'data-target="([^"]+)"')
+
+_SKIP_PREFIX = "SKIPPED:"
+
 # JSON schema the draft model must emit. Mirrors Compiler.SCHEMA_MD but
 # slightly slimmer — Synthesis articles don't need aka, their kind is
 # fixed, and we don't ask for artifacts (the ArtifactAgent handles those
-# on a later pass if the user keeps the draft).
+# on a later pass if the user keeps the draft). Section headings are left
+# to the drafter: fixed "thread / what connects them / tension" headings
+# forced a grand unifying claim onto clusters that did not have one.
 _SCHEMA_MD = """
 Return a single JSON object in a ```json``` fenced block matching this shape:
 
 ```json
 {
+  "skip": false,
+  "skip_reason": "",
   "id": "lowercase-slug",
   "kind": "Synthesis",
   "title": "Human-readable title",
-  "summary": "1-2 sentence italic summary that names the thread.",
+  "summary": "One plain sentence naming what the articles have in common. Not a copy of the TL;DR.",
   "confidence": 0.0,
   "reading_minutes": 5,
   "sections": [
-    {"h": "The thread", "kind": "callout", "body": "HTML paragraph naming the pattern."},
-    {"h": "What connects them", "body": "HTML paragraph. Use <span class=\\"link\\" data-target=\\"slug\\">wiki link</span> for cross-references back to the source articles."},
-    {"h": "Tension / open question", "kind": "open", "body": "HTML paragraph."}
+    {"h": "TL;DR", "kind": "callout", "body": "<p>2-3 sentences: what these tools, incidents or papers share and why it matters to the reader, with their names and numbers.</p>"},
+    {"h": "A heading that states this section's point", "body": "<p>Paragraphs. Use <span class=\\"link\\" data-target=\\"slug\\">wiki link</span> for cross-references back to the source articles.</p>"},
+    {"h": "Open questions", "kind": "open", "body": "<p>What is still unsettled.</p>"}
   ],
   "related": [
     {"id": "source-article-slug", "label": "Source article title", "weight": 0.8}
@@ -103,30 +129,69 @@ Return a single JSON object in a ```json``` fenced block matching this shape:
 ```
 
 Rules:
+- If no real connection exists (see the task above), return only
+  {"skip": true, "skip_reason": "one plain sentence"}.
 - "kind" MUST be "Synthesis". Do not emit any other kind.
 - "title" must be a single clause, max __TITLE_MAX_CHARS__ characters. No subtitles or subtitle sentences; no em-dash appendages.
 - "id" and related ids must be kebab-case, ASCII, no spaces.
-- "related" SHOULD contain every cluster member you actually leaned on, with
-  weights in [0,1]. Link back to each source article via a wiki-link span
-  in the body too.
-- Body text is HTML. Use <em> for emphasis, <span class="link" data-target="slug">
-  for cross-references. Never invent ids — only link to slugs that appear
-  in the cluster below.
-- Do NOT summarise each article separately — that's already done per-article.
-  Find the *thread*, the shared pattern, or the tension between them.
+- "related" lists only the articles you actually used, with weights in
+  [0,1]. Link to each of them with a wiki-link span in the body too.
+- Body text is HTML. Use <p> for paragraphs, <em> for emphasis, <code> for
+  commands and flags, and <span class="link" data-target="slug"> for
+  cross-references. No markdown inside bodies. Never invent
+  ids: only link to slugs that appear in the articles above.
+- Sections: open with the "TL;DR" callout. Then two to four sections whose
+  headings state their point. Add "Open questions" (kind "open") only if the
+  articles really leave something unsettled; omit it otherwise.
+- Aim for 400-900 words in total. Shorter is fine when the connection is
+  simple.
+- The user's profile decides structure (TL;DR first, Open questions, linking). The writing guide decides how sentences are written.
+- "confidence" is how well the articles support the connection, not how
+  well the page reads.
 """.replace("__TITLE_MAX_CHARS__", str(q.MAX_GENERATED_ARTICLE_TITLE_CHARS))
 
 
-_CRITIC_TEMPLATE = """You are grading a Synthesis article written by a less capable model. The
-goal was to find the thread connecting the {n} source articles below.
+_CRITIC_TEMPLATE = """You are reviewing a draft Synthesis page for a personal wiki before it is
+published. The draft claims that some of the {n} source articles below have
+something in common. Its reader is one engineer who will not have the sources
+open, so the page has to stand on its own.
 
-1. FIRST, in 3-5 bullets, list what's missing, what's fabricated, or what's
-   a redundant per-article summary instead of genuine synthesis.
-2. THEN output a final line: `SCORE: <1-5>` where 5 = genuinely novel
-   cross-cutting insight, 3 = competent but obvious, 1 = fabricated /
-   incoherent.
+Check three things against the source articles:
 
-Return ONLY the rationale bullets + SCORE line. No preamble.
+1. Grounding. Is every number, date, name and incident in the draft present
+   in the source articles? Quote each one that is not.
+2. Connection. Is the claimed connection specific to these articles, or is
+   it so general it would fit most technical writing? Is any article forced
+   into it?
+3. Readability. Could the reader follow the page without the sources? Quote
+   sentences that state a conclusion without the facts behind it, use a
+   coined label or metaphor in place of a plain description, or would have
+   to be read twice.
+
+The italic line and the TL;DR are summaries: judge them only on whether the
+sections below support them. A sentence the draft marks as a guess or
+inference is not a grounding failure unless it states a specific number,
+date or name.
+
+Write 3-6 bullets. Each bullet quotes the sentence it is about and says what
+to change, so the writer can fix exactly that sentence. If a check finds
+nothing wrong, say so in one bullet.
+
+Then output a final line `SCORE: <1-5>`. Score how serious the problems are,
+not how many bullets you wrote. Wording you would polish, on a page that is
+accurate and easy to follow, is still a 4.
+- 5: fully grounded, a specific connection, and plain enough to retell.
+- 4: accurate and readable; the remaining fixes are word choice in at most
+  two sentences.
+- 3: the reader would be misled or lost somewhere: the connection is real,
+  but a section is too abstract to follow without the sources, a specific
+  that matters is unsupported, or more than two sentences state a
+  conclusion without its facts, use a coined label, or end a paragraph on
+  a slogan.
+- 2: the connection is forced or generic, or several claims are unsupported.
+- 1: mostly fabricated or incoherent.
+
+Return ONLY the bullets and the SCORE line. No preamble.
 
 ─── draft ───
 {draft_rendered}
@@ -235,12 +300,20 @@ class Synthesizer(Agent):
             log.info("synthesizer: withheld cluster %s (score=%s)", cluster_hash, eval_score)
             self.emit_feed(
                 verb="withheld",
-                obj=(draft_data or {}).get("title") or "Synthesis failed critic gate",
+                obj=(draft_data or {}).get("title") or (
+                    "No shared thread in cluster"
+                    if (eval_rationale or "").startswith(_SKIP_PREFIX)
+                    else "Synthesis failed critic gate"
+                ),
                 kind="synthesis",
                 payload={"cluster_size": len(cluster_ids), "eval_score": eval_score},
             )
             return None
 
+        draft_data["id"] = self._free_synthesis_id(draft_data["id"])
+        draft_data["related"] = [
+            r for r in draft_data["related"] if r.get("id") != draft_data["id"]
+        ]
         article_id = self._persist_synthesis(draft_data, cluster_ids)
 
         with connect() as conn:
@@ -457,17 +530,36 @@ class Synthesizer(Agent):
         positives: list[dict],
         negatives: list[dict],
     ) -> str:
-        identity = self.load_identity()
+        identity = self.load_identity(_READER_PROFILE_FILES)
         positive_block = self._render_positive_examples(positives)
         negative_block = self._render_negative_examples(negatives)
         title_block = self._render_title_guidance(members)
-        cluster_block = self._render_cluster_for_draft(members)
+        cluster_block = self._render_cluster(members)
 
         parts = [
-            "You are Mastisk's Synthesizer. Read the N articles below and write ONE",
-            "cross-cutting Synthesis article that surfaces the *thread* connecting them.",
-            "Do not summarise each one — that's already done per-article. Find the",
-            "shared pattern, the tension, or the emergent story.",
+            "You are writing a Synthesis page for a personal wiki.",
+            "",
+            f"Below are {len(members)} articles that the wiki's link graph grouped",
+            "together. The grouping is automatic and loose. Often only some of the",
+            "articles have anything real in common, and sometimes none do.",
+            "",
+            "Find one concrete thing that at least three of them share: the same",
+            "problem, the same cause, a disagreement, or one that explains another.",
+            "Then write a page that explains it to someone who has not read them.",
+            "",
+            "- Use only the articles that fit. Leave the others out; do not stretch",
+            "  an article to make it belong.",
+            "- Before you write, state the connection to yourself in two plain",
+            "  sentences. If those sentences would also be true of most technical",
+            "  articles, there is no real connection here: return the skip object",
+            "  described at the end. A skipped cluster is a good outcome.",
+            "- Organize the page by its points, not as one paragraph per article.",
+            "  But give the facts from each article that a point depends on: what",
+            "  the thing is, what was found, the number. The reader has not read",
+            "  the articles and should not need to.",
+            "- Where the articles disagree or the connection breaks down, say so.",
+            "- The summary and TL;DR may claim only what the sections go on to show.",
+            "  Say 'two of the three' when that is the case, not 'each' or 'all'.",
             "",
             identity,
             "",
@@ -478,18 +570,24 @@ class Synthesizer(Agent):
             parts.extend([negative_block, ""])
         parts.extend([title_block, ""])
         parts.extend([
-            f"─── cluster ({len(members)} articles) ───",
+            f"─── articles ({len(members)}) ───",
             cluster_block,
             "",
-            resolve_prompt("synthesizer", "schema", _SCHEMA_MD),
         ])
+        voice = wiki_voice()
+        if voice:
+            parts.extend(["─── how to write the page ───", voice, ""])
+        # Output contract last, so the JSON shape is the final thing read.
+        parts.append(resolve_prompt("synthesizer", "schema", _SCHEMA_MD))
         return "\n".join(parts)
 
     @staticmethod
-    def _render_cluster_for_draft(members: list[dict]) -> str:
+    def _render_cluster(members: list[dict]) -> str:
+        """Full member articles, shared by the drafter and the critic so the
+        critic judges grounding against what the drafter actually saw."""
         chunks: list[str] = []
         for m in members:
-            body = (m.get("body_md") or "")[:1200]
+            body = (m.get("body_md") or "")[:_MEMBER_BODY_MAX_CHARS]
             chunks.append(
                 f"### [{m['kind']}] {m['title']} (id: {m['id']})\n"
                 f"Summary: {m.get('summary') or ''}\n\n"
@@ -499,7 +597,7 @@ class Synthesizer(Agent):
 
     @staticmethod
     def _render_positive_examples(positives: list[dict]) -> str:
-        """Titles + first 200 chars of body for each accepted synthesis.
+        """Titles of the accepted syntheses.
 
         Empty string when there are no exemplars — callers omit the block
         entirely on a cold install (zero accepted + zero rejected).
@@ -508,15 +606,15 @@ class Synthesizer(Agent):
             return ""
         lines = [
             "─── examples the user has ACCEPTED ───",
-            "Use these as feedback examples for what the user keeps: specificity,",
-            "named threads, concrete links, and real synthesis. Do not clone their",
-            "headline cadence, repeated abstractions, or sentence shape.",
+            "These show which connections the user found worth keeping. Learn the",
+            "kind of connection from them. Do not clone their wording, headline",
+            "cadence or sentence shape: they predate the writing guide below.",
             "",
         ]
+        # Titles only. Body excerpts of pages written before the guide
+        # few-shot the old voice and its retired "The thread" heading.
         for p in positives:
-            title = p.get("title") or "(untitled)"
-            excerpt = ((p.get("body_md") or p.get("summary") or "")[:200]).strip()
-            lines.append(f"- {title}\n  {excerpt}")
+            lines.append(f"- {p.get('title') or '(untitled)'}")
         return "\n".join(lines)
 
     @staticmethod
@@ -541,10 +639,12 @@ class Synthesizer(Agent):
             "- Avoid high-level title nouns like layer, boundary, constraint, check,",
             "  gate, thread, pattern, or rule when a cluster-specific noun can carry",
             "  the title.",
+            "- Name the shared subject the way you would say it aloud to a colleague.",
+            "  Do not build the title by listing the sources.",
             f"- Title must be a single clause, max {q.MAX_GENERATED_ARTICLE_TITLE_CHARS} characters.",
             "- No subtitles or subtitle sentences; no em-dash appendages.",
             "",
-            "Concrete title anchors available in this cluster:",
+            "Titles of the articles in this cluster, for vocabulary:",
         ]
         for member in members:
             title = str(member.get("title") or "").strip()
@@ -575,10 +675,7 @@ class Synthesizer(Agent):
         # parse JSON to grade it, and doing so would reward structural
         # correctness over substance.
         rendered = self._render_draft_for_critic(draft_data)
-        sources_block = "\n".join(
-            f"- [{m['kind']}] {m['title']}: {m.get('summary') or ''}"
-            for m in members
-        )
+        sources_block = self._render_cluster(members)
         return resolve_prompt("synthesizer", "critic", _CRITIC_TEMPLATE).format(
             n=len(members),
             draft_rendered=rendered,
@@ -624,6 +721,13 @@ class Synthesizer(Agent):
             if candidate is None:
                 log.info("synthesizer: malformed draft JSON")
                 return draft_data, score, rationale
+            if candidate.get("skip"):
+                if draft_data is not None:
+                    # A repair that gives up keeps the failed draft's grade.
+                    return draft_data, score, rationale
+                reason = str(candidate.get("skip_reason") or "no shared thread").strip()
+                log.info("synthesizer: drafter skipped cluster: %s", reason)
+                return None, None, f"{_SKIP_PREFIX} {reason}"
 
             draft_data = self._normalise_draft(candidate, members)
             score, rationale = await self._critique(draft_data, members)
@@ -633,8 +737,9 @@ class Synthesizer(Agent):
             # Keep the original evidence and failed draft visible to the repair model.
             prompt = (
                 f"{base_prompt}\n\nRevise the draft once using the critic below. "
-                "Remove unsupported claims; do not invent evidence to satisfy the critic. "
-                "Return the same JSON schema.\n\n"
+                "Fix the sentences it quotes. Remove unsupported claims; do not invent "
+                "evidence to satisfy the critic. Drop an article the critic says was "
+                "forced in. Return the same JSON schema.\n\n"
                 f"Critic feedback:\n{rationale}\n\n"
                 f"Previous draft:\n{self._render_draft_for_critic(draft_data)}"
             )
@@ -729,19 +834,47 @@ class Synthesizer(Agent):
         except (TypeError, ValueError):
             rm = 5
         data["reading_minutes"] = max(1, min(60, rm))
-        # Auto-backfill related links: every cluster member that isn't
-        # already in data["related"] gets added at weight=0.5 so the graph
-        # reflects the synthesis's lineage.
-        existing = {r.get("id") for r in (data.get("related") or []) if isinstance(r, dict)}
-        related = list(data.get("related") or [])
+        # Backfill related links at weight=0.5 for members the body links to
+        # but the model forgot to list, so the graph reflects the page's
+        # lineage. Members the drafter left out stay out: a link to an
+        # article the page never mentions is a false edge. A draft that
+        # names no member at all falls back to the whole cluster.
+        related = [r for r in (data.get("related") or []) if isinstance(r, dict)]
+        existing = {r.get("id") for r in related}
+        linked: set[str] = set()
+        for section in data.get("sections") or []:
+            if isinstance(section, dict):
+                linked.update(_LINK_TARGET_RE.findall(str(section.get("body") or "")))
+        member_ids = {m["id"] for m in members}
+        used = (existing | linked) & member_ids
         for m in members:
-            if m["id"] in existing or m["id"] == data["id"]:
+            if m["id"] in existing:
+                continue
+            if used and m["id"] not in linked:
                 continue
             related.append({"id": m["id"], "label": m["title"], "weight": 0.5})
         data["related"] = related
         return data
 
     # ───── persistence ─────
+
+    @staticmethod
+    def _free_synthesis_id(article_id: str) -> str:
+        """The drafter picks the id, and has picked a source article's id.
+
+        Upserting that would overwrite the source page with the synthesis.
+        Only an existing Synthesis may be refreshed in place.
+        """
+        candidate, n = article_id, 1
+        with connect() as conn:
+            while True:
+                row = conn.execute(
+                    "SELECT kind FROM articles WHERE id = ?", (candidate,)
+                ).fetchone()
+                if row is None or row["kind"] == "Synthesis":
+                    return candidate
+                n += 1
+                candidate = f"{article_id}-synthesis" if n == 2 else f"{article_id}-synthesis-{n}"
 
     def _persist_synthesis(self, data: dict, cluster_ids: list[str]) -> str:
         """Write the Synthesis article to DB + vault. Returns the article id.
@@ -775,40 +908,3 @@ class Synthesizer(Agent):
         vault_path.parent.mkdir(parents=True, exist_ok=True)
         write_vault_text(vault_path, _render_markdown(data))
         return article_id
-
-
-# ─── module-level markdown helpers (match Compiler's render shape) ───
-
-def _sections_to_md(sections: list[dict]) -> str:
-    out: list[str] = []
-    for s in sections:
-        out.append(f"## {s.get('h', '')}\n")
-        out.append(_strip_html(s.get("body", "")))
-        out.append("")
-    return "\n".join(out)
-
-
-def _strip_html(html: str) -> str:
-    s = re.sub(r'<span class="link" data-target="([^"]+)">([^<]+)</span>', r"[[\2|\1]]", html)
-    s = re.sub(r"<em>([^<]+)</em>", r"*\1*", s)
-    s = re.sub(r"<[^>]+>", "", s)
-    return s
-
-
-def _render_markdown(data: dict) -> str:
-    lines = [
-        "---",
-        f"id: {data['id']}",
-        f"kind: {data['kind']}",
-        f"title: {data['title']}",
-        f"confidence: {data.get('confidence', 0.6)}",
-        f"reading_minutes: {data.get('reading_minutes', 5)}",
-        "---",
-        "",
-        f"# {data['title']}",
-        "",
-        f"*{data.get('summary', '')}*",
-        "",
-        _sections_to_md(data.get("sections", [])),
-    ]
-    return "\n".join(lines)

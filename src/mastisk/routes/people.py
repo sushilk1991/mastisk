@@ -1,6 +1,7 @@
 """People / personal CRM API."""
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -129,15 +130,22 @@ def _local_today() -> date:
     return datetime.now(tz).date()
 
 
+def _occurrence(year: int, month: int, day: int) -> date:
+    # A Feb-29 date is observed on Feb 28 in non-leap years.
+    if month == 2 and day == 29 and not calendar.isleap(year):
+        day = 28
+    return date(year, month, day)
+
+
 def _date_within_days(value: str | None, today: date, *, days: int) -> bool:
     if not value:
         return False
     month_day = value[5:] if len(value) == 10 else value
     try:
         month, day = [int(part) for part in month_day.split("-", 1)]
-        candidate = date(today.year, month, day)
+        candidate = _occurrence(today.year, month, day)
+        if candidate < today:
+            candidate = _occurrence(today.year + 1, month, day)
     except (ValueError, TypeError):
         return False
-    if candidate < today:
-        candidate = date(today.year + 1, month, day)
     return today <= candidate <= today + timedelta(days=days)

@@ -875,3 +875,90 @@ def test_answer_uses_shared_chain(monkeypatch) -> None:
         "timeout_s": 180,
         "classification": True,
     }
+
+
+def test_ask_truncates_long_history_instead_of_rejecting(db, monkeypatch) -> None:
+    from mastisk.app import create_app
+
+    captured: dict[str, str] = {}
+
+    async def fake_generate(prompt: str) -> tuple[str, str]:
+        captured["prompt"] = prompt
+        return "ok", "test"
+
+    monkeypatch.setattr("mastisk.routes.ask._generate_answer", fake_generate, raising=False)
+
+    # A replayed assistant answer (uncapped) and a max-length question (8k).
+    long_answer = "A" * 5_990 + "KEPT-TAIL" + "B" * 6_000
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/ask",
+            json={
+                "question": "And then?",
+                "messages": [
+                    {"role": "user", "content": "Q" * 8_000},
+                    {"role": "assistant", "content": long_answer},
+                ],
+            },
+        )
+        empty = client.post(
+            "/api/ask",
+            json={"question": "And then?", "messages": [{"role": "user", "content": ""}]},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "KEPT-TAIL" in captured["prompt"]
+    assert "B" * 10 not in captured["prompt"]
+    assert "Q" * 6_000 in captured["prompt"]
+    assert "Q" * 6_001 not in captured["prompt"]
+    assert empty.status_code == 422
+
+
+def test_ask_keeps_short_selection_and_page_content(db, monkeypatch) -> None:
+    from mastisk.app import create_app
+
+    captured: dict[str, str] = {}
+
+    async def fake_generate(prompt: str) -> tuple[str, str]:
+        captured["prompt"] = prompt
+        return "ok [S1]", "test"
+
+    monkeypatch.setattr("mastisk.routes.ask._generate_answer", fake_generate, raising=False)
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/ask",
+            json={
+                "question": "What does this mean?",
+                "selection": "zettel flywheel",
+                "page_url": "https://example.com/p",
+                "page_title": "P",
+                "page_content": "Tiny page body.",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert "zettel flywheel\n</source>" in captured["prompt"]
+    assert "Tiny page body.\n</source>" in captured["prompt"]
+    assert "(no relevant source content found)" not in captured["prompt"]
+
+
+def test_ask_with_unknown_article_id_answers_without_recording_signal(
+    db, monkeypatch,
+) -> None:
+    from mastisk.app import create_app
+
+    async def fake_generate(prompt: str) -> tuple[str, str]:
+        return "ok", "test"
+
+    monkeypatch.setattr("mastisk.routes.ask._generate_answer", fake_generate, raising=False)
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/ask",
+            json={"question": "What is this page about?", "article_id": "no-such-article"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["answer"] == "ok"
+    assert db.execute("SELECT COUNT(*) AS n FROM signals").fetchone()["n"] == 0

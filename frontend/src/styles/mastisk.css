@@ -41,6 +41,13 @@
   --dur-fast: 120ms;
   --dur-med: 180ms;
   --dur-slow: 260ms;
+
+  /* Older names still used across components. They alias the theme tokens
+     below; var() resolves on :root, so each theme supplies its own value. */
+  --border: var(--line);
+  --line-faint: var(--line-soft);
+  --bg-sunken: var(--bg-sunk);
+  --bg-soft: var(--bg-sunk);
 }
 
 /* ---------- light (warm paper) ---------- */

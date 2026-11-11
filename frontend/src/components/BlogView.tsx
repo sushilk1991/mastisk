@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
+import { localDateTime } from '../date';
 import type { BlogPostDetail, BlogPostSource, View } from '../types';
 
 interface Props {
@@ -321,12 +322,12 @@ export function BlogView({ blogPostId, onNavigate, onLoaded }: Props) {
       </div>
 
       <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--fg-faint)', marginBottom: 12 }}>
-        {new Date(bp.created_at).toLocaleString()}
+        {localDateTime(bp.created_at)}
         {' · '}
         <span style={{ color: statusColor }}>{bp.status}</span>
         {bp.model && <> · {bp.model}</>}
         {bp.word_count !== null && bp.word_count !== undefined && <> · {bp.word_count} words</>}
-        {bp.finished_at && <> · finished {new Date(bp.finished_at).toLocaleString()}</>}
+        {bp.finished_at && <> · finished {localDateTime(bp.finished_at)}</>}
         {' · '}{bp.window_days}d window
       </div>
 

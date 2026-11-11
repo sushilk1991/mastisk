@@ -239,9 +239,9 @@ def test_slipping_scan_windows_overrides_snooze_mute_and_rebuild_idempotency(
 def test_slipping_scan_uses_project_frontmatter_staleness_override(db, vault_tmp, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text("[dashboard]\nslipping_project_days = 14\n", encoding="utf-8")
-    from mastisk.settings import reload_settings
     from mastisk.dashboard.intelligence import slipping_scan
     from mastisk.projects.sync import scan_projects
+    from mastisk.settings import reload_settings
 
     reload_settings()
     project_path = vault_tmp / "projects" / "slow-project.md"
@@ -340,8 +340,8 @@ def test_slipping_snooze_uses_capture_timezone_today(client, db, monkeypatch):
 def test_slipping_scan_today_uses_capture_timezone(db, data_tmp):
     cfg = data_tmp / "config.toml"
     cfg.write_text('[capture]\ndefault_timezone = "Asia/Kolkata"\n', encoding="utf-8")
-    from mastisk.settings import reload_settings
     from mastisk.dashboard.intelligence import slipping_scan
+    from mastisk.settings import reload_settings
 
     reload_settings()
     db.execute(
@@ -471,12 +471,12 @@ def test_dismissed_needs_review_resurfaces_after_condition_lapses_and_recurs(
 ):
     cfg = data_tmp / "config.toml"
     cfg.write_text("[dashboard]\ntriage_reminder_days = 3\n", encoding="utf-8")
-    from mastisk.settings import reload_settings
     from mastisk.dashboard.intelligence import (
         dismiss_needs_review,
         list_needs_review,
         needs_review_scan,
     )
+    from mastisk.settings import reload_settings
     from mastisk.tasks.sync import append_task_to_host
 
     reload_settings()
@@ -556,8 +556,8 @@ def test_snoozing_slipping_task_does_not_refresh_triage_age(client, db, vault_tm
         "[dashboard]\ntriage_reminder_days = 3\nslipping_task_days = 7\n",
         encoding="utf-8",
     )
-    from mastisk.settings import reload_settings
     from mastisk.dashboard.intelligence import needs_review_scan, slipping_scan
+    from mastisk.settings import reload_settings
     from mastisk.tasks.sync import append_task_to_host
 
     reload_settings()

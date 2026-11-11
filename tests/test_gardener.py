@@ -9,7 +9,6 @@ import pytest
 
 from mastisk.agents.gardener import Gardener
 
-
 WEAVE_JSON = {
     "text": "```json\n" + json.dumps({
         "skip": False,
@@ -242,6 +241,32 @@ def test_distill_appends_rules_and_advances_watermark(gardener, db, vault_tmp):
     assert mock_again.call_count == 0
 
 
+def test_reflect_strips_copied_date_prefix_and_files_above_rules(gardener, db, vault_tmp):
+    """Live learnings.md had "(2026-07-21) - (2026-07-22) ..." lines under Preference rules."""
+    from mastisk.db import queries as q
+    for i in range(4):
+        q.append_feed(db, agent="compiler", verb="wrote", obj=f"Article {i}", kind="concept")
+    self_dir = vault_tmp / "_self"
+    self_dir.mkdir(parents=True, exist_ok=True)
+    (self_dir / "learnings.md").write_text(
+        "# Learnings\n- (2026-07-10) Old learning.\n\n"
+        "## Preference rules\n\n- (2026-07-14) avoid: crypto\n"
+    )
+
+    reply = {"text": json.dumps({"learnings": ["- (2026-07-22) Tracks local LLM limits."]})}
+    with patch(
+        "mastisk.agents.gardener.intelligence.run_intelligence",
+        new_callable=AsyncMock, return_value=(reply, "claude"),
+    ):
+        asyncio.run(gardener._reflect_pass())
+
+    text = (self_dir / "learnings.md").read_text()
+    head, rules = text.split("## Preference rules")
+    assert "Tracks local LLM limits." in head
+    assert "(2026-07-22)" not in text
+    assert rules.strip() == "- (2026-07-14) avoid: crypto"
+
+
 def test_distill_zero_rules_still_advances_watermark(gardener, db, vault_tmp):
     _seed_verdicts(db, 6, kind="liked")
     reply = {"text": json.dumps({"rules": []})}
@@ -275,6 +300,7 @@ def test_scout_picks_up_avoid_rules_from_learnings(db, vault_tmp):
 
 def test_signals_verdict_route(db):
     from fastapi.testclient import TestClient
+
     from mastisk.app import create_app
     from mastisk.db import queries as q
     client = TestClient(create_app())
@@ -286,10 +312,12 @@ def test_signals_verdict_route(db):
 
 
 def test_disliked_reason_endpoint_annotates_latest_signal(db):
+    import json as _json
+
     from fastapi.testclient import TestClient
+
     from mastisk.app import create_app
     from mastisk.db import queries as q
-    import json as _json
     client = TestClient(create_app())
     _seed_article(db, "reason-article")
     # No disliked signal yet → 200 with ok:false, no crash.

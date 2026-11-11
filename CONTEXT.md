@@ -8,15 +8,15 @@ The corpus compounds: every article links to others through wiki-link spans, and
 | **Article** | Structured wiki page of kind `Concept`, `Entity`, `Source` or `Synthesis`, with sections, related links, sources, media and a confidence. |
 | **Stub article** | Placeholder with `confidence=0`: `escalator (stub)` (a note awaiting enrichment) or `Compiler (stub)` (created from an unknown wiki-link target). |
 | **Escalation** | Note-to-article promotion. States: `none → pending → retrying → auto_done | manual_done | failed`, plus `skipped_cap` and `skipped_dup`. |
-| **Notetaker** | Classifies new notes, assigns confidence, links related articles (60 s tick). |
+| **Notetaker** | Classifies new notes, assigns confidence, links related articles (30 s tick). |
 | **Escalator** | Promotes worthy notes into stub articles and enqueues `compiler/enrich_stub` jobs (60 s tick). |
 | **Compiler** | Turns a raw source or stub into a structured article; sets `updated_by='Compiler'` (5 min tick). Capture to article takes about 5 to 15 minutes end to end. |
 | **Synthesizer** | Picks a cluster of related articles with Personalized PageRank (HippoRAG2-style) and writes a `Synthesis` article (30 min tick). |
 | **Roundtable** | Multi-LLM debate over an `input_ref`, usually an article; produces N perspectives and a synthesis. |
 | **Scout** | Pulls sources from RSS and web feeds. |
-| **Listener** | Ingests user signals. |
+| **Listener** | Transcribes queued YouTube videos and podcasts into sources. |
 | **Topic Suggester, Blog Writer, Artifact Agent, Vault Integrity** | Other specialist agents in the daemon. |
-| **Signals** | User behaviour events: `opened`, `time_read`, `pin`, `dismiss`, `asked`. |
+| **Signals** | User behaviour events: `opened`, `time_read`, `pinned`, `unpinned`, `deleted`, `edited`, `asked`, `skipped`, `liked`, `disliked`. |
 | **Digest** | Today's curated reading list, ranked by signals and recency. |
 | **Feed** | Activity stream of agent actions. |
 | **Open question** | An analytical loose end inside an article (a section with `kind='open'`). |

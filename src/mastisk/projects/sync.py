@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -22,8 +22,6 @@ from mastisk.routes.notes import atomic_write
 from mastisk.settings import get_settings
 from mastisk.tasks.parser import format_task_line, generate_uid, parse_task_line
 
-ProjectType = Literal["project", "area", "retainer"]
-ProjectStatus = Literal["active", "someday", "paused", "done"]
 _VALID_TYPES = {"project", "area", "retainer"}
 _VALID_STATUSES = {"active", "someday", "paused", "done"}
 _MILESTONE_RE = re.compile(r"^\s*-\s+\[(?P<mark>[ xX])\]\s*(?P<text>.+?)\s*$")
@@ -211,10 +209,14 @@ def append_project_log(slug: str, body: str, *, at: datetime | None = None) -> d
     if project is None:
         return None
     path = vault_dir() / project["path"]
+    if not path.exists():
+        _soft_delete_project(slug)
+        return None
     timestamp = (at or datetime.now().astimezone()).strftime("%Y-%m-%d %H:%M")
     with host_file_lock(path):
         markdown = path.read_text(encoding="utf-8")
-        atomic_write(path, append_to_section(markdown, "Log", f"- {timestamp} {body.strip()}"))
+        line = f"- {timestamp} {_sanitize_line(body)}"
+        atomic_write(path, append_to_section(markdown, "Log", line))
     with connect() as conn:
         conn.execute(
             "UPDATE projects SET last_activity_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE slug = ?",

@@ -765,6 +765,14 @@ async function sendLink(linkUrl, srcTab) {
     await feedback(srcTabId, 'error', "Can't clip this link", err.message);
     return;
   }
+  // The tab is only needed to read the page. Close it as soon as that is done:
+  // the handoff below waits on indexing, which can take minutes.
+  let bgTabOpen = true;
+  const closeBgTab = async () => {
+    if (!bgTabOpen) return;
+    bgTabOpen = false;
+    try { await chrome.tabs.remove(bgTab.id); } catch { /* already gone */ }
+  };
 
   try {
     await waitForTabComplete(bgTab.id, LINK_LOAD_TIMEOUT_MS);
@@ -775,10 +783,12 @@ async function sendLink(linkUrl, srcTab) {
       // chrome.tabs.create returns before the page title settles. Re-read the
       // completed tab so a temporary URL/title is not persisted in the queue.
       const loadedTab = await chrome.tabs.get(bgTab.id);
+      await closeBgTab();
       await enqueueMedia(media, srcTab, loadedTab?.title || 'media');
       return;
     }
     const data = await extractFromTab(bgTab.id);
+    await closeBgTab();
     if (!data || !data.content) {
       await feedback(srcTabId, 'error', "Can't clip this link", 'Could not extract readable content from the link.');
       return;
@@ -794,7 +804,7 @@ async function sendLink(linkUrl, srcTab) {
   } catch (err) {
     await feedback(srcTabId, 'error', "Can't clip this link", err.message);
   } finally {
-    try { await chrome.tabs.remove(bgTab.id); } catch { /* already gone */ }
+    await closeBgTab();
   }
 }
 

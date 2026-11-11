@@ -478,3 +478,27 @@ def test_delete_idempotent_second_call_404(client, db):
     assert r1.status_code == 204
     r2 = client.delete(f"/api/blog-posts/{bp_id}")
     assert r2.status_code == 404
+
+
+def test_save_as_note_slug_collision_keeps_both_files(client, db, vault_tmp, monkeypatch):
+    from mastisk.db.queries import create_blog_post, update_blog_post_done
+
+    monkeypatch.setattr(
+        "mastisk.routes.notes.derive_slug", lambda text, ts: "120000-the-draft",
+    )
+    saved = []
+    for n in (1, 2):
+        bp_id = create_blog_post(db, theme="t", window_days=14)
+        update_blog_post_done(
+            db, bp_id=bp_id, slug=f"s{n}", path=f"blog/drafts/s{n}.md",
+            title="The Draft", tags_json="[]", model="claude", word_count=10,
+            body_preview=f"preview number {n}",
+        )
+        r = client.post(f"/api/blog-posts/{bp_id}/save-as-note", json={})
+        assert r.status_code == 201, r.text
+        saved.append((r.json(), f"preview number {n}"))
+
+    assert [body["slug"] for body, _ in saved] == ["120000-the-draft", "120000-the-draft-2"]
+    for body, preview in saved:
+        note = db.execute("SELECT path FROM notes WHERE id = ?", (body["note_id"],)).fetchone()
+        assert preview in (vault_tmp / note["path"]).read_text(encoding="utf-8")

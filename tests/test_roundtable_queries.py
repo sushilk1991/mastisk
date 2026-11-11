@@ -59,7 +59,8 @@ def test_list_roundtables_before_id_pagination(db):
 
 def test_insert_roundtable_perspective_roundtrip(db):
     from mastisk.db.queries import (
-        create_roundtable, insert_roundtable_perspective,
+        create_roundtable,
+        insert_roundtable_perspective,
         list_roundtable_perspectives,
     )
 

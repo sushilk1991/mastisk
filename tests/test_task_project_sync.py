@@ -218,3 +218,76 @@ def test_task_append_and_scan_acquire_host_file_lock(db, vault_tmp, monkeypatch)
     acquisitions.clear()
     task_sync.scan_task_hosts([host])
     assert acquisitions == [str(host)]
+
+
+def test_journal_host_for_today_uses_capture_timezone_day(db, vault_tmp, data_tmp, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import mastisk.routines.sync as routines_sync
+    from mastisk.settings import reload_settings
+    from mastisk.tasks.sync import journal_host_for_today
+
+    (data_tmp / "config.toml").write_text(
+        '[capture]\ndefault_timezone = "America/Los_Angeles"\n', encoding="utf-8"
+    )
+    reload_settings()
+
+    # 03:30Z on the 12th is still the evening of the 11th in Los Angeles.
+    assert journal_host_for_today("2026-06-12T03:30:00Z").name == "2026-06-11.md"
+    assert journal_host_for_today("2026-06-12T10:00:00+05:30").name == "2026-06-11.md"
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 6, 12, 0, 30, tzinfo=ZoneInfo("Asia/Kolkata"))
+            return value.astimezone(tz) if tz is not None else value
+
+    monkeypatch.setattr(routines_sync, "datetime", FixedDateTime)
+    assert journal_host_for_today().name == "2026-06-11.md"
+    assert journal_host_for_today("not a timestamp").name == "2026-06-11.md"
+
+
+def test_append_project_log_keeps_capture_text_on_one_line(db, vault_tmp):
+    from datetime import datetime
+
+    from mastisk.projects.sync import append_project_log, create_project_file, scan_projects
+    from mastisk.tasks.sync import list_tasks, scan_task_hosts
+
+    project = create_project_file(name="Launch")
+    path = vault_tmp / project["path"]
+    before = path.read_text(encoding="utf-8")
+
+    append_project_log(
+        "launch",
+        "shipped\n## Milestones\n- [ ] injected milestone\n- [ ] injected task",
+        at=datetime(2026, 6, 11, 9, 0),
+    )
+
+    after = path.read_text(encoding="utf-8")
+    added = [line for line in after.splitlines() if line not in before.splitlines()]
+    assert added == [
+        "- 2026-06-11 09:00 shipped ## Milestones - [ ] injected milestone - [ ] injected task"
+    ]
+    scan_projects([path])
+    scan_task_hosts([path])
+    assert list_tasks(project="launch") == []
+
+
+def test_append_project_log_returns_none_when_file_is_gone(db, vault_tmp):
+    from mastisk.projects.sync import append_project_log, create_project_file, get_project
+
+    project = create_project_file(name="Vanished")
+    (vault_tmp / project["path"]).unlink()
+
+    assert append_project_log("vanished", "still here?") is None
+    assert get_project("vanished") is None
+
+
+def test_tasks_host_path_index_reaches_existing_databases(db):
+    from mastisk.db.queries import init_schema
+
+    db.execute("DROP INDEX idx_tasks_host_path")
+    init_schema(db)
+    names = {row["name"] for row in db.execute("PRAGMA index_list(tasks)").fetchall()}
+    assert "idx_tasks_host_path" in names

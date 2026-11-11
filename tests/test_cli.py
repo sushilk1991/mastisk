@@ -566,3 +566,41 @@ def test_ingest_command_does_not_treat_long_learning_as_a_file_path(
     assert result.exit_code == 0, result.output
     assert observed["path"] == "/api/notes"
     assert observed["request"]["json"]["text"] == learning
+
+
+def test_backup_includes_uncheckpointed_wal_writes(cli, db, data_tmp, tmp_path):
+    """A backup taken while the daemon holds the DB open must contain writes
+    that still live only in the WAL, not just the main database file."""
+    import shutil
+    import sqlite3
+    import tarfile
+
+    from mastisk.paths import db_path
+
+    runner, app = cli
+    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    db.execute("PRAGMA wal_autocheckpoint = 0")
+    db.execute("CREATE TABLE backup_probe (v TEXT)")
+    db.execute("INSERT INTO backup_probe VALUES ('in-wal')")
+
+    # Guard: the main file alone really is stale, so the assertion below is meaningful.
+    stale = tmp_path / "stale.db"
+    shutil.copy(db_path(), stale)
+    with pytest.raises(sqlite3.OperationalError):
+        sqlite3.connect(stale).execute("SELECT v FROM backup_probe").fetchall()
+
+    out_dir = tmp_path / "out"
+    result = runner.invoke(app, ["backup", "--output-dir", str(out_dir)])
+    assert result.exit_code == 0, result.output
+
+    (archive,) = out_dir.glob("mastisk-backup-*.tar.gz")
+    extracted = tmp_path / "extracted"
+    with tarfile.open(archive) as tar:
+        assert "mastisk.db" in tar.getnames()
+        tar.extract("mastisk.db", extracted, filter="data")
+    restored = sqlite3.connect(extracted / "mastisk.db")
+    try:
+        assert restored.execute("SELECT v FROM backup_probe").fetchall() == [("in-wal",)]
+        assert restored.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        restored.close()

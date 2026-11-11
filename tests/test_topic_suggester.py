@@ -6,11 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 
 # ───── seed helpers ─────
 
@@ -25,7 +24,7 @@ def _seed_note(
     slug: str | None = None,
 ) -> int:
     """Insert a classified note in the given hour-window."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ts = (now - timedelta(hours=hours_ago)).isoformat(sep=" ", timespec="seconds")
     slug = slug or f"n-{abs(hash(body)) % 100000}"
     db.execute(
@@ -58,7 +57,7 @@ def _seed_article(
     hours_ago: int = 4,
 ) -> None:
     """Insert an article with explicit updated_at."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ts = (now - timedelta(hours=hours_ago)).isoformat(sep=" ", timespec="seconds")
     db.execute(
         """INSERT INTO articles
@@ -586,3 +585,28 @@ def test_validator_returns_empty_when_all_topics_invalid(agent, db):
         "SELECT COUNT(*) AS c FROM topic_suggestions",
     ).fetchone()["c"]
     assert n == 0
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        lambda body: f"```json\n{body}\n```",
+        lambda body: f"Here are the topics:\n\n{body}",
+    ],
+    ids=["fenced", "prefixed"],
+)
+def test_llm_suggest_tolerates_fenced_or_prefixed_json(agent, db, wrap):
+    """Models routinely wrap the JSON object; a bare json.loads rejected it
+    with 'Expecting value: line 1 column 1'."""
+    body = json.dumps({"topics": [{"title": "t"}]})
+
+    async def fake_llm(prompt, **kwargs):
+        return {"text": wrap(body)}, "claude"
+
+    with patch(
+        "mastisk.agents.topic_suggester.intelligence.run_intelligence",
+        new_callable=AsyncMock, side_effect=fake_llm,
+    ):
+        topics = asyncio.run(agent._llm_suggest([]))
+
+    assert topics == [{"title": "t"}]

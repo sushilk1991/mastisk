@@ -455,17 +455,7 @@ def dump_agent_profile_file(meta: dict[str, Any], body: str) -> str:
 
 
 def dump_agent_skill_file(meta: dict[str, Any], body: str) -> str:
-    frontmatter = yaml.dump(
-        _clean_meta(meta),
-        Dumper=_LiteralDumper,
-        sort_keys=False,
-        default_flow_style=False,
-        allow_unicode=True,
-    ).strip()
-    clean_body = body.strip()
-    if clean_body:
-        return f"---\n{frontmatter}\n---\n\n{clean_body}\n"
-    return f"---\n{frontmatter}\n---\n"
+    return dump_agent_profile_file(meta, body)
 
 
 def _agent_profile_paths() -> list[Path]:

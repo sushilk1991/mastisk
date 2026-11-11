@@ -31,25 +31,25 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
+        // /api/* navigations (OAuth callback, CSV export, /api/docs) must reach
+        // the daemon instead of being answered with the app shell.
+        navigateFallbackDenylist: [/^\/api\//],
+        // Workbox tests a RegExp against the full href, so match on pathname.
         runtimeCaching: [
           {
-            urlPattern: /^\/api\/articles\/.*$/,
+            urlPattern: ({ url }) => url.pathname.startsWith('/api/articles/'),
             handler: 'StaleWhileRevalidate',
             options: { cacheName: 'articles' },
           },
           {
-            urlPattern: /^\/api\/(sidebar|digest|feed)$/,
+            urlPattern: ({ url }) => /^\/api\/(sidebar|digest|feed)$/.test(url.pathname),
             handler: 'NetworkFirst',
             options: { cacheName: 'views', networkTimeoutSeconds: 2 },
           },
           {
-            urlPattern: /^\/api\/graph\/compact$/,
+            urlPattern: ({ url }) => url.pathname === '/api/graph/compact',
             handler: 'StaleWhileRevalidate',
             options: { cacheName: 'graph' },
-          },
-          {
-            urlPattern: /^\/api\/ask$/,
-            handler: 'NetworkOnly',
           },
         ],
       },

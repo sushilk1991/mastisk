@@ -199,7 +199,7 @@ def persist_converted_source(
     sha256: str,
 ) -> dict[str, Any]:
     digest = sha256 if len(sha256) >= 16 else hashlib.sha256(
-        f"{filename}\n{converted_markdown}".encode("utf-8")
+        f"{filename}\n{converted_markdown}".encode()
     ).hexdigest()
     source_id = f"document-{digest[:32]}"
     raw_path = raw_dir() / f"{source_id}.md"

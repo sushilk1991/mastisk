@@ -67,7 +67,6 @@ log = logging.getLogger("mastisk.app")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start background scheduler lazily on first tick to avoid partial state on startup errors
     log.info("mastisk starting")
     try:
         from mastisk.scheduler import start_scheduler, stop_scheduler
@@ -174,13 +173,22 @@ def create_app() -> FastAPI:
             name="assets",
         )
 
+        pwa_root = pwa.resolve()
+
         # SPA catch-all: serve index.html for any non-API route so client routing works
         @app.get("/{full_path:path}")
         async def spa(full_path: str, request: Request):
             if full_path.startswith("api"):
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
-            candidate = pwa / full_path
-            if candidate.is_file():
+            # full_path is attacker-controlled ("/../config.toml" arrives
+            # un-normalised from non-browser clients); only serve files that
+            # resolve inside the bundle.
+            try:
+                candidate = (pwa / full_path).resolve()
+                inside = candidate.is_relative_to(pwa_root) and candidate.is_file()
+            except (ValueError, OSError):  # e.g. an embedded NUL byte
+                inside = False
+            if inside:
                 return FileResponse(candidate)
             return FileResponse(pwa / "index.html")
     else:

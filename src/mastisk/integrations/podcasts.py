@@ -18,6 +18,13 @@ class UnsupportedPlatformError(Exception):
     """Raised for platforms whose audio we can't download (Spotify etc)."""
 
 
+def _host_in(host: str, *domains: str) -> bool:
+    """True when ``host`` is one of ``domains`` or a subdomain of one.
+
+    A bare ``endswith`` would also match lookalikes such as ``nottwitter.com``."""
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
 async def classify(url: str) -> str:
     """Return 'youtube' | 'rss' | 'direct_audio' | 'spotify' | 'twitter' |
     'article' | 'unknown'.
@@ -33,11 +40,11 @@ async def classify(url: str) -> str:
     host = (parsed.hostname or "").lower()
     path_lower = (parsed.path or "").lower()
 
-    if host.endswith("youtube.com") or host == "youtu.be" or host.endswith("youtube-nocookie.com"):
+    if _host_in(host, "youtube.com", "youtu.be", "youtube-nocookie.com"):
         return "youtube"
-    if host.endswith("spotify.com"):
+    if _host_in(host, "spotify.com"):
         return "spotify"
-    if host.endswith("twitter.com") or host == "x.com" or host.endswith(".x.com"):
+    if _host_in(host, "twitter.com", "x.com"):
         return "twitter"
     if any(path_lower.endswith(ext) for ext in _AUDIO_EXTS):
         return "direct_audio"

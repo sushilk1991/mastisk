@@ -697,3 +697,31 @@ def test_person_follow_up_reconcile_does_not_resurrect_cancelled_rows(
            ORDER BY id"""
     ).fetchall()
     assert [row["status"] for row in rows] == ["cancelled"]
+
+
+def test_people_scan_does_not_archive_quoted_false_frontmatter(db, vault_tmp):
+    from mastisk.people.sync import append_interaction, get_person, scan_people
+
+    path = vault_tmp / "people" / "ravi.md"
+    path.parent.mkdir(parents=True)
+    path.write_text('---\nname: Ravi\narchived: "false"\n---\n', encoding="utf-8")
+    scan_people([path])
+
+    assert get_person("ravi") is not None
+    assert append_interaction("ravi", "Coffee.", ts="2026-11-03 10:00") is not None
+
+
+def test_birthday_soon_handles_feb_29_across_year_rollover():
+    from datetime import date
+
+    from mastisk.routes.people import _date_within_days
+
+    # Leap year, after Feb 29: the next occurrence falls in a non-leap year
+    # and used to raise ValueError (500 for the whole people list).
+    assert _date_within_days("02-29", date(2024, 3, 15), days=30) is False
+    assert _date_within_days("1996-02-29", date(2024, 12, 31), days=30) is False
+    # Observed on Feb 28 in non-leap years, on Feb 29 in leap years.
+    assert _date_within_days("02-29", date(2025, 2, 10), days=30) is True
+    assert _date_within_days("02-29", date(2025, 3, 1), days=30) is False
+    assert _date_within_days("02-29", date(2024, 2, 29), days=30) is True
+    assert _date_within_days("02-30", date(2024, 2, 1), days=30) is False

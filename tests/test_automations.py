@@ -367,3 +367,92 @@ def test_cron_finer_than_grace_finds_most_recent_fire():
     now = datetime(2026, 7, 14, 10, 6, 30, tzinfo=UTC)
     last = datetime(2026, 7, 14, 10, 5, 10, tzinfo=UTC).isoformat()
     assert triggers.due_trigger({"cron": "* * * * *"}, last, now=now, tz=TZ, grace_seconds=120) == "cron"
+
+
+def test_window_skip_backs_off_instead_of_rerunning_every_tick(db, vault_tmp):
+    sync.create_bg_task(
+        name="Quiet window", instructions="Notify me when something is new.",
+        triggers={"windows": [{"start": "00:00", "end": "23:59"}]},
+    )
+    skip = _reply({"mode": "skip", "summary": "Nothing new yet."})
+    with patch(
+        "mastisk.bgtasks.runner.intelligence.run_intelligence",
+        new_callable=AsyncMock, return_value=(skip, "claude"),
+    ) as mock_int:
+        asyncio.run(runner.tick())
+        asyncio.run(runner.tick())
+    assert mock_int.call_count == 1
+
+    task = sync.bg_task_payload("quiet-window")
+    assert task["last_run_at"] is None and task["last_run_error"] is None
+    now = datetime.now(UTC)
+    assert runner._in_backoff(task, now=now, backoff_minutes=5) is True
+    # Retried later in the band, once the backoff has passed.
+    assert runner._in_backoff(task, now=now + timedelta(minutes=6), backoff_minutes=5) is False
+
+
+def test_completed_run_is_not_in_backoff(db, vault_tmp):
+    sync.create_bg_task(name="Done", instructions="Maintain a digest.")
+    reply = _reply({"mode": "output", "index_md": "# Done\n\nok", "summary": "Updated."})
+    with patch(
+        "mastisk.bgtasks.runner.intelligence.run_intelligence",
+        new_callable=AsyncMock, return_value=(reply, "claude"),
+    ):
+        asyncio.run(runner.run_task("done", trigger="window"))
+    task = sync.bg_task_payload("done")
+    assert runner._in_backoff(task, now=datetime.now(UTC), backoff_minutes=5) is False
+
+
+def test_run_row_records_real_start_time(db, vault_tmp):
+    sync.create_bg_task(name="Slow", instructions="Maintain a digest.")
+    reply = _reply({"mode": "output", "index_md": "# Slow\n\nok", "summary": "Updated."})
+    started = datetime(2026, 11, 10, 7, 0, 0, tzinfo=UTC)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return started.astimezone(tz) if tz is not None else started
+
+    with patch(
+        "mastisk.bgtasks.runner.intelligence.run_intelligence",
+        new_callable=AsyncMock, return_value=(reply, "claude"),
+    ), patch.object(runner, "datetime", FixedDateTime):
+        run = asyncio.run(runner.run_task("slow", trigger="manual"))
+    assert run["started_at"] == "2026-11-10 07:00:00"
+    assert run["finished_at"] != run["started_at"]
+
+
+def test_cron_numeric_day_of_week_follows_crontab_convention():
+    # 2026-11-09 is a Monday, 2026-11-08 a Sunday.
+    monday = datetime(2026, 11, 9, 9, 0, 30, tzinfo=UTC)
+    sunday = datetime(2026, 11, 8, 9, 0, 30, tzinfo=UTC)
+    tuesday = datetime(2026, 11, 10, 9, 0, 30, tzinfo=UTC)
+
+    def due(expr, now):
+        return triggers.due_trigger({"cron": expr}, None, now=now, tz=TZ)
+
+    assert due("0 9 * * 1", monday) == "cron"
+    assert due("0 9 * * 1", tuesday) is None
+    assert due("0 9 * * 0", sunday) == "cron"
+    assert due("0 9 * * 7", sunday) == "cron"
+    assert due("0 9 * * 7", monday) is None
+    # Ranges, lists and steps: 0-2 is Sun-Tue, 1-5/2 is Mon/Wed/Fri.
+    assert due("0 9 * * 0-2", sunday) == "cron"
+    assert due("0 9 * * 0-2", tuesday) == "cron"
+    assert due("0 9 * * 5-7", sunday) == "cron"
+    assert due("0 9 * * 1-5/2", monday) == "cron"
+    assert due("0 9 * * 1-5/2", tuesday) is None
+    assert due("0 9 * * 0,2", tuesday) == "cron"
+    assert due("0 9 * * 0,2", monday) is None
+    # Names are unchanged.
+    assert due("0 9 * * mon", monday) == "cron"
+    assert due("0 9 * * mon-fri", sunday) is None
+    assert due("0 9 * * *", sunday) == "cron"
+
+
+def test_validate_triggers_rejects_cron_the_scheduler_cannot_parse(db, vault_tmp):
+    for bad in ("61 9 * * *", "0 9 * * 8", "0 9 * * 5-2", "0 25 * * *", "a b c d e"):
+        with pytest.raises(ValueError):
+            sync.validate_triggers({"cron": bad})
+    for good in ("0 9 * * 7", "0 9 * * 1-5", "*/15 * * * *", "0 9 * * sun"):
+        assert sync.validate_triggers({"cron": good}) == {"cron": good}

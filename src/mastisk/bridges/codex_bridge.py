@@ -76,10 +76,15 @@ async def run_codex(
             raise CodexError(f"codex not executable: {e}") from e
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             raise CodexError(f"codex timed out after {timeout}s")
+        except asyncio.CancelledError:
+            # An outer wait_for cancelled us; don't leave the CLI running.
+            proc.kill()
+            await proc.wait()
+            raise
         if proc.returncode != 0:
             # Codex prints a long startup banner (workdir, model, sandbox, the
             # echoed prompt) BEFORE the actual error message, so a head-truncated

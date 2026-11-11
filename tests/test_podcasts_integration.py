@@ -164,3 +164,32 @@ async def test_rss_sniff_stops_after_first_four_kilobytes():
     assert observed["chunk_size"] == 4096
     assert observed["headers"] == {"Range": "bytes=0-4095"}
     assert "read_second_chunk" not in observed
+
+
+@pytest.mark.asyncio
+async def test_classify_does_not_match_lookalike_hosts():
+    """Suffix matches must stop at a label boundary: nottwitter.com is not
+    twitter.com. Lookalikes fall through to the network sniff (HTML → article)."""
+    from mastisk.integrations import podcasts
+
+    html_head = _mock_httpx_response("", headers={"content-type": "text/html"})
+    for url in (
+        "https://nottwitter.com/status/1",
+        "https://fakeyoutube.com/watch?v=abc",
+        "https://notspotify.com/episode/1",
+        "https://max.com/show",
+    ):
+        with _patch_async_client(_mock_httpx_response(""), head_response=html_head):
+            assert await podcasts.classify(url) == "article", url
+
+    for url, kind in (
+        ("https://twitter.com/a/status/1", "twitter"),
+        ("https://mobile.twitter.com/a/status/1", "twitter"),
+        ("https://x.com/a/status/1", "twitter"),
+        ("https://youtube.com/watch?v=abc", "youtube"),
+        ("https://m.youtube.com/watch?v=abc", "youtube"),
+        ("https://youtu.be/abc", "youtube"),
+        ("https://www.youtube-nocookie.com/embed/abc", "youtube"),
+        ("https://open.spotify.com/episode/1", "spotify"),
+    ):
+        assert await podcasts.classify(url) == kind, url

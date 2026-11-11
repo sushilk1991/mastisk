@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { htmlToText } from '../sanitize';
 import type { TranscriptAnchor } from '../types';
 
 export interface CaptureContext {
@@ -20,12 +21,6 @@ interface Props {
    * the note inline under its segment on subsequent loads.
    */
   transcriptAnchor?: TranscriptAnchor | null;
-}
-
-function stripHtml(html: string): string {
-  const div = document.createElement('div');
-  div.innerHTML = html;
-  return div.textContent?.trim() ?? '';
 }
 
 export function NoteCaptureModal({ open, onClose, onCaptured, context, transcriptAnchor }: Props) {
@@ -73,7 +68,7 @@ export function NoteCaptureModal({ open, onClose, onCaptured, context, transcrip
 
   if (!open) return null;
 
-  const questionPreview = context?.question_html ? stripHtml(context.question_html) : '';
+  const questionPreview = context?.question_html ? htmlToText(context.question_html) : '';
 
   return (
     <div

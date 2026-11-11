@@ -31,6 +31,9 @@ _PRIORITY_TO_ICON = {"high": "⏫", "medium": "🔼", "low": "🔽"}
 _ICON_TO_PRIORITY = {v: k for k, v in _PRIORITY_TO_ICON.items()}
 _PRIORITY_RE = re.compile(r"\s*(?P<value>[⏫🔼🔽])")
 _MARKER_GLYPHS_RE = re.compile(r"[🆔📅⏳🔁⏫🔼🔽⏰]")
+# A backtick fence's info string cannot contain a backtick (CommonMark), so
+# "```inline``` is code" on one line is not an opening fence.
+_FENCE_RE = re.compile(r"^\s*(?P<fence>`{3,}(?=[^`]*$)|~{3,})(?P<info>.*)$")
 _BASE36 = string.digits + string.ascii_lowercase
 
 
@@ -278,7 +281,30 @@ def _due_value(day: str | None, clock: str | None) -> str | None:
 
 
 def _ignored_line_numbers(markdown: str, headings: set[str]) -> set[int]:
-    return section_line_numbers(markdown, headings)
+    return section_line_numbers(markdown, headings) | _fenced_line_numbers(markdown)
+
+
+def _fenced_line_numbers(markdown: str) -> set[int]:
+    """Lines inside ``` / ~~~ code fences: a checkbox there is sample text."""
+    fenced: set[int] = set()
+    fence: str | None = None
+    for idx, line in enumerate(markdown.splitlines(), start=1):
+        match = _FENCE_RE.match(line)
+        if fence is None:
+            if match:
+                fence = match.group("fence")
+                fenced.add(idx)
+            continue
+        fenced.add(idx)
+        # Closes only on a bare fence of the same character, at least as long.
+        if (
+            match
+            and not match.group("info").strip()
+            and match.group("fence")[0] == fence[0]
+            and len(match.group("fence")) >= len(fence)
+        ):
+            fence = None
+    return fenced
 
 
 def _due_marker_parts(value: str) -> list[str]:
