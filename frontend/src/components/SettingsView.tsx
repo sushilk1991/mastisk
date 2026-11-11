@@ -85,7 +85,7 @@ export function SettingsView() {
   if (!bundle || !intelligence || !provider) {
     return (
       <div className="view">
-        {err ? <p style={{color:'#c53030'}}>{err}</p> : <p style={{color:'var(--fg-faint)'}}>loading…</p>}
+        {err ? <p style={{color:'var(--danger)'}}>{err}</p> : <p style={{color:'var(--fg-faint)'}}>loading…</p>}
       </div>
     );
   }

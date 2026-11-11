@@ -58,6 +58,17 @@ export default defineConfig({
   build: {
     outDir,
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // React changes far less often than app code. In its own chunk, a
+        // deploy that only touches the shell re-downloads the small entry
+        // instead of entry + React.
+        manualChunks(id) {
+          if (/\/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'react';
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     port: 5173,

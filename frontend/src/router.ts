@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { startTransition, useCallback, useEffect, useState } from 'react';
 import type { View } from './types';
 
 export interface Route {
@@ -224,13 +224,20 @@ export function routeToPath(view: View, arg?: string | null): string {
 }
 
 export function useRoute() {
-  const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
+  const [route, setRouteNow] = useState<Route>(() => parseRoute(window.location.pathname));
+
+  // Views are lazy chunks. Committing a route change as a transition keeps the
+  // current view on screen until the next one is ready, instead of flashing the
+  // Suspense fallback on every navigation.
+  const setRoute = useCallback((next: Route) => {
+    startTransition(() => setRouteNow(next));
+  }, []);
 
   useEffect(() => {
     const onPop = () => setRoute(parseRoute(window.location.pathname));
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [setRoute]);
 
   const buildRoute = (view: View, arg?: string): Route => {
     const next = emptyRoute(view);
@@ -257,13 +264,13 @@ export function useRoute() {
       window.history.pushState(null, '', path);
     }
     setRoute(buildRoute(view, arg));
-  }, []);
+  }, [setRoute]);
 
   const replace = useCallback((view: View, arg?: string) => {
     const path = routeToPath(view, arg);
     window.history.replaceState(null, '', path);
     setRoute(buildRoute(view, arg));
-  }, []);
+  }, [setRoute]);
 
   return { route, navigate, replace };
 }

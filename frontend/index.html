@@ -12,6 +12,19 @@
   <title>Mastisk — a personal knowledge wiki</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
   <link rel="apple-touch-icon" href="/icons/icon-192.png"/>
+  <script>
+    // Apply the theme before first paint so there is no light flash: a saved
+    // 'mk-theme' choice wins, otherwise follow the system setting. App.tsx
+    // reads this attribute for its initial state.
+    (function () {
+      var theme = null;
+      try { theme = localStorage.getItem('mk-theme'); } catch (e) {}
+      if (theme !== 'light' && theme !== 'dark') {
+        theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>

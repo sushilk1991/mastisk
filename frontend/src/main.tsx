@@ -1,6 +1,12 @@
 import { createRoot } from 'react-dom/client';
 import './styles/mastisk.css';
 import { App } from './App';
+import { parseRoute } from './router';
+import { preloadView } from './views';
+
+// Request the landing view's chunk before React renders, so it downloads in
+// parallel with the first API calls instead of after the first commit.
+preloadView(parseRoute(window.location.pathname).view);
 
 const el = document.getElementById('root')!;
 createRoot(el).render(<App />);

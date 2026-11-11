@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import type { VaultItem, PinnedItem, UserInfo, View } from '../types';
 
 interface Props {
@@ -20,6 +20,22 @@ const SYS_VIEWS = new Set<View>([
   'roundtables', 'repos', 'blog', 'tweets',
 ]);
 
+// Rows are divs (their markup is shared with the mobile drawer styles); these
+// props make them reachable and operable from the keyboard like buttons.
+function rowAction(activate: () => void) {
+  return {
+    role: 'button' as const,
+    tabIndex: 0,
+    onClick: activate,
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        activate();
+      }
+    },
+  };
+}
+
 export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNavigate, onAddRepo, onCaptureNote, onCreateBlog }: Props) {
   // Folders are collapsed by default. A label appearing in `opened` with value
   // true means the user has expanded it. Kept in-memory per session — no
@@ -30,12 +46,15 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
 
   return (
     <aside className="sidebar">
+      {/* The list scrolls on its own; the user card below stays put, so it can
+          never cover the last rows. */}
+      <nav className="side-nav" aria-label="Sections">
       {pinned.length > 0 && (
         <>
           <div className="side-section">Pinned</div>
           <div className="side-pin-section">
             {pinned.map((p) => (
-              <div key={p.id} className="side-pin" onClick={() => onNavigate('article', p.id)}>
+              <div key={p.id} className="side-pin" {...rowAction(() => onNavigate('article', p.id))}>
                 <div className="dot"/><span>{p.label}</span>
               </div>
             ))}
@@ -48,7 +67,7 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
           const open = opened[item.label] === true;
           return (
             <div key={i}>
-              <div className={`side-folder ${open ? '' : 'collapsed'}`} onClick={() => toggle(item.label)}>
+              <div className={`side-folder ${open ? '' : 'collapsed'}`} aria-expanded={open} {...rowAction(() => toggle(item.label))}>
                 <span className="chev">▾</span><span>{item.label}</span><span className="count">{item.count}</span>
               </div>
               {open && (
@@ -78,7 +97,7 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
       <div className="side-row-group" style={{ display: 'flex', alignItems: 'center' }}>
         <div
           className={`side-row ${currentView === 'notes' || currentView === 'note' ? 'active' : ''}`}
-          onClick={() => onNavigate('notes')}
+          {...rowAction(() => onNavigate('notes'))}
           style={{ flex: 1 }}
         >
           <span className="glyph">✎</span>
@@ -88,24 +107,22 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
           onClick={(e) => { e.stopPropagation(); onCaptureNote(); }}
           title="Capture a note"
           aria-label="Capture a note"
-          style={{
-            background: 'transparent', border: 'none', color: 'var(--fg-faint)',
-            fontSize: 14, cursor: 'pointer', padding: '2px 6px',
-          }}
+          type="button"
+          className="side-add"
         >
           +
         </button>
       </div>
       <div
         className={`side-row ${currentView === 'roundtables' || currentView === 'roundtable' ? 'active' : ''}`}
-        onClick={() => onNavigate('roundtables')}
+        {...rowAction(() => onNavigate('roundtables'))}
       >
         <span className="glyph">◎</span>
         <span className="label">Roundtables</span>
       </div>
       <div
         className={`side-row ${currentView === 'podcasts' || currentView === 'podcast' ? 'active' : ''}`}
-        onClick={() => onNavigate('podcasts')}
+        {...rowAction(() => onNavigate('podcasts'))}
       >
         <span className="glyph">⏵</span>
         <span className="label">Podcasts</span>
@@ -113,7 +130,7 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
       <div className="side-row-group" style={{ display: 'flex', alignItems: 'center' }}>
         <div
           className={`side-row ${currentView === 'repos' || currentView === 'repo' ? 'active' : ''}`}
-          onClick={() => onNavigate('repos')}
+          {...rowAction(() => onNavigate('repos'))}
           style={{ flex: 1 }}
         >
           <span className="glyph">⎇</span>
@@ -123,10 +140,8 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
           onClick={(e) => { e.stopPropagation(); onAddRepo(); }}
           title="Add a repo"
           aria-label="Add a repo"
-          style={{
-            background: 'transparent', border: 'none', color: 'var(--fg-faint)',
-            fontSize: 14, cursor: 'pointer', padding: '2px 6px',
-          }}
+          type="button"
+          className="side-add"
         >
           +
         </button>
@@ -134,7 +149,7 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
       <div className="side-row-group" style={{ display: 'flex', alignItems: 'center' }}>
         <div
           className={`side-row ${currentView === 'blog' || currentView === 'blog_post' ? 'active' : ''}`}
-          onClick={() => onNavigate('blog')}
+          {...rowAction(() => onNavigate('blog'))}
           style={{ flex: 1 }}
         >
           <span className="glyph">✒</span>
@@ -144,23 +159,22 @@ export function Sidebar({ vault, pinned, user, currentView, currentArticle, onNa
           onClick={(e) => { e.stopPropagation(); onCreateBlog(); }}
           title="Draft a blog post"
           aria-label="Draft a blog post"
-          style={{
-            background: 'transparent', border: 'none', color: 'var(--fg-faint)',
-            fontSize: 14, cursor: 'pointer', padding: '2px 6px',
-          }}
+          type="button"
+          className="side-add"
         >
           +
         </button>
       </div>
       <div
         className={`side-row ${currentView === 'tweets' || currentView === 'tweet_thread' ? 'active' : ''}`}
-        onClick={() => onNavigate('tweets')}
+        {...rowAction(() => onNavigate('tweets'))}
       >
         <span className="glyph">#</span>
         <span className="label">Tweet Threads</span>
       </div>
+      </nav>
       {user && (
-        <div className="user-pill" onClick={() => onNavigate('ingest')} role="button" title="Import">
+        <div className="user-pill" {...rowAction(() => onNavigate('ingest'))} title="Import">
           <div className="user-avatar">{user.initials}</div>
           <div className="user-meta">
             <div className="user-name">{user.name}</div>
@@ -188,7 +202,7 @@ function SideNavRow({
   return (
     <div
       className={`side-row ${currentView === view ? 'active' : ''}`}
-      onClick={() => onNavigate(view)}
+      {...rowAction(() => onNavigate(view))}
     >
       <span className="glyph">{glyph}</span>
       <span className="label">{label}</span>
@@ -203,7 +217,7 @@ function Row({ item, currentArticle, currentView, onNavigate }: { item: any; cur
     else onNavigate('article', item.id);
   };
   return (
-    <div className={`side-row ${active ? 'active' : ''}`} onClick={click}>
+    <div className={`side-row ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined} {...rowAction(click)}>
       <span className="glyph">{item.glyph}</span>
       <span className="label">{item.label}</span>
       {item.badge && <span className={`badge ${item.badge === 'live' ? 'live' : ''}`}>{item.badge}</span>}

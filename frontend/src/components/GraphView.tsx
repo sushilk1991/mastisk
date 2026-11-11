@@ -44,8 +44,8 @@ const EDGE_TOOLTIP_MIN_ZOOM = 0.65;
 const MAX_FIT_LABELS = 36;
 const MAX_MID_LABELS = 72;
 const MAX_CLOSE_LABELS = 140;
-const GRAPH_CACHE_KEY = 'mastisk:graph:v1';
-const GRAPH_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+// Key of a localStorage cache this view used to write. It is only removed now.
+const LEGACY_GRAPH_CACHE_KEY = 'mastisk:graph:v1';
 const ORGANIC_RELAX_TICKS = 16;
 
 // ── Motion time-constants (ms). Eased with 1 - exp(-dt/τ) so motion is
@@ -75,8 +75,6 @@ interface GraphPerf {
   draws?: number[];
   nodes?: number;
   edges?: number;
-  cacheHit?: boolean;
-  cacheAgeMs?: number;
   fitZoom?: number;
   fitPan?: { x: number; y: number };
   fitViewport?: { w: number; h: number };
@@ -119,30 +117,6 @@ function canFitViewport(viewport: { w: number; h: number }): boolean {
   if (!viewport.w || !viewport.h) return false;
   const minWidth = typeof window !== 'undefined' && window.innerWidth >= 900 ? 480 : 240;
   return viewport.w >= minWidth && viewport.h >= 320;
-}
-
-function readCachedGraph(): { data: GraphData; ageMs: number } | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(GRAPH_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { savedAt?: number; data?: GraphData };
-    if (!parsed.savedAt || !parsed.data || !Array.isArray(parsed.data.nodes)) return null;
-    const ageMs = Date.now() - parsed.savedAt;
-    if (ageMs < 0 || ageMs > GRAPH_CACHE_MAX_AGE_MS) return null;
-    return { data: parsed.data, ageMs };
-  } catch {
-    return null;
-  }
-}
-
-function writeCachedGraph(data: GraphData) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(GRAPH_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data }));
-  } catch {
-    // LocalStorage can be disabled or full. The graph still works from network.
-  }
 }
 
 function layoutBounds(nodes: SimNode[]): LayoutBounds {
@@ -343,6 +317,11 @@ export function GraphView({ onNavigate }: Props) {
   const nodesRef = useRef<SimNode[]>([]);
   const rankedNodesRef = useRef<SimNode[]>([]);
   const linksRef = useRef<SimLink[]>([]);
+  // Hover lookups, built once per data load so a frame touches only the
+  // hovered node's own edges instead of scanning every edge: node id → node,
+  // and node index → indices (into linksRef) of the edges that touch it.
+  const nodeByIdRef = useRef<Map<string, SimNode>>(new Map());
+  const incidentEdgesRef = useRef<number[][]>([]);
   // Edge indices grouped into weight buckets so the non-incident edge pass is
   // one beginPath+stroke per bucket instead of per edge (critical at ~32k edges).
   const edgeBucketsRef = useRef<number[][]>([]);
@@ -389,36 +368,27 @@ export function GraphView({ onNavigate }: Props) {
   const lastFrameRef = useRef(0);
   const fpsRef = useRef(0);
 
-  useLayoutEffect(() => {
-    const cached = readCachedGraph();
-    const usedCache = cached !== null;
-    if (cached) {
-      const perf = graphPerf();
-      if (perf) {
-        perf.cacheHit = true;
-        perf.cacheAgeMs = cached.ageMs;
-        perf.nodes = cached.data.nodes.length;
-        perf.edges = cached.data.edges.length;
-      }
-      setData(cached.data);
-    }
-
+  // No client-side cache: the graph is megabytes of JSON, so stringifying it
+  // into localStorage blocked the main thread and then overflowed the quota on
+  // every load. The service worker and the daemon's Cache-Control cover repeat
+  // visits.
+  useEffect(() => {
+    try { window.localStorage.removeItem(LEGACY_GRAPH_CACHE_KEY); } catch { /* storage disabled */ }
+    let cancelled = false;
     const start = performance.now();
     api.graph()
       .then((graph) => {
-        writeCachedGraph(graph);
+        if (cancelled) return;
         const perf = graphPerf();
         if (perf) {
           perf.fetchMs = performance.now() - start;
           perf.nodes = graph.nodes.length;
           perf.edges = graph.edges.length;
         }
-        setData((current) => {
-          if (usedCache && current) return current;
-          return graph;
-        });
+        setData(graph);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => { if (!cancelled) setError(String(e)); });
+    return () => { cancelled = true; };
   }, []);
 
   // Deterministic organic layout, computed synchronously. This is the seed the
@@ -445,6 +415,14 @@ export function GraphView({ onNavigate }: Props) {
     }
     edgeBucketsRef.current = buckets;
 
+    const incident: number[][] = nodes.map(() => []);
+    for (let i = 0; i < links.length; i++) {
+      incident[links[i].source.index].push(i);
+      if (links[i].target !== links[i].source) incident[links[i].target.index].push(i);
+    }
+    incidentEdgesRef.current = incident;
+    nodeByIdRef.current = new Map(nodes.map((n) => [n.id, n]));
+
     layoutBoundsRef.current = layoutBounds(nodes);
     minimapCacheRef.current = null;
     rebuildQuadtree();
@@ -454,6 +432,8 @@ export function GraphView({ onNavigate }: Props) {
       rankedNodesRef.current = [];
       linksRef.current = [];
       edgeBucketsRef.current = [];
+      incidentEdgesRef.current = [];
+      nodeByIdRef.current = new Map();
       quadtreeRef.current = null;
       minimapCacheRef.current = null;
       setPrewarmed(false);
@@ -677,6 +657,8 @@ export function GraphView({ onNavigate }: Props) {
     const zoom = view.zoom;
     const pan = view.pan;
     const hoverNode = hoverNodeRef.current;
+    const hovered = hoverNode ? nodeByIdRef.current.get(hoverNode) ?? null : null;
+    const hoveredEdges = hovered ? incidentEdgesRef.current[hovered.index] ?? [] : [];
     const searchLC = searchLCRef.current;
     const hiddenKinds = hiddenKindsRef.current;
     const layoutReady = layoutReadyRef.current;
@@ -780,11 +762,8 @@ export function GraphView({ onNavigate }: Props) {
       const budget = searchLC ? MAX_CLOSE_LABELS : zoom < 0.35 ? MAX_FIT_LABELS : zoom < 0.75 ? MAX_MID_LABELS : MAX_CLOSE_LABELS;
       let drawn = 0;
 
-      if (hoverNode) {
-        const activeNode = nodes.find((n) => n.id === hoverNode);
-        if (activeNode && !hiddenKinds.has(activeNode.kind) && drawLabel(activeNode, true, false, occupied)) {
-          drawn += 1;
-        }
+      if (hovered && !hiddenKinds.has(hovered.kind) && drawLabel(hovered, true, false, occupied)) {
+        drawn += 1;
       }
 
       for (const n of rankedNodesRef.current) {
@@ -875,16 +854,13 @@ export function GraphView({ onNavigate }: Props) {
       mctx.strokeRect(rx, ry, rw, rh);
     };
 
-    // Compute neighbour set once per frame for the hover incident check.
-    let neighbors: Set<string> | null = null;
-    if (hoverNode) {
+    // Neighbour set for the hover dim check, from the per-node edge index.
+    let neighbors: Set<SimNode> | null = null;
+    if (hovered) {
       neighbors = new Set();
-      for (const e of links) {
-        const a = e.source as SimNode;
-        const b = e.target as SimNode;
-        if (!a || !b || typeof a !== 'object' || typeof b !== 'object') continue;
-        if (a.id === hoverNode) neighbors.add(b.id);
-        else if (b.id === hoverNode) neighbors.add(a.id);
+      for (const i of hoveredEdges) {
+        const e = links[i];
+        neighbors.add(e.source === hovered ? e.target : e.source);
       }
     }
 
@@ -919,7 +895,7 @@ export function GraphView({ onNavigate }: Props) {
         const bb = e.target as SimNode;
         if (!a || !bb || typeof a !== 'object' || typeof bb !== 'object') continue;
         if (hiddenKinds.has(a.kind) || hiddenKinds.has(bb.kind)) continue;
-        if (hoverNode != null && (a.id === hoverNode || bb.id === hoverNode)) continue;
+        if (hovered !== null && (a === hovered || bb === hovered)) continue;
         const ax = a.x ?? 0, ay = a.y ?? 0, bx = bb.x ?? 0, by = bb.y ?? 0;
         // Cull edges whose bounding box is fully outside the viewport.
         if ((ax < wl && bx < wl) || (ax > wr && bx > wr) || (ay < wt && by < wt) || (ay > wb && by > wb)) continue;
@@ -931,14 +907,13 @@ export function GraphView({ onNavigate }: Props) {
     }
     // Pass 2: incident edges drawn on top in the accent colour with extra
     // weight, so the hovered node's neighbourhood reads as a connected sub-graph.
-    if (hoverNode) {
+    if (hovered) {
       ctx.strokeStyle = accentColor;
-      for (const e of links) {
-        const a = e.source as SimNode;
-        const b = e.target as SimNode;
-        if (!a || !b || typeof a !== 'object' || typeof b !== 'object') continue;
+      for (const i of hoveredEdges) {
+        const e = links[i];
+        const a = e.source;
+        const b = e.target;
         if (hiddenKinds.has(a.kind) || hiddenKinds.has(b.kind)) continue;
-        if (a.id !== hoverNode && b.id !== hoverNode) continue;
         ctx.globalAlpha = (0.55 + 0.35 * e.weight) * focusAmt;
         ctx.lineWidth = (1.3 + 0.6 * e.weight) / zoom;
         ctx.beginPath();
@@ -952,26 +927,23 @@ export function GraphView({ onNavigate }: Props) {
     // ── Nodes ──
     // Soft halo behind the hovered node — gives the focused element clear
     // visual primacy. Alpha eases with the focus amount.
-    if (hoverNode) {
-      const hn = nodes.find((x) => x.id === hoverNode);
-      if (hn) {
-        const c = kindColor(hn.color);
-        ctx.beginPath();
-        ctx.arc(hn.x ?? 0, hn.y ?? 0, hn.size / 2 + 10, 0, Math.PI * 2);
-        ctx.fillStyle = c;
-        ctx.globalAlpha = 0.18 * focusAmt;
-        ctx.fill();
-        ctx.globalAlpha = 1;
-      }
+    if (hovered) {
+      const c = kindColor(hovered.color);
+      ctx.beginPath();
+      ctx.arc(hovered.x ?? 0, hovered.y ?? 0, hovered.size / 2 + 10, 0, Math.PI * 2);
+      ctx.fillStyle = c;
+      ctx.globalAlpha = 0.18 * focusAmt;
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
 
     for (const n of nodes) {
       if (hiddenKinds.has(n.kind)) continue;
       if (!isVisible(n, 40)) continue;
       let dim = false;
-      if (hoverNode) dim = !(n.id === hoverNode || (neighbors?.has(n.id) ?? false));
+      if (hovered) dim = !(n === hovered || (neighbors?.has(n) ?? false));
       else if (searchLC) dim = !n.titleLC.includes(searchLC);
-      const active = hoverNode === n.id;
+      const active = hovered === n;
       const r = n.size / 2;
       const c = kindColor(n.color);
       ctx.beginPath();
@@ -1234,7 +1206,9 @@ export function GraphView({ onNavigate }: Props) {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, []);
+    // The container only exists once the graph has loaded, so attach then —
+    // with [] deps this ran during the "loading…" render and never attached.
+  }, [data]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -1429,7 +1403,7 @@ export function GraphView({ onNavigate }: Props) {
         view.tPan = { x: view.pan.x, y: view.pan.y };
         kick();
       } else if (d.mode === 'node' && d.nodeId && d.nodeStart) {
-        const n = nodesRef.current.find((x) => x.id === d.nodeId);
+        const n = nodeByIdRef.current.get(d.nodeId);
         if (n) {
           n.x = d.nodeStart.x + dx / viewRef.current.zoom;
           n.y = d.nodeStart.y + dy / viewRef.current.zoom;
@@ -1507,9 +1481,12 @@ export function GraphView({ onNavigate }: Props) {
     };
   };
 
+  // Always measured against the minimap canvas: while a minimap drag is
+  // captured, the move events are handled on the graph container.
   function panToMinimap(e: React.PointerEvent) {
-    const tgt = e.currentTarget as Element;
-    const r = tgt.getBoundingClientRect();
+    const mini = minimapCanvasRef.current;
+    if (!mini) return;
+    const r = mini.getBoundingClientRect();
     const mx = e.clientX - r.left;
     const my = e.clientY - r.top;
     const { scale, ox, oy } = miniTransform();
@@ -1694,9 +1671,9 @@ export function GraphView({ onNavigate }: Props) {
           width={MINI_W}
           height={MINI_H}
           style={{ width: MINI_W, height: MINI_H }}
+          // Move/up bubble to the container's handlers; binding them here as
+          // well ran every minimap drag twice.
           onPointerDown={onMinimapPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
         />
 
         <div className="graph-hint" aria-hidden>

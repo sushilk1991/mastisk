@@ -354,7 +354,13 @@ def _content_items() -> list[dict[str, Any]]:
 
 
 def _triage_section_lines(path: Path, heading: str) -> list[tuple[int, str]]:
-    lines = path.read_text(encoding="utf-8").splitlines()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        # An evicted iCloud file (EDEADLK under launchd) must not take the
+        # whole inbox down; its lines reappear once the file is readable.
+        log.warning("triage: skipping unreadable %s: %s", path, exc)
+        return []
     in_frontmatter = bool(lines and lines[0] == "---")
     current_heading: str | None = None
     found: list[tuple[int, str]] = []

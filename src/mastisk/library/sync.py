@@ -606,7 +606,13 @@ def book_payload(slug: str) -> dict[str, Any] | None:
     if not path.exists():
         _soft_delete_slug("books", slug)
         return None
-    parsed = parse_book_file(path)
+    try:
+        parsed = parse_book_file(path)
+    except OSError:
+        # An evicted iCloud file the daemon cannot hydrate. Serve what the
+        # index knows; "unreadable" lets the page say why notes are missing.
+        parsed = {"frontmatter": {}, "body": ""}
+        payload["unreadable"] = True
     with connect() as conn:
         highlights = [
             _highlight_row(dict(item))

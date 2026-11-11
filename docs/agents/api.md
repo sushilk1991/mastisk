@@ -10,7 +10,7 @@ Prefer the HTTP API at `http://127.0.0.1:5555` over reading the vault, so signal
 | "Find articles about X" | `GET /api/search?q_param=X` |
 | "Show me article Y" | `GET /api/articles/Y` |
 | "What's on my reading queue?" | `GET /api/digest` |
-| "Open research questions?" | `GET /api/open-questions` |
+| "Open research questions?" | `GET /api/open-questions?limit=100&offset=0` (paged; `total` in the response) |
 | "What did mastisk do today?" | `GET /api/feed` |
 | "Who is the user?" / match their voice | `GET /api/vault/self/identity`, then `style` |
 | "Capture this thought" | `POST /api/notes` with `{text, source: "cli"}` |

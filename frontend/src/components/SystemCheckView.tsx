@@ -44,7 +44,7 @@ export function SystemCheckView() {
       <section style={sectionStyle}>
         <h2 style={h2Style}>Agents</h2>
         <KV k="Feeds enabled" v={stats.feeds_enabled}/>
-        <KV k="Jobs"          v={JSON.stringify(stats.jobs) || '—'}/>
+        <KV k="Jobs"          v={formatJobs(stats.jobs)}/>
         <KV k="Last feed fetch"    v={stats.last_feed_fetch || 'never'}/>
         <KV k="Last agent activity" v={stats.last_agent_activity || 'never'}/>
       </section>
@@ -94,8 +94,16 @@ export function SystemCheckView() {
   );
 }
 
+// `{done: 29508, failed: 661}` → "29,508 done · 661 failed"
+function formatJobs(jobs: unknown): string {
+  if (!jobs || typeof jobs !== 'object') return '—';
+  const parts = Object.entries(jobs as Record<string, unknown>)
+    .map(([status, count]) => `${typeof count === 'number' ? count.toLocaleString() : String(count)} ${status}`);
+  return parts.length ? parts.join(' · ') : '—';
+}
+
 function KV({ k, v, ok }: { k: string; v: unknown; ok?: boolean }) {
-  const color = ok === false ? '#c53030' : ok === true ? 'var(--kind-source)' : 'var(--fg)';
+  const color = ok === false ? 'var(--danger)' : ok === true ? 'var(--kind-source)' : 'var(--fg)';
   return (
     <div style={{display:'grid',gridTemplateColumns:'180px 1fr',gap:12,padding:'6px 0',borderTop:'1px solid var(--line-soft)',alignItems:'baseline'}}>
       <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--fg-faint)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{k}</div>

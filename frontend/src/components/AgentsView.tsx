@@ -79,12 +79,12 @@ function AgentListView({
         <div className="view-h">Recent operations</div>
         <div style={{ borderTop: '1px solid var(--line)' }}>
           {feed.map((f, i) => (
-            <div key={i} style={{ display: 'flex', gap: 14, padding: '12px 0', borderBottom: '1px solid var(--line-soft)', alignItems: 'center' }}>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--fg-faint)', width: 40 }}>{f.t}</div>
-              <span className={`tick-agent ${agents.find((a) => a.id === f.agent)?.color || ''}`} style={{ width: 100, textAlign: 'center' }}>{f.agent}</span>
-              <span style={{ color: 'var(--fg-mute)', width: 90, fontFamily: 'var(--mono)', fontSize: 11 }}>{f.verb}</span>
-              <span style={{ flex: 1, color: 'var(--fg)', fontSize: 13 }}>{f.obj}</span>
-              {f.touched > 0 && <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--fg-faint)' }}>+{f.touched} pages</span>}
+            <div key={i} className="ops-row">
+              <div className="ops-time">{f.t}</div>
+              <span className={`tick-agent ${agents.find((a) => a.id === f.agent)?.color || ''}`}>{f.agent}</span>
+              <span className="ops-verb">{f.verb}</span>
+              <span className="ops-obj">{f.obj}</span>
+              {f.touched > 0 && <span className="ops-touched">+{f.touched} pages</span>}
             </div>
           ))}
         </div>

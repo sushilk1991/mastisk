@@ -42,6 +42,11 @@ CREATE TABLE IF NOT EXISTS article_sections (
   PRIMARY KEY (article_id, idx)
 );
 
+-- The sidebar counts open questions on every load and /api/open-questions
+-- pages through them; without this both scan every section body.
+CREATE INDEX IF NOT EXISTS idx_article_sections_open
+  ON article_sections(article_id, idx) WHERE kind = 'open';
+
 CREATE TABLE IF NOT EXISTS article_embeddings (
   article_id TEXT PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
   dim        INTEGER NOT NULL,

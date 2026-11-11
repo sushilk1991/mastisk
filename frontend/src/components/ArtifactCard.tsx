@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import Chart from 'chart.js/auto';
-import type { ChartConfiguration } from 'chart.js/auto';
+import type { Chart, ChartConfiguration } from 'chart.js/auto';
 import type { Artifact } from '../types';
 import { api } from '../api';
 import { MermaidBlock } from './MermaidBlock';
@@ -197,16 +196,22 @@ function LegacyChartBody({ spec }: { spec: Record<string, unknown> }) {
       },
     };
 
+    // Chart.js (~200 kB) is only needed by legacy stored charts, so it loads
+    // on demand instead of riding in every article's chunk.
     let chart: Chart | null = null;
-    try {
-      chart = new Chart(ctx, config);
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Chart failed to render.');
-      return;
-    }
+    let cancelled = false;
+    import('chart.js/auto')
+      .then(({ default: ChartJs }) => {
+        if (cancelled) return;
+        chart = new ChartJs(ctx, config);
+        setErr(null);
+      })
+      .catch((e) => {
+        if (!cancelled) setErr(e instanceof Error ? e.message : 'Chart failed to render.');
+      });
 
     return () => {
+      cancelled = true;
       if (chart) chart.destroy();
     };
   }, [spec]);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { useRoute } from './router';
 import { useFeedStream } from './stream';
@@ -9,48 +9,36 @@ import type {
 
 import { Titlebar } from './components/Titlebar';
 import { Sidebar } from './components/Sidebar';
-import { ArticleView } from './components/ArticleView';
-import { RightRail } from './components/RightRail';
 import { SystemRail } from './components/SystemRail';
-import { DigestView } from './components/DigestView';
-import { DigestAuditView } from './components/DigestAuditView';
-import { AgentsView } from './components/AgentsView';
-import { GraphView } from './components/GraphView';
-import { AskDrawer } from './components/AskDrawer';
 import { MobileNav } from './components/MobileNav';
 import { CommandPalette } from './components/CommandPalette';
-import { IngestView } from './components/IngestView';
-import { OpenQuestionsView } from './components/OpenQuestionsView';
-import { SuggestionsView } from './components/SuggestionsView';
-import { GoalView, LearningView, LessonView } from './components/LearningView';
-import { AutomationsView } from './components/AutomationsView';
-import { QueueView } from './components/QueueView';
-import { SettingsView } from './components/SettingsView';
-import { SystemCheckView } from './components/SystemCheckView';
 import { WikiLinkHoverProvider } from './components/WikiLinkHover';
-import { NotesView } from './components/NotesView';
-import { NoteView } from './components/NoteView';
-import { LibraryView } from './components/LibraryView';
 import { QuickCaptureSheet } from './components/QuickCaptureSheet';
-import { RoundtablesListView } from './components/RoundtablesListView';
-import { RoundtableView } from './components/RoundtableView';
-import { ReposView } from './components/ReposView';
-import { RepoDetailView } from './components/RepoDetailView';
 import { AddRepoModal } from './components/AddRepoModal';
-import { BlogListView } from './components/BlogListView';
-import { BlogView } from './components/BlogView';
 import { BlogCreationModal } from './components/BlogCreationModal';
-import { TweetThreadsView } from './components/TweetThreadsView';
-import { TweetThreadView } from './components/TweetThreadView';
-import { PodcastsListView } from './components/PodcastsListView';
-import { PodcastView } from './components/PodcastView';
+import { ViewErrorBoundary } from './components/ViewErrorBoundary';
+import { useTrailingThrottle } from './hooks/useTrailingThrottle';
+// Everything below is a lazy chunk: the entry bundle carries only the shell.
 import {
-  ContentView, InboxTriageView, InventoryView, JournalView, PeopleView, ProjectsView, RoutinesView, TasksView, TodayView,
-} from './components/DashboardViews';
+  AgentsView, ArticleView, AskDrawer, AutomationsView, BlogListView, BlogView, ContentView, DigestAuditView,
+  DigestView, GoalView, GraphView, InboxTriageView, IngestView, InventoryView, JournalView, LearningView,
+  LessonView, LibraryView, NoteView, NotesView, OpenQuestionsView, PeopleView, PodcastView, PodcastsListView,
+  ProjectsView, QueueView, RepoDetailView, ReposView, RightRail, RoundtableView, RoundtablesListView,
+  RoutinesView, SettingsView, SuggestionsView, SystemCheckView, TasksView, TodayView, TweetThreadView,
+  TweetThreadsView, preloadView,
+} from './views';
+
+// Live feed rows can arrive many per second while agents work. Views get a
+// tick key that changes at most once per LIVE_TICK_MS (trailing), and the
+// sidebar counts refresh on a slower beat.
+const LIVE_TICK_MS = 2500;
+const SIDEBAR_TICK_MS = 10000;
+const POLL_MS = 30000;
 
 export function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(
-    (localStorage.getItem('mk-theme') as 'light' | 'dark') || 'light',
+    // index.html resolved this before first paint: saved choice, else the system setting.
+    (document.documentElement.getAttribute('data-theme') as 'light' | 'dark') || 'light',
   );
 
   const { route, navigate: routeNavigate, replace } = useRoute();
@@ -58,6 +46,8 @@ export function App() {
   const currentRoundtable = route.roundtableId;
   const currentBlogPost = route.blogPostId;
   const currentTweetThread = route.tweetThreadId;
+  // A navigation clears a caught view error.
+  const routeKey = useMemo(() => JSON.stringify(route), [route]);
 
   const [sideOpen, setSideOpen] = useState(window.innerWidth > 900);
   const [railOpen, setRailOpen] = useState(window.innerWidth > 900);
@@ -103,7 +93,7 @@ export function App() {
   const [toast, setToast] = useState<{ msg: string; noteId: number } | null>(null);
 
   const { rows: liveRows } = useFeedStream<FeedTick>([]);
-  const mergedFeed: FeedTick[] = [...liveRows, ...feed];
+  const mergedFeed: FeedTick[] = useMemo(() => [...liveRows, ...feed], [liveRows, feed]);
 
   // Watch for escalator/auto-escalated feed rows and surface a toast so the
   // user knows a background research job just kicked off on one of their notes.
@@ -127,7 +117,6 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('mk-theme', theme);
   }, [theme]);
 
   // The desktop shell starts with both rails open; crossing into a phone-sized
@@ -144,6 +133,26 @@ export function App() {
     return () => window.removeEventListener('resize', syncShellToViewport);
   }, []);
 
+  // Set when a live refresh was skipped because nothing on screen needed it.
+  const sidebarStaleRef = useRef(false);
+  const digestStaleRef = useRef(false);
+
+  const refreshSidebar = useCallback(() => {
+    sidebarStaleRef.current = false;
+    void api.sidebar().then(setSidebar).catch(() => {});
+  }, []);
+
+  // Drop a response that lands after the user moved to another date.
+  const dateRef = useRef(currentDate);
+  dateRef.current = currentDate;
+  const refreshDigest = useCallback((onError: (e: unknown) => void = () => {}) => {
+    const date = dateRef.current;
+    digestStaleRef.current = false;
+    void api.digest(date ?? undefined)
+      .then((d) => { if (dateRef.current === date) setDigest(d); })
+      .catch(onError);
+  }, []);
+
   useEffect(() => {
     void api.sidebar().then(setSidebar).catch(console.error);
     void api.feed().then((d) => { setFeed(d.feed); setAgents(d.agents); }).catch(console.error);
@@ -152,28 +161,67 @@ export function App() {
   // Re-fetch the digest whenever the requested date changes (null = today).
   useEffect(() => {
     setDigest(null);
-    void api.digest(currentDate ?? undefined).then(setDigest).catch(console.error);
-  }, [currentDate]);
+    refreshDigest(console.error);
+  }, [currentDate, refreshDigest]);
 
-  // Refresh sidebar counts + digest whenever agents emit a new tick, so the
-  // "Concepts 1 → 2" counter updates as articles are compiled without a reload.
-  // Also polls on a 30s floor as a safety net in case the SSE stream drops.
-  // Keyed on the newest row's id: the list is capped and `t` is a coarse
-  // relative age, so neither changes reliably when a new tick arrives.
+  // Live refresh. `tickKey` changes on every feed row (keyed on the newest
+  // row's id: the list is capped and `t` is a coarse relative age, so neither
+  // changes reliably when a new tick arrives). Refetching on each one was a
+  // request storm while agents were busy, so:
+  //   - views receive `liveKey`, published at most once per LIVE_TICK_MS;
+  //   - the digest is refetched only while a view that renders it is showing;
+  //   - sidebar counts refresh on a slower beat, and only while it is open.
+  // Whatever is skipped is marked stale and refetched when it comes back into
+  // view. The 30s poll is the safety net for a dropped SSE stream.
   const newestTick = liveRows[0];
   const tickKey = newestTick ? String(newestTick.id ?? `${newestTick.t}-${liveRows.length}`) : '';
-  useEffect(() => {
-    if (!tickKey) return;
-    void api.sidebar().then(setSidebar).catch(() => {});
-    void api.digest(currentDate ?? undefined).then(setDigest).catch(() => {});
-  }, [tickKey, currentDate]);
+  const liveKey = useTrailingThrottle(tickKey, LIVE_TICK_MS);
+  const sidebarKey = useTrailingThrottle(tickKey, SIDEBAR_TICK_MS);
+
+  const showsDigest = view === 'today' || view === 'digest';
+  const showsDigestRef = useRef(showsDigest);
+  showsDigestRef.current = showsDigest;
+  const sideOpenRef = useRef(sideOpen);
+  sideOpenRef.current = sideOpen;
+
+  const liveRefreshSidebar = useCallback(() => {
+    if (sideOpenRef.current) refreshSidebar();
+    else sidebarStaleRef.current = true;
+  }, [refreshSidebar]);
+  const liveRefreshDigest = useCallback(() => {
+    if (showsDigestRef.current) refreshDigest();
+    else digestStaleRef.current = true;
+  }, [refreshDigest]);
+
+  useEffect(() => { if (liveKey) liveRefreshDigest(); }, [liveKey, liveRefreshDigest]);
+  useEffect(() => { if (sidebarKey) liveRefreshSidebar(); }, [sidebarKey, liveRefreshSidebar]);
   useEffect(() => {
     const id = setInterval(() => {
-      void api.sidebar().then(setSidebar).catch(() => {});
-      void api.digest(currentDate ?? undefined).then(setDigest).catch(() => {});
-    }, 30000);
-    return () => clearInterval(id);
-  }, [currentDate]);
+      if (document.hidden) {
+        sidebarStaleRef.current = true;
+        digestStaleRef.current = true;
+        return;
+      }
+      liveRefreshSidebar();
+      liveRefreshDigest();
+    }, POLL_MS);
+    const onVisible = () => {
+      if (document.hidden) return;
+      if (sidebarStaleRef.current) liveRefreshSidebar();
+      if (digestStaleRef.current) liveRefreshDigest();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [liveRefreshSidebar, liveRefreshDigest]);
+  useEffect(() => {
+    if (sideOpen && sidebarStaleRef.current) refreshSidebar();
+  }, [sideOpen, refreshSidebar]);
+  useEffect(() => {
+    if (showsDigest && digestStaleRef.current) refreshDigest();
+  }, [showsDigest, refreshDigest]);
 
   // Load the article whenever the route points at one. On 404, bounce to the
   // Today so a dead deep-link doesn't leave the user staring at "loading…".
@@ -191,6 +239,9 @@ export function App() {
   }, [view, currentArticle, replace]);
 
   const navigate = useCallback((v: View, id?: string) => {
+    // Start the chunk download now; the route change is a React transition, so
+    // the current view stays on screen until the next one can render.
+    preloadView(v);
     routeNavigate(v, id);
     if (window.innerWidth <= 900) {
       setSideOpen(false);
@@ -241,7 +292,12 @@ export function App() {
         tweetThreadTitle={tweetThreadDetail?.title ?? null}
         tweetThreadStatus={tweetThreadDetail?.status ?? null}
         theme={theme}
-        onTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+        onTheme={() => setTheme((t) => {
+          const next = t === 'dark' ? 'light' : 'dark';
+          // Saved only on an explicit toggle, so an untouched install keeps following the system.
+          try { localStorage.setItem('mk-theme', next); } catch { /* private mode */ }
+          return next;
+        })}
         onToggleSide={() => {
           setRailOpen(false);
           setSideOpen((s) => !s);
@@ -270,6 +326,8 @@ export function App() {
       )}
 
       <main className="main">
+        <ViewErrorBoundary resetKey={routeKey}>
+        <Suspense fallback={<Loading/>}>
         {view === 'article' && article && (
           <ArticleView
             article={article}
@@ -284,7 +342,7 @@ export function App() {
         {view === 'article' && !article && <Loading/>}
         {view === 'today' && (
           <TodayView
-            liveKey={tickKey}
+            liveKey={liveKey}
             digest={digest}
             onNavigate={navigate}
             onAsk={openAsk}
@@ -311,7 +369,7 @@ export function App() {
         {view === 'learning' && <LearningView onNavigate={navigate}/>}
         {view === 'learning_goal' && <GoalView key={route.goalId} goalId={route.goalId} onNavigate={navigate}/>}
         {view === 'learning_lesson' && <LessonView key={route.lessonId} lessonId={route.lessonId} onNavigate={navigate}/>}
-        {view === 'automations' && <AutomationsView liveKey={tickKey} onNavigate={navigate}/>}
+        {view === 'automations' && <AutomationsView liveKey={liveKey} onNavigate={navigate}/>}
         {view === 'queue' && <QueueView onNavigate={navigate}/>}
         {view === 'lint' && <SystemCheckView/>}
         {view === 'settings' && <SettingsView/>}
@@ -324,20 +382,20 @@ export function App() {
         {view === 'note' && currentNote !== null && <NoteView noteId={currentNote} onNavigate={navigate}/>}
         {view === 'library' && (
           <LibraryView
-            liveKey={tickKey}
+            liveKey={liveKey}
             initialBookSlug={route.libraryBookSlug}
             initialQuoteId={route.libraryQuoteId}
             onNavigate={navigate}
           />
         )}
-        {view === 'tasks' && <TasksView liveKey={tickKey}/>}
-        {view === 'projects' && <ProjectsView liveKey={tickKey}/>}
-        {view === 'routines' && <RoutinesView liveKey={tickKey}/>}
-        {view === 'journal' && <JournalView liveKey={tickKey}/>}
-        {view === 'people' && <PeopleView liveKey={tickKey}/>}
-        {view === 'inventory' && <InventoryView liveKey={tickKey}/>}
-        {view === 'content' && <ContentView liveKey={tickKey} onNavigate={navigate}/>}
-        {view === 'inbox_triage' && <InboxTriageView liveKey={tickKey}/>}
+        {view === 'tasks' && <TasksView liveKey={liveKey}/>}
+        {view === 'projects' && <ProjectsView liveKey={liveKey}/>}
+        {view === 'routines' && <RoutinesView liveKey={liveKey}/>}
+        {view === 'journal' && <JournalView liveKey={liveKey}/>}
+        {view === 'people' && <PeopleView liveKey={liveKey}/>}
+        {view === 'inventory' && <InventoryView liveKey={liveKey}/>}
+        {view === 'content' && <ContentView liveKey={liveKey} onNavigate={navigate}/>}
+        {view === 'inbox_triage' && <InboxTriageView liveKey={liveKey}/>}
         {view === 'roundtables' && <RoundtablesListView onNavigate={navigate}/>}
         {view === 'roundtable' && currentRoundtable !== null && (
           <RoundtableView roundtableId={currentRoundtable} onNavigate={navigate}/>
@@ -386,17 +444,23 @@ export function App() {
             </p>
           </div>
         )}
+        </Suspense>
+        </ViewErrorBoundary>
       </main>
 
       {railOpen && view === 'article' && article && (
-        <RightRail
-          article={article}
-          feed={mergedFeed}
-          agents={agents}
-          onAsk={openAsk}
-          onNavigate={navigate}
-          onClose={() => setRailOpen(false)}
-        />
+        <ViewErrorBoundary resetKey={routeKey} silent>
+          <Suspense fallback={null}>
+            <RightRail
+              article={article}
+              feed={mergedFeed}
+              agents={agents}
+              onAsk={openAsk}
+              onNavigate={navigate}
+              onClose={() => setRailOpen(false)}
+            />
+          </Suspense>
+        </ViewErrorBoundary>
       )}
       {railOpen && view !== 'article' && (
         <SystemRail
@@ -408,12 +472,16 @@ export function App() {
         />
       )}
 
-      <AskDrawer
-        open={askOpen}
-        ctx={askCtx}
-        onClose={() => setAskOpen(false)}
-        onNavigate={navigate}
-      />
+      <ViewErrorBoundary resetKey={routeKey} silent>
+        <Suspense fallback={null}>
+          <AskDrawer
+            open={askOpen}
+            ctx={askCtx}
+            onClose={() => setAskOpen(false)}
+            onNavigate={navigate}
+          />
+        </Suspense>
+      </ViewErrorBoundary>
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}

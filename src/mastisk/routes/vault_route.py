@@ -66,7 +66,14 @@ def read_vault_file(path: str) -> dict[str, str]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="vault file not found")
-    content = target.read_text(encoding="utf-8")
+    try:
+        content = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        # iCloud can refuse the daemon a file it has evicted (EDEADLK).
+        raise HTTPException(
+            status_code=503,
+            detail="This file isn't available from iCloud on the server right now.",
+        ) from exc
     return {
         "path": rel_path,
         "content": content,

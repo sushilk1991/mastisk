@@ -6,6 +6,7 @@ import type { PodcastView as PodcastViewT, View, TranscriptAnchor, TranscriptSeg
 import { Icon } from './icons';
 import { MermaidBlock } from './MermaidBlock';
 import { SafeHtml } from './SafeHtml';
+import { summaryText } from '../summaryText';
 import { NoteCaptureModal, type CaptureContext } from './NoteCaptureModal';
 
 interface Props {
@@ -140,8 +141,8 @@ export function PodcastView({ articleId, onAsk, onNavigate }: Props) {
               </>
             )}
           </div>
-          {data.article.summary && (
-            <p className="pod-summary">{data.article.summary}</p>
+          {summaryText(data.article.summary) && (
+            <p className="pod-summary">{summaryText(data.article.summary)}</p>
           )}
         </div>
       </header>

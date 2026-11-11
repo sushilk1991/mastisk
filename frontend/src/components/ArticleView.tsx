@@ -6,6 +6,8 @@ import { SynthesisFeedback } from './SynthesisFeedback';
 import { NoteCaptureModal, type CaptureContext } from './NoteCaptureModal';
 import { MermaidBlock } from './MermaidBlock';
 import { SafeHtml } from './SafeHtml';
+import { unwrapEmphasis } from '../summaryText';
+import { htmlToText } from '../sanitize';
 
 interface Props {
   article: Article;
@@ -31,6 +33,84 @@ export function decorateFactDates(html: string): string {
 
 interface Pop { x: number; y: number; text: string; }
 
+// ── hero image fit ──────────────────────────────────────────────────────────
+// `heroImageUrl` is often the source's og:image, which for many sites is a
+// logo or a small thumbnail. Stretching those to the full column gives a
+// blurry cropped banner, so the image is measured once it loads:
+//   banner — at least HERO_BANNER_MIN_WIDTH wide (the reading column is 648px,
+//            so it is never upscaled on a 1x display) and landscape between
+//            HERO_BANNER_MIN_RATIO and HERO_BANNER_MAX_RATIO;
+//   hidden — icon-sized, a small near-square logo/avatar, or any SVG (always a
+//            site logo in practice);
+//   inline — everything else, shown at its natural size, never enlarged.
+export type HeroFit = 'banner' | 'inline' | 'hidden';
+export const HERO_BANNER_MIN_WIDTH = 640;
+export const HERO_BANNER_MIN_RATIO = 1.2;
+export const HERO_BANNER_MAX_RATIO = 3;
+const HERO_ICON_MAX = 160;        // both sides under this: an icon, not a picture
+const HERO_SQUARE_LOGO_MAX = 400; // near-square and narrower than this: a logo/avatar
+// Reserved while loading, so the summary below does not jump when the image
+// arrives. 1.91:1 is the og:image standard and the most common real ratio.
+const HERO_PENDING_RATIO = 1.91;
+// Gallery thumbnails are 140px tall and cropped; skip anything smaller than a
+// real picture (tracking pixels, nav icons, 60px avatars).
+const MEDIA_MIN_WIDTH = 160;
+const MEDIA_MIN_HEIGHT = 100;
+
+const SVG_URL = /\.svg(?:$|[?#])/i;
+
+export function classifyHero(width: number, height: number, src: string): HeroFit {
+  if (!width || !height || SVG_URL.test(src)) return 'hidden';
+  const ratio = width / height;
+  if (width < HERO_ICON_MAX && height < HERO_ICON_MAX) return 'hidden';
+  if (ratio > 0.8 && ratio < 1.25 && width < HERO_SQUARE_LOGO_MAX) return 'hidden';
+  if (width >= HERO_BANNER_MIN_WIDTH && ratio >= HERO_BANNER_MIN_RATIO && ratio <= HERO_BANNER_MAX_RATIO) {
+    return 'banner';
+  }
+  return 'inline';
+}
+
+// Scraped image URLs sometimes arrive with the page's HTML escaping intact.
+function mediaSrc(src: string): string {
+  return src.replace(/&amp;/g, '&');
+}
+
+// Captions are scraped alt text and may still carry HTML entities.
+function mediaCaption(m: { caption?: string | null; alt?: string | null }): string {
+  const raw = m.caption || m.alt || '';
+  return raw ? htmlToText(raw) : '';
+}
+
+/** Keyed by article id + url by the caller, so its state resets per article. */
+function ArticleHero({ src, title }: { src: string; title: string }) {
+  const [fit, setFit] = useState<HeroFit | 'pending'>(SVG_URL.test(src) ? 'hidden' : 'pending');
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  if (fit === 'hidden') return null;
+  const ratio = size ? size.w / size.h : HERO_PENDING_RATIO;
+  return (
+    <figure
+      className={`art-hero is-${fit}`}
+      style={fit === 'inline' ? undefined : { aspectRatio: String(ratio) }}
+    >
+      <img
+        src={src}
+        alt={`${title} hero`}
+        decoding="async"
+        width={size?.w}
+        height={size?.h}
+        onLoad={(e) => {
+          const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+          setSize(w && h ? { w, h } : null);
+          setFit(classifyHero(w, h, src));
+        }}
+        // A broken hero is dropped through state — never by removing the
+        // React-owned node, which breaks the next reconcile.
+        onError={() => setFit('hidden')}
+      />
+    </figure>
+  );
+}
+
 export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [pop, setPop] = useState<Pop | null>(null);
@@ -40,6 +120,22 @@ export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
   const [verdict, setVerdict] = useState<'liked' | 'disliked' | null>(null);
   const [reasonOpen, setReasonOpen] = useState(false);
   const [reason, setReason] = useState('');
+  // Gallery images that failed to load or turned out to be icon-sized, keyed
+  // by article so a navigation starts clean.
+  const [droppedMedia, setDroppedMedia] = useState<{ articleId: string; srcs: Set<string> }>(
+    { articleId: article.id, srcs: new Set() },
+  );
+  const dropMedia = useCallback((src: string) => {
+    setDroppedMedia((cur) => {
+      const srcs = new Set(cur.articleId === article.id ? cur.srcs : []);
+      srcs.add(src);
+      return { articleId: article.id, srcs };
+    });
+  }, [article.id]);
+  const media = (article.media ?? []).filter(
+    (m, i, all) => all.findIndex((other) => other.src === m.src) === i
+      && !(droppedMedia.articleId === article.id && droppedMedia.srcs.has(m.src)),
+  );
 
   // Restore a prior thumbs verdict so votes survive remounts.
   useEffect(() => {
@@ -74,7 +170,7 @@ export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
     setReasonOpen(false);
   }
 
-  const mediaLen = article.media?.length ?? 0;
+  const mediaLen = media.length;
   const closeLightbox = useCallback(() => setLightboxIdx(null), []);
   const prevMedia = useCallback(() => setLightboxIdx(i => i !== null ? (i - 1 + mediaLen) % mediaLen : null), [mediaLen]);
   const nextMedia = useCallback(() => setLightboxIdx(i => i !== null ? (i + 1) % mediaLen : null), [mediaLen]);
@@ -227,21 +323,14 @@ export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
       {article.kind === 'Synthesis' && <SynthesisFeedback articleId={article.id}/>}
 
       {article.heroImageUrl && (
-        <figure className="art-hero">
-          <img
-            src={article.heroImageUrl}
-            alt={`${article.title} hero`}
-            loading="lazy"
-            onError={(e) => {
-              // Hide broken hero images rather than showing the browser's
-              // default "missing image" glyph above the title.
-              (e.currentTarget.parentElement as HTMLElement | null)?.remove();
-            }}
-          />
-        </figure>
+        <ArticleHero
+          key={`${article.id}:${article.heroImageUrl}`}
+          src={mediaSrc(article.heroImageUrl)}
+          title={article.title}
+        />
       )}
 
-      <SafeHtml as="p" className="art-summary" html={article.summary}/>
+      <SafeHtml as="p" className="art-summary" html={unwrapEmphasis(article.summary)}/>
 
       <div className="art-stats">
         <div className="art-stat"><div className="v">{article.sources}</div><div className="l">Sources</div></div>
@@ -273,12 +362,7 @@ export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
               <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
                 <button
                   type="button"
-                  style={{
-                    fontSize: 11, padding: '4px 10px',
-                    border: '1px solid var(--border)', borderRadius: 4,
-                    background: 'var(--bg-soft, transparent)', cursor: 'pointer',
-                    fontFamily: 'var(--mono)',
-                  }}
+                  className="chip"
                   onClick={() => setCaptureCtx({
                     article_id: article.id,
                     section_heading: s.h,
@@ -299,35 +383,43 @@ export function ArticleView({ article, onAsk, onNavigate, onContext }: Props) {
         })}
       </div>
 
-      {article.media && article.media.length > 0 && (
+      {media.length > 0 && (
         <div className="art-media">
           <h3>From the source</h3>
           <div className="art-media-grid">
-            {article.media.map((m, i) => (
-              <figure key={`${m.src}-${i}`} className="art-media-item" onClick={() => setLightboxIdx(i)} style={{ cursor: 'pointer' }}>
-                <img
-                  src={m.src}
-                  alt={m.alt || ''}
-                  loading="lazy"
-                  onError={(e) => {
-                    (e.currentTarget.parentElement as HTMLElement | null)?.remove();
-                  }}
-                />
-                {(m.caption || m.alt) && (
-                  <figcaption>{m.caption || m.alt}</figcaption>
-                )}
+            {media.map((m, i) => (
+              <figure key={m.src} className="art-media-item">
+                <button
+                  type="button"
+                  className="art-media-open"
+                  onClick={() => setLightboxIdx(i)}
+                  aria-label={`Enlarge image${mediaCaption(m) ? `: ${mediaCaption(m)}` : ''}`}
+                >
+                  <img
+                    src={mediaSrc(m.src)}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    onLoad={(e) => {
+                      const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+                      if (w < MEDIA_MIN_WIDTH || h < MEDIA_MIN_HEIGHT) dropMedia(m.src);
+                    }}
+                    onError={() => dropMedia(m.src)}
+                  />
+                </button>
+                {mediaCaption(m) && <figcaption>{mediaCaption(m)}</figcaption>}
               </figure>
             ))}
           </div>
         </div>
       )}
 
-      {lightboxIdx !== null && article.media && (
-        <div className="lightbox-overlay" onClick={closeLightbox}>
+      {lightboxIdx !== null && media[lightboxIdx] && (
+        <div className="lightbox-overlay" role="dialog" aria-modal="true" aria-label="Image viewer" onClick={closeLightbox}>
           <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
-            <img src={article.media[lightboxIdx].src} alt={article.media[lightboxIdx].alt || ''} />
-            {(article.media[lightboxIdx].caption || article.media[lightboxIdx].alt) && (
-              <p className="lightbox-caption">{article.media[lightboxIdx].caption || article.media[lightboxIdx].alt}</p>
+            <img src={mediaSrc(media[lightboxIdx].src)} alt={mediaCaption(media[lightboxIdx])} decoding="async" />
+            {mediaCaption(media[lightboxIdx]) && (
+              <p className="lightbox-caption">{mediaCaption(media[lightboxIdx])}</p>
             )}
           </div>
           {mediaLen > 1 && (

@@ -541,3 +541,26 @@ def test_capture_triage_routine_done_unknown_candidate_returns_422_and_keeps_mar
     assert r.json()["detail"] == "routine not found: missing-routine"
     note_text = (vault_tmp / note["path"]).read_text(encoding="utf-8")
     assert "needs_triage: true" in note_text
+
+
+def test_triage_list_survives_an_unreadable_journal_file(vault_tmp, data_tmp, db, monkeypatch):
+    """Evicted iCloud day files raised EDEADLK and turned GET /api/triage into a 500."""
+    from pathlib import Path
+
+    from mastisk.paths import journal_dir
+
+    journal_dir().mkdir(parents=True, exist_ok=True)
+    bad = journal_dir() / "2026-08-01.md"
+    bad.write_text("## Log\n- 09:00 unreadable #needs-triage\n")
+    real_read = Path.read_text
+
+    def flaky(self, *args, **kwargs):
+        if self == bad:
+            raise OSError(11, "Resource deadlock avoided")
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+
+    response = _client(vault_tmp, data_tmp, db).get("/api/triage")
+
+    assert response.status_code == 200

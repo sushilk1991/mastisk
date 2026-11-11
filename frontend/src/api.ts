@@ -217,7 +217,10 @@ export const api = {
     return j<DigestAudit>(`${BASE}/digest/audit?${params.toString()}`);
   },
 
-  openQuestions: () => j<OpenQuestionsResponse>(`${BASE}/open-questions`),
+  // Paged, newest article first (limit max 1000). `total`/`articles` in the
+  // response are the counts for the whole set, not the page.
+  openQuestions: (limit: number = 100, offset: number = 0) =>
+    j<OpenQuestionsResponse>(`${BASE}/open-questions?limit=${limit}&offset=${offset}`),
 
   feed: () => j<{ feed: FeedTick[]; agents: AgentInfo[] }>(`${BASE}/feed`),
 

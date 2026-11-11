@@ -5,6 +5,7 @@ import type {
   BookDetail, BookStatus, BookSummary, KindleImportResult, KindleReviewItem,
   QuoteDetail, QuoteSourceType, QuoteSummary, View,
 } from '../types';
+import { InlineError, describeRequestError } from './InlineError';
 
 interface Props {
   liveKey: string;
@@ -18,9 +19,28 @@ const SOURCE_TYPES: QuoteSourceType[] = ['book', 'article', 'podcast', 'conversa
 
 type Tab = 'books' | 'quotes' | 'kindle';
 
+interface ViewError { title: string; detail: string; retry?: boolean; }
+
+function loadError(e: unknown): ViewError {
+  return { title: 'Couldn’t load your library', detail: describeRequestError(e), retry: true };
+}
+
+function actionError(e: unknown): ViewError {
+  return { title: 'That change didn’t go through', detail: describeRequestError(e) };
+}
+
+// The server returns the book with `unreadable: true` (and an empty body) when
+// its file is an iCloud placeholder it cannot read. Not in the shared type yet.
+function isUnreadable(book: BookDetail): boolean {
+  return (book as { unreadable?: boolean }).unreadable === true;
+}
+
 export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNavigate }: Props) {
   const [tab, setTab] = useState<Tab>(initialQuoteId ? 'quotes' : 'books');
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<ViewError | null>(null);
+  // Detail-pane failures stay in the pane, next to the item that failed.
+  const [bookErr, setBookErr] = useState<string | null>(null);
+  const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
 
@@ -54,11 +74,17 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
   }
 
   async function loadBook(slug: string | null) {
+    setBookErr(null);
     if (!slug) {
       setBookDetail(null);
       return;
     }
-    setBookDetail(await api.libraryApi.books.get(slug));
+    try {
+      setBookDetail(await api.libraryApi.books.get(slug));
+    } catch (e) {
+      setBookDetail(null);
+      setBookErr(describeRequestError(e));
+    }
   }
 
   async function loadQuotes() {
@@ -68,11 +94,17 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
   }
 
   async function loadQuote(id: string | null) {
+    setQuoteErr(null);
     if (!id) {
       setQuoteDetail(null);
       return;
     }
-    setQuoteDetail(await api.libraryApi.quotes.get(id));
+    try {
+      setQuoteDetail(await api.libraryApi.quotes.get(id));
+    } catch (e) {
+      setQuoteDetail(null);
+      setQuoteErr(describeRequestError(e));
+    }
   }
 
   async function loadReview() {
@@ -86,7 +118,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
     try {
       await Promise.all([loadBooks(), loadQuotes(), loadReview()]);
     } catch (e) {
-      setErr(errorMessage(e));
+      setErr(loadError(e));
     } finally {
       setLoading(false);
     }
@@ -104,8 +136,8 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
   }, [initialBookSlug, initialQuoteId]);
 
   useEffect(() => { void loadAll(); }, [liveKey]);
-  useEffect(() => { void loadBook(selectedBook).catch((e) => setErr(errorMessage(e))); }, [selectedBook, liveKey]);
-  useEffect(() => { void loadQuote(selectedQuote).catch((e) => setErr(errorMessage(e))); }, [selectedQuote, liveKey]);
+  useEffect(() => { void loadBook(selectedBook); }, [selectedBook, liveKey]);
+  useEffect(() => { void loadQuote(selectedQuote); }, [selectedQuote, liveKey]);
 
   async function createBook(e: FormEvent) {
     e.preventDefault();
@@ -126,7 +158,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
       setSelectedBook(created.slug);
       onNavigate('library', `book:${created.slug}`);
     } catch (ex) {
-      setErr(errorMessage(ex));
+      setErr(actionError(ex));
     }
   }
 
@@ -138,7 +170,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
       setBookDetail(updated);
       await loadBooks();
     } catch (ex) {
-      setErr(errorMessage(ex));
+      setErr(actionError(ex));
     }
   }
 
@@ -150,7 +182,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
       setBookDetail(updated);
       await loadBooks();
     } catch (ex) {
-      setErr(errorMessage(ex));
+      setErr(actionError(ex));
     }
   }
 
@@ -166,7 +198,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
       await loadBook(bookDetail.slug);
       await loadQuotes();
     } catch (ex) {
-      setErr(errorMessage(ex));
+      setErr(actionError(ex));
     }
   }
 
@@ -191,7 +223,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
       setSelectedQuote(created.id);
       onNavigate('library', `quote:${created.id}`);
     } catch (ex) {
-      setErr(errorMessage(ex));
+      setErr(actionError(ex));
     }
   }
 
@@ -206,7 +238,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
       setThoughtText('');
       setQuoteDetail(updated);
     } catch (ex) {
-      setErr(errorMessage(ex));
+      setErr(actionError(ex));
     }
   }
 
@@ -222,7 +254,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
       if (fileRef.current) fileRef.current.value = '';
       await Promise.all([loadBooks(), loadQuotes(), loadReview()]);
     } catch (ex) {
-      setErr(errorMessage(ex));
+      setErr(actionError(ex));
     } finally {
       setImportBusy(false);
     }
@@ -238,7 +270,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
       });
       await Promise.all([loadQuotes(), loadReview()]);
     } catch (ex) {
-      setErr(errorMessage(ex));
+      setErr(actionError(ex));
     }
   }
 
@@ -248,11 +280,14 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
       await api.libraryApi.kindle.dismiss(item.id);
       await loadReview();
     } catch (ex) {
-      setErr(errorMessage(ex));
+      setErr(actionError(ex));
     }
   }
 
   const createLabel = tab === 'books' ? '+ New book' : tab === 'quotes' ? '+ New quote' : '+ Import';
+
+  // A failed load leaves the lists empty; "No books yet" under the error would be wrong.
+  const showTabs = !loading && !err?.retry;
 
   return (
     <div className="view dash-view library-view">
@@ -299,14 +334,22 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
         </button>
       </div>
 
-      {err && <p className="dash-error">{err}</p>}
+      {err && (
+        <InlineError
+          title={err.title}
+          detail={err.detail}
+          onRetry={err.retry ? () => void loadAll() : undefined}
+        />
+      )}
       {loading && <LibrarySkeleton/>}
 
-      {!loading && tab === 'books' && (
+      {showTabs && tab === 'books' && (
         <BooksTab
           books={books}
           status={bookStatus}
           detail={bookDetail}
+          detailError={bookErr}
+          onRetryDetail={() => void loadBook(selectedBook)}
           showCreate={showCreate}
           selected={selectedBook}
           title={bookTitle}
@@ -338,10 +381,12 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
         />
       )}
 
-      {!loading && tab === 'quotes' && (
+      {showTabs && tab === 'quotes' && (
         <QuotesTab
           quotes={quotes}
           detail={quoteDetail}
+          detailError={quoteErr}
+          onRetryDetail={() => void loadQuote(selectedQuote)}
           selected={selectedQuote}
           showCreate={showCreate}
           text={quoteText}
@@ -364,7 +409,7 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
         />
       )}
 
-      {!loading && tab === 'kindle' && (
+      {showTabs && tab === 'kindle' && (
         <KindleTab
           fileRef={fileRef}
           result={importResult}
@@ -381,13 +426,15 @@ export function LibraryView({ liveKey, initialBookSlug, initialQuoteId, onNaviga
 }
 
 function BooksTab({
-  books, status, detail, selected, showCreate, title, author, lookup, highlightText,
+  books, status, detail, detailError, onRetryDetail, selected, showCreate, title, author, lookup, highlightText,
   onStatus, onSelect, onTitle, onAuthor, onLookup, onCreate, onPatch,
   onRefresh, onHighlightText, onAddHighlight, onQuote, onRequestCreate,
 }: {
   books: BookSummary[];
   status: BookStatus | 'all';
   detail: BookDetail | null;
+  detailError: string | null;
+  onRetryDetail: () => void;
   selected: string | null;
   showCreate: boolean;
   title: string;
@@ -457,7 +504,23 @@ function BooksTab({
         )}
       </section>
       <section className="library-detail-pane">
-        {!detail ? <EmptyLine>Select a book.</EmptyLine> : (
+        {detailError ? (
+          <InlineError title="Couldn’t open this book" detail={detailError} onRetry={onRetryDetail}/>
+        ) : !detail ? (
+          <EmptyLine>{selected ? 'Opening…' : 'Select a book.'}</EmptyLine>
+        ) : isUnreadable(detail) ? (
+          <>
+            <div className="dash-section-head">
+              <div>
+                <h2>{detail.title}</h2>
+                <p className="dash-muted">{detail.author || 'Unknown author'}</p>
+              </div>
+            </div>
+            <p className="inline-notice" role="status">
+              This book’s file isn’t downloaded on the server yet, so notes and highlights can’t be shown.
+            </p>
+          </>
+        ) : (
           <>
             <div className="dash-section-head">
               <div>
@@ -509,12 +572,14 @@ function BooksTab({
 }
 
 function QuotesTab({
-  quotes, detail, selected, showCreate, text, sourceType, sourceRef, tags, thoughtText,
+  quotes, detail, detailError, onRetryDetail, selected, showCreate, text, sourceType, sourceRef, tags, thoughtText,
   onSelect, onText, onSourceType, onSourceRef, onTags, onCreate,
   onThoughtText, onAddThought, onRequestCreate,
 }: {
   quotes: QuoteSummary[];
   detail: QuoteDetail | null;
+  detailError: string | null;
+  onRetryDetail: () => void;
   selected: string | null;
   showCreate: boolean;
   text: string;
@@ -570,7 +635,11 @@ function QuotesTab({
         )}
       </section>
       <section className="library-detail-pane">
-        {!detail ? <EmptyLine>Select a quote.</EmptyLine> : (
+        {detailError ? (
+          <InlineError title="Couldn’t open this quote" detail={detailError} onRetry={onRetryDetail}/>
+        ) : !detail ? (
+          <EmptyLine>{selected ? 'Opening…' : 'Select a quote.'}</EmptyLine>
+        ) : (
           <>
             <div className="dash-section-head">
               <h2>Quote</h2>
@@ -689,8 +758,4 @@ function LibrarySkeleton() {
 
 function splitTags(value: string): string[] {
   return value.split(/[,#]/).map((item) => item.trim()).filter(Boolean);
-}
-
-function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : 'failed';
 }

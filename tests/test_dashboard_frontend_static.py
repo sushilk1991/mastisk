@@ -101,9 +101,12 @@ def test_people_followup_datetime_local_uses_timezone_helpers():
 
 def test_markdown_editor_uses_codemirror_and_protects_frontmatter():
     source = Path("frontend/src/components/MarkdownEditor.tsx").read_text(encoding="utf-8")
+    # The CodeMirror surface is a lazy chunk loaded by MarkdownEditor.tsx.
+    codemirror = Path("frontend/src/components/CodeMirrorMarkdown.tsx").read_text(encoding="utf-8")
 
-    assert "EditorView" in source
-    assert "markdown()" in source
+    assert "import('./CodeMirrorMarkdown')" in source
+    assert "EditorView" in codemirror
+    assert "markdown()" in codemirror
     assert "baseSha256" in source
     assert "content_sha256" in source
     assert "function splitFrontmatter" in source
@@ -112,11 +115,11 @@ def test_markdown_editor_uses_codemirror_and_protects_frontmatter():
     assert "function joinFrontmatterAndBody" in source
     assert "joinFrontmatterAndBody(split.frontmatter, bodyRef.current)" in source
     assert "frontmatter-readonly" in source
-    assert "api.attachments.upload" in source
+    assert "api.attachments.upload" in codemirror
     assert "components={markdownPreviewComponents}" in source
     assert "previewAttachmentUrl" in source
     assert "/api/attachments/" in source
-    assert "domEventHandlers" in source
+    assert "domEventHandlers" in codemirror
     assert "const [currentBaseSha256, setCurrentBaseSha256]" in source
     assert "setCurrentBaseSha256(saved.content_sha256)" in source
     assert "rescanWarning" in source

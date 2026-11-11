@@ -126,3 +126,25 @@ def test_graph_formats_expire_independently(client, db, monkeypatch):
 
     now["t"] += 20  # past compact's TTL, inside full's
     assert client.get("/api/graph/compact").json()["stats"]["pages"] == 1
+
+
+def test_open_questions_are_paged_with_totals(client, db):
+    for n in range(3):
+        db.execute(
+            "INSERT INTO articles (id, slug, kind, title, updated_at) VALUES (?, ?, 'Source', ?, ?)",
+            (f"a{n}", f"a{n}", f"Article {n}", f"2026-11-0{n + 1} 10:00:00"),
+        )
+        db.execute(
+            "INSERT INTO article_sections (article_id, idx, heading, body, kind) "
+            "VALUES (?, 0, 'Open questions', ?, 'open')",
+            (f"a{n}", f"<p>question {n}</p>"),
+        )
+    db.commit()
+
+    first = client.get("/api/open-questions?limit=2").json()
+    rest = client.get("/api/open-questions?limit=2&offset=2").json()
+
+    assert first["total"] == 3 and first["articles"] == 3
+    assert [q["article_id"] for q in first["questions"]] == ["a2", "a1"]
+    assert [q["article_id"] for q in rest["questions"]] == ["a0"]
+    assert client.get("/api/open-questions?limit=0").status_code == 422

@@ -120,7 +120,9 @@ def scan_journal_days(paths: list[Path] | None = None) -> dict[str, int]:
             with host_file_lock(path):
                 try:
                     parsed = parse_journal_file(path)
-                except JournalFrontmatterError:
+                except (JournalFrontmatterError, OSError):
+                    # OSError: an evicted iCloud day file. Keep its row and
+                    # carry on with the other days.
                     if paths is not None:
                         raise
                     seen.add(path.stem)

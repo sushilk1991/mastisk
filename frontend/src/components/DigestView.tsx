@@ -2,6 +2,7 @@ import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../api';
 import type { Digest, DigestThread, View } from '../types';
+import { Icon } from './icons';
 
 interface Props {
   digest: Digest;
@@ -164,33 +165,40 @@ function ThreadCard({
             q {scores.quality.toFixed(2)} · i {scores.interest.toFixed(2)}
           </span>
         )}
-        <span className="thread-feedback">
+        <span className="thread-feedback" role="group" aria-label="Thread feedback">
           <button
             type="button"
-            className={`thumb${verdict === 'yes' ? ' is-on' : ''}`}
+            className={`verdict-btn thumb${verdict === 'yes' ? ' active' : ''}`}
             onClick={() => vote('yes')}
             disabled={busy || !thread.article_id}
             aria-pressed={verdict === 'yes'}
+            aria-label="More like this"
             title="Show me more like this"
           >
-            👍
+            {Icon.thumbUp}
           </button>
           <button
             type="button"
-            className={`thumb${verdict === 'no' ? ' is-on' : ''}`}
+            className={`verdict-btn thumb down${verdict === 'no' ? ' active' : ''}`}
             onClick={() => vote('no')}
             disabled={busy || !thread.article_id}
             aria-pressed={verdict === 'no'}
+            aria-label="Less like this"
             title="Less like this"
           >
-            👎
+            {Icon.thumbDown}
           </button>
         </span>
       </div>
       <h2
         className="thread-title"
         title={thread.title}
+        role={thread.article_id ? 'link' : undefined}
+        tabIndex={thread.article_id ? 0 : undefined}
         onClick={() => thread.article_id && onNavigate('article', thread.article_id)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && thread.article_id) onNavigate('article', thread.article_id);
+        }}
       >
         {thread.title}
       </h2>
@@ -199,7 +207,7 @@ function ThreadCard({
       </div>
       <div className="thread-links">
         {thread.links.map((l) => (
-          <span key={l} className="chip" onClick={() => onAsk(`Tell me about ${l}`, l)}>{l}</span>
+          <button key={l} type="button" className="chip" onClick={() => onAsk(`Tell me about ${l}`, l)}>{l}</button>
         ))}
       </div>
     </div>
@@ -232,6 +240,7 @@ function DigestNav({ digest, onNavigate }: { digest: Digest; onNavigate: Props['
       <button
         type="button"
         aria-label="Previous day"
+        className="digest-nav-btn"
         style={btn(!digest.prev_date)}
         disabled={!digest.prev_date}
         onClick={() => go(digest.prev_date)}
@@ -243,6 +252,7 @@ function DigestNav({ digest, onNavigate }: { digest: Digest; onNavigate: Props['
       <button
         type="button"
         aria-label="Next day"
+        className="digest-nav-btn"
         style={btn(!digest.next_date)}
         disabled={!digest.next_date}
         onClick={() => go(digest.next_date)}

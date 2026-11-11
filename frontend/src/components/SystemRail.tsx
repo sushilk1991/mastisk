@@ -140,7 +140,7 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
             </div>
           )}
           {(calendar?.status === 'disconnected' || calendarErr || calendar?.last_error) && (
-            <div style={{fontSize:11,color:'#c53030'}}>
+            <div style={{fontSize:11,color:'var(--danger)'}}>
               {calendarErr || calendar?.last_error || calendar?.error || 'OAuth expired'}
             </div>
           )}
@@ -179,7 +179,7 @@ export function SystemRail({ feed, agents, selectedDate, onNavigate }: Props) {
             push: {integrations ? `${integrations.push.backend}${integrations.push.configured ? '' : ' (off)'}` : 'loading'}
           </div>
           {!!integrations?.push.notify_failed_last_24h && (
-            <div style={{fontSize:11,color:'#c53030'}}>
+            <div style={{fontSize:11,color:'var(--danger)'}}>
               {integrations.push.notify_failed_last_24h} push failures in 24h
             </div>
           )}

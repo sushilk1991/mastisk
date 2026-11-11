@@ -350,6 +350,12 @@ export interface OpenQuestion {
 
 export interface OpenQuestionsResponse {
   questions: OpenQuestion[];
+  // Counts for the whole set, not this page. Absent on daemons that predate
+  // paging, which ignore limit/offset and return every question at once.
+  total?: number;
+  articles?: number;
+  limit?: number;
+  offset?: number;
 }
 
 export interface AskResponse {

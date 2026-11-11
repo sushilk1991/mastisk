@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { PodcastListItem, View } from '../types';
 import { Icon } from './icons';
+import { summaryText } from '../summaryText';
 
 interface Props {
   onNavigate: (view: View, id?: string) => void;
@@ -51,6 +52,7 @@ export function PodcastsListView({ onNavigate }: Props) {
                   src={item.source_hero || item.article_hero || ''}
                   alt={item.article_title}
                   loading="lazy"
+                  decoding="async"
                 />
               ) : (
                 <div className="podcast-card-fallback">
@@ -77,17 +79,22 @@ export function PodcastsListView({ onNavigate }: Props) {
                   </>
                 )}
               </div>
-              {item.article_summary && (
-                <p className="podcast-card-summary">
-                  {item.article_summary.slice(0, 180)}
-                  {item.article_summary.length > 180 && '…'}
-                </p>
-              )}
+              <CardSummary text={summaryText(item.article_summary)}/>
             </div>
           </button>
         ))}
       </div>
     </div>
+  );
+}
+
+function CardSummary({ text }: { text: string }) {
+  if (!text) return null;
+  return (
+    <p className="podcast-card-summary">
+      {text.slice(0, 180)}
+      {text.length > 180 && '…'}
+    </p>
   );
 }
 
