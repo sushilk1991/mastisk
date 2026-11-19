@@ -227,6 +227,19 @@ body {
   text-decoration: none;
 }
 .cites a:hover { text-decoration: underline; }
+.cite-item { display: inline-block; margin-right: 6px; white-space: nowrap; }
+.cite-item a { margin-right: 4px; white-space: normal; }
+.copy-link {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.copy-link:hover, .copy-link:focus-visible { color: var(--accent); border-color: var(--accent); }
 
 /* Loading dots */
 .loading-dots { display: inline-flex; gap: 4px; padding: 4px 0; }

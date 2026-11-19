@@ -489,6 +489,32 @@ Local agents should keep using `http://127.0.0.1:5555`.
    **Share → Add to Home Screen**. The `http://…:5555` address from `mastisk url`
    is the direct HTTP listener, not this HTTPS endpoint.
 
+### Tell clients the public address
+
+Optional. Once the HTTPS endpoint works, record it as `public_url` under the
+`[server]` header that step 3 already uses. TOML allows one `[server]` table, so
+add a line rather than a second header:
+
+```toml
+[server]
+local_hostnames = ["localhost", "127.0.0.1", "::1", "[::1]", "testserver", "<machine>.<tailnet>.ts.net"]
+public_url = "https://<machine>.<tailnet>.ts.net:8443"
+```
+
+`GET /api/health` then returns it as `public_url` (`null` when unset). The
+[browser extension](extension/README.md#which-server-it-uses) reads it there: links it
+hands out use this address, so they open from the phone or another computer, and
+your other Chrome browsers learn where the main instance is through Chrome Sync.
+
+- It is a label for links. It does not change what the daemon listens on, and it
+  does not add the host to `local_hostnames`; step 3 still does that.
+- It must be an `http://` or `https://` URL with no query string. A trailing slash
+  is dropped. Anything else fails config validation and the daemon will not start.
+- Upgrade the daemon before adding the key. Older versions reject unknown
+  `[server]` keys and will not start either.
+- The daemon loads its config at startup. Apply the change with a user-approved
+  `mastisk restart`.
+
 ### Troubleshooting and agent guardrails
 
 - **API returns 500 after reinstall:** inspect the log for vault `PermissionError`

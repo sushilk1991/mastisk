@@ -70,12 +70,21 @@ def test_context_menu_setup_coalesces_overlapping_lifecycle_events() -> None:
             contextMenus,
             notifications: { onClicked: event },
             alarms: { onAlarm: event },
+            storage: { onChanged: event },
           },
+          URL,
           console,
           setTimeout,
           clearTimeout,
           queueMicrotask,
         });
+        // The worker pulls lib/server.js in with importScripts; load it into
+        // the same context the way the browser would.
+        context.importScripts = (...files) => {
+          for (const file of files) {
+            vm.runInContext(fs.readFileSync(`extension/${file}`, 'utf8'), context);
+          }
+        };
         vm.runInContext(fs.readFileSync('extension/background.js', 'utf8'), context);
         Promise.all([context.setupContextMenus(), context.setupContextMenus()])
           .then(() => console.log(JSON.stringify({ items: [...items], errors })))

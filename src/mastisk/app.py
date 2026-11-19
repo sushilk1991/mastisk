@@ -162,7 +162,9 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {"ok": True}
+        # public_url lets a client that reached the daemon one way (localhost)
+        # build links that open from another device. Null when not configured.
+        return {"ok": True, "public_url": get_settings().server.public_url}
 
     # Static frontend — the wheel ships the built PWA under src/mastisk/pwa/
     pwa = pwa_dir()

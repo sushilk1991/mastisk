@@ -279,13 +279,18 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
             setBadgeBackgroundColor() {},
             setBadgeText() {},
           },
+          permissions: {
+            async contains() { return true; },
+          },
           storage: {
+            onChanged: event,
             sync: {
               async get() { return { settings: { serverUrl: 'http://localhost:5555' } }; },
             },
             session: {
               async get(key) { return { [key]: sessionStore[key] }; },
               async set(values) { Object.assign(sessionStore, values); },
+              async remove(key) { delete sessionStore[key]; },
             },
           },
           scripting: {
@@ -348,6 +353,9 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
         async function fetch(url, options = {}) {
           const body = options.body ? JSON.parse(options.body) : null;
           fetchCalls.push({ phase, url, body });
+          if (url.endsWith('/api/health')) {
+            return { ok: true, status: 200, async json() { return { ok: true, public_url: null }; } };
+          }
           if (url.endsWith('/api/listen')) {
             return { ok: true, status: 200, async json() { return { job_id: 77 }; } };
           }
@@ -381,6 +389,13 @@ def test_page_link_and_selection_use_the_correct_ingest_contract() -> None:
           clearTimeout,
           queueMicrotask,
         });
+        // The worker pulls lib/server.js in with importScripts; load it into
+        // the same context the way the browser would.
+        context.importScripts = (...files) => {
+          for (const file of files) {
+            vm.runInContext(fs.readFileSync(`extension/${file}`, 'utf8'), context);
+          }
+        };
         vm.runInContext(fs.readFileSync('extension/background.js', 'utf8'), context);
 
         (async () => {

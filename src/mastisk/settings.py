@@ -18,6 +18,7 @@ import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import tomli_w
 from dotenv import load_dotenv
@@ -191,6 +192,27 @@ class ServerSettings(_Section):
     local_hostnames: list[str] = Field(
         default_factory=lambda: ["localhost", "127.0.0.1", "::1", "[::1]", "testserver"]
     )
+    # The address other devices use to reach this daemon, for example the
+    # tailnet HTTPS endpoint. GET /api/health reports it so clients can hand
+    # out links that open from a phone or another computer. Informational
+    # only: it does not change what the daemon listens on or which hosts
+    # ``local_hostnames`` trusts.
+    public_url: str | None = None
+
+    @field_validator("public_url")
+    @classmethod
+    def _validate_public_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        url = value.strip().rstrip("/")
+        if not url:
+            return None
+        parts = urlsplit(url)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            raise ValueError("public_url must be an http:// or https:// URL")
+        if parts.query or parts.fragment:
+            raise ValueError("public_url must not include a query string or fragment")
+        return url
 
 
 class LearningSettings(_Section):

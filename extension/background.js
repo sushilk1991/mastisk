@@ -12,9 +12,12 @@
 // badge is always reconciled from live session state on startup,
 // so it can never get stuck.
 
-const DEFAULT_SETTINGS = {
-  serverUrl: 'http://localhost:5555',
-};
+importScripts('lib/server.js');
+
+const {
+  PUBLIC_URL_KEY, candidateServerUrls, parseHealth, resolveServer, linkBase, articleUrl,
+  hostPermissionPattern,
+} = MastiskServer;
 
 const POLL_INTERVAL_MS = 4000;
 // The daemon's compiler agent ticks every 5 minutes, so a freshly queued clip
@@ -22,8 +25,14 @@ const POLL_INTERVAL_MS = 4000;
 // worst-case tick plus a slow LLM compile.
 const POLL_TIMEOUT_MS = 12 * 60 * 1000;
 const LINK_LOAD_TIMEOUT_MS = 20000;
-const JOBS_KEY = 'mastisk-jobs';        // session: { [sourceId]: {startedAt, title} }
+const JOBS_KEY = 'mastisk-jobs';        // session: { [sourceId]: {startedAt, title, serverUrl, linkBase} }
 const NOTIF_KEY = 'mastisk-notif-urls'; // session: { [notificationId]: articleUrl }
+const SERVER_KEY = 'mastisk-server';    // session: { serverUrl, publicUrl, reachable, at }
+// How long a server choice is reused before the candidates are probed again.
+// Short enough to follow a laptop on and off the tailnet, long enough that a
+// 4-second status poll does not turn into a health check per request.
+const SERVER_TTL_MS = 60 * 1000;
+const HEALTH_TIMEOUT_MS = 4000;
 
 // Backend validation caps. We truncate to these client-side rather than let the
 // daemon reject the whole clip with a 422. URL is not truncated (a sliced URL is
@@ -45,16 +54,104 @@ function clampField(value, max) {
   return typeof value === 'string' && value.length > max ? value.slice(0, max) : value;
 }
 
-// --- Settings ---
+// --- Server resolution ---
+// Which daemon to use is decided in lib/server.js: the saved URL when it
+// answers, else a daemon on this machine, else the public address a daemon
+// reported earlier (synced across the owner's Chrome browsers).
 
-async function getSettings() {
-  const { settings } = await chrome.storage.sync.get('settings');
-  return { ...DEFAULT_SETTINGS, ...(settings || {}) };
+// Ask one address whether a Mastisk daemon is there.
+async function probeServer(url) {
+  const pattern = hostPermissionPattern(url);
+  // Without host access the fetch would fail on CORS and look like an
+  // unreachable daemon. Report it so the popup can offer the one-click grant.
+  if (pattern && !(await chrome.permissions.contains({ origins: [pattern] }))) {
+    return { ok: false, needsPermission: true };
+  }
+  try {
+    const resp = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
+    if (!resp.ok) return { ok: false };
+    return parseHealth(await resp.json());
+  } catch {
+    return { ok: false };
+  }
 }
 
-async function getServerUrl() {
-  const s = await getSettings();
-  return String(s.serverUrl || DEFAULT_SETTINGS.serverUrl).replace(/\/+$/, '');
+// Sync the daemon's public address to the owner's other browsers. Written only
+// when it changes: storage.sync rate-limits writes. A daemon that reports none
+// leaves the remembered one alone — it may simply be a different machine.
+async function rememberPublicUrl(publicUrl, known) {
+  if (!publicUrl || publicUrl === known) return;
+  try {
+    await chrome.storage.sync.set({ [PUBLIC_URL_KEY]: publicUrl });
+  } catch (err) {
+    console.warn('[Mastisk] Could not sync the public URL:', err.message);
+  }
+}
+
+let _resolving = null;
+// Bumped when the saved URL changes, so a resolution that started before the
+// change cannot cache its answer after it.
+let _settingsGeneration = 0;
+
+// Resolve the server to use: { serverUrl, publicUrl, reachable, needsPermission }.
+// A reachable result is reused for SERVER_TTL_MS; pass { fresh: true } to probe now.
+async function getServer({ fresh = false } = {}) {
+  if (!fresh) {
+    const cached = (await chrome.storage.session.get(SERVER_KEY))[SERVER_KEY];
+    if (cached?.reachable && Date.now() - cached.at < SERVER_TTL_MS) return cached;
+  }
+  if (!_resolving) {
+    _resolving = (async () => {
+      const generation = _settingsGeneration;
+      const stored = await chrome.storage.sync.get(['settings', PUBLIC_URL_KEY]);
+      const known = stored[PUBLIC_URL_KEY];
+      const server = await resolveServer(
+        candidateServerUrls({ savedUrl: stored.settings?.serverUrl, publicUrl: known }),
+        probeServer,
+      );
+      if (server.reachable) {
+        if (generation === _settingsGeneration) {
+          await chrome.storage.session.set({ [SERVER_KEY]: { ...server, at: Date.now() } });
+        }
+        await rememberPublicUrl(server.publicUrl, known);
+      } else {
+        // Never cache a miss: the next clip should look again.
+        await chrome.storage.session.remove(SERVER_KEY);
+      }
+      return server;
+    })().finally(() => { _resolving = null; });
+  }
+  return _resolving;
+}
+
+// A saved-URL change invalidates the cached choice.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'sync' || !changes.settings) return;
+  _settingsGeneration += 1;
+  chrome.storage.session.remove(SERVER_KEY);
+});
+
+// fetch() against the resolved server. `init` is a function because a timeout
+// signal cannot be reused. If the connection itself fails, the cached choice is
+// stale (the laptop left the tailnet, a daemon stopped): resolve again and
+// retry once on a different server. A timeout is not retried — the request may
+// have landed, and repeating a POST could queue the clip twice.
+async function serverFetch(path, init) {
+  const server = await getServer();
+  try {
+    return { server, resp: await fetch(`${server.serverUrl}${path}`, init()) };
+  } catch (err) {
+    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    const next = timedOut ? null : await getServer({ fresh: true });
+    if (!next?.reachable || next.serverUrl === server.serverUrl) {
+      throw new Error(`Mastisk daemon unreachable at ${server.serverUrl}`);
+    }
+    try {
+      return { server: next, resp: await fetch(`${next.serverUrl}${path}`, init()) };
+    } catch {
+      throw new Error(`Mastisk daemon unreachable at ${next.serverUrl}`);
+    }
+  }
 }
 
 // --- Small helpers ---
@@ -247,27 +344,23 @@ async function claimJob(sourceId) {
   });
 }
 
-async function jobExists(sourceId) {
+async function getJob(sourceId) {
   const store = await chrome.storage.session.get(JOBS_KEY);
-  return !!(store[JOBS_KEY] || {})[sourceId];
+  return (store[JOBS_KEY] || {})[sourceId] || null;
 }
 
 // --- Mastisk API ---
 
-// POST a clip to the daemon. Returns { source_id, status, article? } or throws.
+// POST a clip to the daemon. Returns { source_id, status, article?, server } or
+// throws. `server` is the daemon that took the clip: its source ids and
+// article links belong to that instance.
 async function ingestWeb(payload) {
-  const server = await getServerUrl();
-  let resp;
-  try {
-    resp = await fetch(`${server}/api/ingest/web`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(30000),
-    });
-  } catch (err) {
-    throw new Error(`Mastisk daemon unreachable at ${server}`);
-  }
+  const { server, resp } = await serverFetch('/api/ingest/web', () => ({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30000),
+  }));
   if (!resp.ok && resp.status !== 202 && resp.status !== 200) {
     let detail = `HTTP ${resp.status}`;
     try {
@@ -277,11 +370,13 @@ async function ingestWeb(payload) {
     throw new Error(detail);
   }
   const data = await resp.json();
-  return { httpStatus: resp.status, ...data };
+  return { httpStatus: resp.status, ...data, server };
 }
 
-async function getIngestStatus(sourceId) {
-  const server = await getServerUrl();
+// Status is asked of the daemon that accepted the clip (`serverUrl` from the
+// job), not whichever one resolves now: a source id means nothing elsewhere.
+async function getIngestStatus(sourceId, serverUrl) {
+  const server = serverUrl || (await getServer()).serverUrl;
   const resp = await fetch(`${server}/api/ingest/web/${encodeURIComponent(sourceId)}`, {
     signal: AbortSignal.timeout(15000),
   });
@@ -315,10 +410,9 @@ async function enqueueMedia(media, feedbackTab, title) {
   const label = media.media_type === 'podcast' ? 'Podcast' : 'Video';
   const mediaTitle = cleanMediaTitle(title, media.url);
   await showToast(feedbackTabId, `Sending ${label.toLowerCase()} to the Listener…`, 'info');
-  const server = await getServerUrl();
   let resp;
   try {
-    resp = await fetch(`${server}/api/listen`, {
+    ({ resp } = await serverFetch('/api/listen', () => ({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -328,10 +422,9 @@ async function enqueueMedia(media, feedbackTab, title) {
         ...(mediaTitle ? { title: mediaTitle } : {}),
       }),
       signal: AbortSignal.timeout(30000),
-    });
-  } catch {
-    await feedback(feedbackTabId, 'error', 'Media handoff failed',
-      `Mastisk daemon unreachable at ${server}`);
+    })));
+  } catch (err) {
+    await feedback(feedbackTabId, 'error', 'Media handoff failed', err.message);
     return false;
   }
 
@@ -364,10 +457,6 @@ async function enqueueMedia(media, feedbackTab, title) {
   return true;
 }
 
-function articleUrl(server, id) {
-  return `${server}/a/${id}`;
-}
-
 // --- Completion (shared by the in-SW loop and the alarm sweep) ---
 
 const POLL_ALARM = 'mastisk-poll-sweep';
@@ -392,7 +481,9 @@ async function handleTerminalStatus(sourceId, status, fallbackTitle) {
   if (status.status === 'done') {
     const meta = await claimJob(sourceId);
     if (!meta) return true; // already handled elsewhere
-    const server = await getServerUrl();
+    // The link base was fixed when the clip was accepted. Jobs queued by an
+    // older build of this extension have none; resolve one for those.
+    const base = meta.linkBase || linkBase(await getServer());
     const title = meta.title || fallbackTitle;
     if (status.article) {
       await flashSuccessBadge();
@@ -400,7 +491,7 @@ async function handleTerminalStatus(sourceId, status, fallbackTitle) {
       // notification fires regardless — it's the click-to-open-article channel.
       await toastIfSameTab(meta, `Indexed in Mastisk: ${status.article.title || title || 'your clip'}`, 'success');
       notify('Indexed', status.article.title || title || 'Saved to your wiki',
-        articleUrl(server, status.article.id));
+        articleUrl(base, status.article.id));
     } else {
       // Compiler skipped it — saved as a source but not turned into an article.
       await toastIfSameTab(meta, 'Saved to Mastisk, but not compiled into an article.', 'info');
@@ -435,10 +526,11 @@ async function pollJob(sourceId, title) {
   while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
     await sleep(POLL_INTERVAL_MS);
     // Bail if the alarm sweep already finished this job.
-    if (!(await jobExists(sourceId))) return;
+    const job = await getJob(sourceId);
+    if (!job) return;
     let status;
     try {
-      status = await getIngestStatus(sourceId);
+      status = await getIngestStatus(sourceId, job.serverUrl);
     } catch (err) {
       // Transient error (daemon busy / restarting) — keep trying until timeout.
       continue;
@@ -476,7 +568,7 @@ async function sweepJobs() {
     }
     let status;
     try {
-      status = await getIngestStatus(sourceId);
+      status = await getIngestStatus(sourceId, meta.serverUrl);
     } catch {
       continue; // transient — try again next sweep
     }
@@ -497,7 +589,6 @@ function sleep(ms) {
 // `feedbackTab` is the tab where the user acted — toasts land there.
 async function ingestAndTrack(payload, feedbackTab) {
   const feedbackTabId = feedbackTab?.id;
-  const server = await getServerUrl();
 
   // Guard/clamp to backend limits before POSTing.
   if (typeof payload.url === 'string' && payload.url.length > FIELD_LIMITS.url) {
@@ -519,12 +610,13 @@ async function ingestAndTrack(payload, feedbackTab) {
   }
 
   const title = payload.title || 'Your clip';
+  const base = linkBase(res.server);
 
   // Already compiled — the daemon hands back the existing article.
   if (res.article) {
     showToast(feedbackTabId, `Already in your wiki: ${res.article.title || title}`, 'success');
     notify('Already in your wiki', res.article.title || title,
-      articleUrl(server, res.article.id));
+      articleUrl(base, res.article.id));
     return;
   }
 
@@ -545,7 +637,13 @@ async function ingestAndTrack(payload, feedbackTab) {
 
   // queued | running | pending | (unset) -> track to completion.
   await feedback(feedbackTabId, 'success', 'Sent to Mastisk', 'Indexing…');
-  await addJob(res.source_id, { title, tabId: feedbackTabId, tabUrl: feedbackTab?.url });
+  await addJob(res.source_id, {
+    title,
+    tabId: feedbackTabId,
+    tabUrl: feedbackTab?.url,
+    serverUrl: res.server.serverUrl,
+    linkBase: base,
+  });
   await pollJob(res.source_id, title);
 }
 
@@ -930,24 +1028,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg.action === 'get-server-settings') {
-    (async () => {
-      sendResponse({ ok: true, serverUrl: await getServerUrl() });
-    })().catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true;
-  }
-
+  // Which daemon is in use and where links should point. `ok` is whether a
+  // daemon answered. With `serverUrl` (Settings → Test connection) only that
+  // address is asked; otherwise the candidates are probed afresh.
   if (msg.action === 'health') {
     (async () => {
-      const server = msg.serverUrl ? String(msg.serverUrl).replace(/\/+$/, '') : await getServerUrl();
-      try {
-        const resp = await fetch(`${server}/api/health`, { signal: AbortSignal.timeout(5000) });
-        const data = await resp.json().catch(() => ({}));
-        sendResponse({ ok: resp.ok && data?.ok === true });
-      } catch (err) {
-        sendResponse({ ok: false, error: err.message });
+      if (msg.serverUrl) {
+        const serverUrl = MastiskServer.normalizeServerUrl(msg.serverUrl);
+        const result = serverUrl ? await probeServer(serverUrl) : { ok: false };
+        sendResponse({
+          ok: !!result.ok,
+          serverUrl,
+          publicUrl: result.publicUrl || '',
+          needsPermission: result.needsPermission ? [serverUrl] : [],
+        });
+        return;
       }
-    })();
+      const server = await getServer({ fresh: true });
+      sendResponse({
+        ok: server.reachable,
+        serverUrl: server.serverUrl,
+        publicUrl: server.publicUrl,
+        linkBase: linkBase(server),
+        needsPermission: server.needsPermission,
+      });
+    })().catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
 
@@ -967,8 +1072,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'ask') {
     (async () => {
-      const server = await getServerUrl();
-      const resp = await fetch(`${server}/api/ask`, {
+      const { server, resp } = await serverFetch('/api/ask', () => ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -979,10 +1083,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           page_content: clampField(msg.page_content, FIELD_LIMITS.page_content) || undefined,
         }),
         signal: AbortSignal.timeout(120000),
-      });
+      }));
       if (!resp.ok) throw new Error(`Mastisk returned HTTP ${resp.status}`);
       const data = await resp.json();
-      sendResponse({ ok: true, ...data });
+      // linkBase rides along so cited sources link to the daemon that answered.
+      sendResponse({ ok: true, ...data, linkBase: linkBase(server) });
     })().catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }

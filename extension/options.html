@@ -44,11 +44,13 @@
     #msg { margin-left: auto; font-size: 12.5px; }
     #msg.ok { color: var(--ok); }
     #msg.err { color: var(--err); }
+    .note { margin-top: 24px; overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
   <h1>Mastisk Clipper</h1>
-  <p class="sub">Point the clipper at your local Mastisk daemon.</p>
+  <p class="sub">The clipper uses this server when it answers, then a daemon on this
+    computer, then the public address your Mastisk server reported.</p>
 
   <label for="server-url">Server URL
     <span class="hint">— e.g. http://localhost:5555 or a Tailnet address</span>
@@ -58,9 +60,12 @@
   <div class="row">
     <button id="save" class="primary">Save</button>
     <button id="test">Test connection</button>
-    <span id="msg"></span>
+    <span id="msg" role="status"></span>
   </div>
 
+  <p id="public-url" class="sub note"></p>
+
+  <script src="lib/server.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

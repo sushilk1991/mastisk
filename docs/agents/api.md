@@ -24,6 +24,7 @@ Prefer the HTTP API at `http://127.0.0.1:5555` over reading the vault, so signal
 - **Notes:** `POST /api/notes` with `{text, source: "pwa"|"cli", context?}` (the field is `text`). `GET /api/notes?limit=50&before=ID&classification=KIND`, `GET /api/notes/{id}`, `GET /api/notes/{id}/file`, `POST /api/notes/{id}/escalate`, `DELETE /api/notes/{id}` (soft delete).
 - **Ingestion:** `POST /api/ingest/document` (multipart, through the converter and Compiler). `POST /api/listen` with `{url, exact_url: true}` so an advertised RSS feed doesn't replace the article.
 - **Vault:** `GET /api/vault/info`, `GET /api/vault/self/{name}` and `PUT` with `{content}`, for `name` in `identity, interests, dislikes, style, learnings`.
+- **Health:** `GET /api/health` returns `{ok, public_url}`. `public_url` is the `[server] public_url` setting (`null` when unset): the address other devices use. Use it as the base for any link the user will open on another device; keep calling the API on `127.0.0.1`.
 - **Surfaces:** `GET /api/digest`, `GET /api/feed?limit=50`, `GET /api/feed/stream` (SSE), `GET /api/open-questions`, `GET /api/synthesis/pending`, `POST /api/roundtables`, `GET /api/repos`.
 
 ```bash

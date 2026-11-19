@@ -7,7 +7,8 @@
 
 (() => {
   // --- State ---
-  let serverUrl = 'http://localhost:5555';
+  let serverUrl = MastiskServer.LOCAL_SERVER_URL; // where API requests go
+  let linkBase = serverUrl;                       // where links point (public URL when the daemon has one)
   let activeTabId = null;
   let currentUrl = '';
   let pageContent = null;       // { type, title, content, ... } for the active tab
@@ -46,7 +47,7 @@
   }
 
   function articleUrl(id) {
-    return `${serverUrl}/a/${id}`;
+    return MastiskServer.articleUrl(linkBase, id);
   }
 
   // Replace [[Wiki Title]] citations with links (resolved via hits by title).
@@ -73,7 +74,8 @@
       // (tasks, people, books) render as plain text — inline in prose we keep
       // just the title; the kind label is shown in the Sources list below.
       if (tok.hit?.is_article === true && tok.hit?.id != null) {
-        return `<a class="cite-link" data-article="${escapeHtml(tok.hit.id)}" href="#">${safe}</a>`;
+        // A real href, so the browser's own "Copy link address" works too.
+        return `<a class="cite-link" data-article="${escapeHtml(tok.hit.id)}" href="${escapeHtml(articleUrl(tok.hit.id))}">${safe}</a>`;
       }
       return `<span class="cite-plain">${safe}</span>`;
     });
@@ -97,10 +99,19 @@
       const hit = byTitle.get(String(title).toLowerCase().trim());
       if (hit?.is_article === true && hit?.id != null) {
         const a = document.createElement('a');
-        a.href = '#';
+        a.href = articleUrl(hit.id);
         a.dataset.article = String(hit.id);
         a.textContent = title;
-        wrap.appendChild(a);
+        const copy = document.createElement('button');
+        copy.type = 'button';
+        copy.className = 'copy-link';
+        copy.dataset.copyArticle = String(hit.id);
+        copy.textContent = 'Copy link';
+        copy.setAttribute('aria-label', `Copy link to ${title}`);
+        const item = document.createElement('span');
+        item.className = 'cite-item';
+        item.append(a, copy);
+        wrap.appendChild(item);
       } else {
         // Non-article source (task / person / book / …): plain text + kind label.
         const span = document.createElement('span');
@@ -173,14 +184,18 @@
   }
 
   // --- Connection ---
+  // Also learns which daemon is in use and where links should point.
   async function checkConnection() {
     try {
       const resp = await chrome.runtime.sendMessage({ action: 'health' });
       const online = !!resp?.ok;
+      if (resp?.serverUrl) serverUrl = resp.serverUrl;
+      if (resp?.linkBase) linkBase = resp.linkBase;
       connDot.classList.toggle('online', online);
       connDot.classList.toggle('offline', !online);
       connDot.title = online ? `Connected to ${serverUrl}` : `Mastisk unreachable at ${serverUrl}`;
     } catch {
+      connDot.classList.remove('online');
       connDot.classList.add('offline');
       connDot.title = `Mastisk unreachable at ${serverUrl}`;
     }
@@ -264,6 +279,8 @@
       if (!resp?.ok) {
         throw new Error(resp?.error || 'Request failed');
       }
+      // The answering daemon may differ from the one seen at startup.
+      if (resp.linkBase) linkBase = resp.linkBase;
       const answer = resp.answer || '(no answer)';
       const cites = resp.cites || [];
       const hits = resp.hits || [];
@@ -313,13 +330,31 @@
     if (btn?.dataset.q) ask(btn.dataset.q);
   });
 
-  // Citation click -> open the wiki article in a new tab
+  // Citation click -> open the wiki article in a new tab; "Copy link" -> clipboard.
+  // Both build the URL at click time, so they follow the current link base.
   messagesEl.addEventListener('click', (e) => {
+    const copy = e.target.closest('[data-copy-article]');
+    if (copy) {
+      e.preventDefault();
+      copyLink(copy, articleUrl(copy.dataset.copyArticle));
+      return;
+    }
     const link = e.target.closest('[data-article]');
     if (!link) return;
     e.preventDefault();
     chrome.tabs.create({ url: articleUrl(link.dataset.article) });
   });
+
+  async function copyLink(button, url) {
+    let label = 'Copied';
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      label = 'Copy failed';
+    }
+    button.textContent = label;
+    setTimeout(() => { button.textContent = 'Copy link'; }, 1500);
+  }
 
   // --- Tab tracking ---
   chrome.tabs.onActivated.addListener(({ tabId }) => {
@@ -340,21 +375,14 @@
     }
   });
 
-  // React to server URL changes from the options page.
+  // React to server URL changes from the options page. The saved URL is only
+  // one candidate, so ask the background which server actually answers now.
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && changes.settings) {
-      const s = changes.settings.newValue;
-      if (s?.serverUrl) serverUrl = String(s.serverUrl).replace(/\/+$/, '');
-      checkConnection();
-    }
+    if (area === 'sync' && changes.settings) checkConnection();
   });
 
   // --- Init ---
   async function init() {
-    try {
-      const resp = await chrome.runtime.sendMessage({ action: 'get-server-settings' });
-      if (resp?.ok && resp.serverUrl) serverUrl = resp.serverUrl;
-    } catch { /* use default */ }
     await checkConnection();
     await loadActiveTab();
     updateSendState();
