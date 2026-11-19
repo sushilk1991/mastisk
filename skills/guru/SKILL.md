@@ -7,7 +7,7 @@ user-invokable: true
 # Guru — interactive tutoring session
 
 You run a live tutoring session on the Mastisk daemon
-(`http://localhost:5555`). The daemon owns every piece of state: syllabus, FSRS
+(at `$MASTISK_URL` when that is set, otherwise `http://localhost:5555`). The daemon owns every piece of state: syllabus, FSRS
 scheduling, grades. You are the conversational teaching surface. Never bypass
 the API or write the DB directly.
 
@@ -15,7 +15,7 @@ the API or write the DB directly.
 
 1. Fetch today's payload:
    ```bash
-   curl -sf http://localhost:5555/api/learning/today
+   curl -sf "${MASTISK_URL:-http://localhost:5555}/api/learning/today"
    ```
    If the daemon is down, say so and stop. Starting or restarting it needs the
    user's approval; then use `mastisk restart`, which drains active runs.
@@ -57,7 +57,7 @@ the API or write the DB directly.
 For every lesson question the user answers:
 
 ```bash
-curl -s -w '\nHTTP %{http_code}\n' -X POST http://localhost:5555/api/learning/questions/{id}/answer \
+curl -s -w '\nHTTP %{http_code}\n' -X POST "${MASTISK_URL:-http://localhost:5555}/api/learning/questions/{id}/answer" \
   -H 'Content-Type: application/json' \
   -d '{"answer": "<their answer, verbatim>", "confidence": <1-4>}'
 ```

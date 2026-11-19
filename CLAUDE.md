@@ -1,6 +1,6 @@
 # Mastisk
 
-Mastisk is the user's local knowledge-wiki daemon, and this repo is its source (Python backend in `src/mastisk/`, Vite/React PWA in `frontend/`). It runs as the launchd agent `com.mastisk.agents`, serves `http://127.0.0.1:5555`, and mirrors a markdown vault to iCloud. Domain terms (articles, notes, escalation, Compiler, Synthesizer, signals) are defined in `CONTEXT.md`.
+Mastisk is the user's local knowledge-wiki daemon, and this repo is its source (Python backend in `src/mastisk/`, Vite/React PWA in `frontend/`). It runs as the launchd agent `com.mastisk.agents`, serves `http://127.0.0.1:5555` on the machine that hosts it, and mirrors a markdown vault to iCloud. When `MASTISK_URL` is set in your environment, the live daemon is on another machine at that address and this machine must not run one: two daemons writing the same iCloud vault corrupt it. Domain terms (articles, notes, escalation, Compiler, Synthesizer, signals) are defined in `CONTEXT.md`.
 
 ## Memory contract
 
@@ -9,7 +9,7 @@ Use the global `mastisk` skill and CLI. Recall with `mastisk ask "<complete task
 ## The live daemon
 
 - All writes go through the API or CLI so triggers, signal cascades and FTS indexes fire. The SQLite DB (`~/Library/Application Support/Mastisk/mastisk.db`) and the vault are read-only for agents.
-- Pre-flight: `curl -sf http://127.0.0.1:5555/api/sidebar > /dev/null && echo ok || echo "DAEMON DOWN"`. If it's down, tell the user and get approval before starting it.
+- Pre-flight: `curl -sf "${MASTISK_URL:-http://127.0.0.1:5555}/api/sidebar" > /dev/null && echo ok || echo "DAEMON DOWN"`. If it's down, tell the user. Start it only with their approval, and only on the machine that hosts it: with `MASTISK_URL` set, that is never this one, and the local database here is a stale copy that nothing may write to.
 - Restarts interrupt in-flight LLM calls, so each one needs the user's approval. Then use `mastisk restart`, which drains active runs; the procedure, including older daemons without drain, is in [README: Safe restarts](README.md#safe-restarts). `launchctl kickstart -k` and reinstalling package files during active runs stay off the table.
 - Manual note promotion goes through `POST /api/notes/{id}/escalate`. When quoting vault content, cite the article id (`note-XXXXXX-slug`).
 
