@@ -23,6 +23,7 @@ Daemon
 | `src/mastisk/settings.py` | `ServerSettings.public_url: str \| None = None`, with a validator: trims, drops a trailing slash, empty means unset, rejects anything that is not an `http(s)` URL or has a query or fragment. |
 | `src/mastisk/app.py` | `/api/health` returns `{"ok": true, "public_url": <value or null>}`. |
 | `tests/test_health_public_url.py` | New. Health with the setting unset, omitted and set; the host allowlist is unchanged by it; normalisation; rejected values; loading from `config.toml`. |
+| `tests/test_extension_remote_host.py` | New. The extension's routes as they arrive on the public host: tailnet `Host`, a `chrome-extension://` origin, no proxy headers. |
 
 Nothing else in the daemon changed. `public_url` does not affect what the daemon listens on,
 CORS, or `local_hostnames`.
@@ -111,18 +112,35 @@ test_public_url_rejects_values_a_browser_could_not_open[...] PASSED   (5 cases)
 test_config_toml_public_url_loads_into_settings PASSED
 ============================== 17 passed in 0.75s ==============================
 
-$ uv run pytest tests/test_health_public_url.py tests/test_settings_env_isolation.py \
-    tests/test_capture_settings.py tests/test_provider_settings.py tests/test_settings_github.py \
-    tests/test_tunnel_scope.py tests/test_phase15_editor_backend.py tests/test_integration_health.py \
-    tests/test_extension_context_menus.py tests/test_extension_media_routing.py \
-    tests/test_extension_server_resolution.py tests/test_extension_package.py -q
-75 passed in 4.64s
+$ uv run pytest tests/test_extension_remote_host.py -v
+test_health_and_web_clip_work_on_the_public_host PASSED
+test_listen_and_ask_are_reachable_on_the_public_host PASSED
+test_the_same_requests_are_hidden_when_they_carry_proxy_headers PASSED
+============================== 3 passed in 0.68s ===============================
+
+$ uv run pytest tests/test_health_public_url.py tests/test_extension_remote_host.py \
+    tests/test_settings_env_isolation.py tests/test_capture_settings.py \
+    tests/test_provider_settings.py tests/test_settings_github.py tests/test_tunnel_scope.py \
+    tests/test_phase15_editor_backend.py tests/test_integration_health.py tests/test_ingest_web.py \
+    tests/test_restart_control.py tests/test_extension_context_menus.py \
+    tests/test_extension_media_routing.py tests/test_extension_server_resolution.py \
+    tests/test_extension_package.py -q
+105 passed in 6.47s
 
 $ node --test "extension/tests/*.test.js"
 ℹ tests 35
 ℹ pass 35
 ℹ fail 0
 ```
+
+`test_extension_remote_host.py` covers the daemon's side of the other-machine path, which the
+extension's fake network cannot: with the public host in `local_hostnames`, requests carrying
+that `Host` and an extension origin reach `/api/health`, `/api/ingest/web` (202, then its
+status), `/api/listen` and `/api/ask` (422 on an empty body, so the route was reached and no
+work ran). No auth or host check turns them away.
+
+Nothing else reads the `/api/health` body: `mastisk restart` checks `/api/sidebar`, and there
+is no other caller in `src/`, `frontend/src/`, `install.sh` or `skills/`.
 
 The worker tests were checked by breaking the code on purpose. Each of these five edits made
 a test fail: polling the wrong server, building the *Indexed* link without the public URL,
@@ -134,22 +152,29 @@ README, tests or scripts.
 
 The popup, options page and side panel were rendered once in headless Chromium on the `build`
 box with a stub `chrome` object, in light and dark, and the screenshots inspected. One defect
-found and fixed (the Settings link lost its right alignment). This checks layout only.
+found and fixed (the Settings link lost its right alignment). This checks layout only. In the
+dark side-panel capture the connection dot was grey, not green; the light capture of the same
+code was green. I did not find the cause. The dot has a 0.2 s colour transition, so the capture
+may have caught it mid-change.
 
 The full backend `pytest` suite and the frontend gate were not run; the frontend is untouched.
 
 ## Two facts checked against Chrome's documentation
 
 **Does `chrome.storage.sync` sync between two machines for an unpacked extension loaded from
-different paths?** No. Sync data belongs to an extension id, and an unpacked extension's id is
-a hash of the folder path, so different paths give two unrelated extensions.
+different paths?** No, as far as the sources go. The answer rests on two links of different
+strength:
 
-- Path-derived id: Chromium source, `GenerateIdForPath` in
+- An unpacked extension's id is a hash of its folder path, so different paths give different
+  ids. Source: Chromium, `GenerateIdForPath` in
   [`components/crx_file/id_util.cc`](https://github.com/chromium/chromium/blob/main/components/crx_file/id_util.cc)
-  (SHA-256 of the path). Read on 2026-11-19.
-- A store install has one id everywhere, so it syncs "with every Chrome browser that the user
-  is logged into" when sync is on
-  ([storage API reference](https://developer.chrome.com/docs/extensions/reference/api/storage)).
+  (SHA-256 of the path). Primary source, read on 2026-11-19.
+- Sync data is kept per extension id, so different ids share nothing. Source: the two
+  chromium-extensions threads below, where a developer says sync needs the same id on every
+  device.
+  **Chrome's documentation does not state this**; the
+  [storage API reference](https://developer.chrome.com/docs/extensions/reference/api/storage)
+  says only that data "syncs with every Chrome browser that the user is logged into".
 - Whether an unpacked copy syncs once the ids match (same path on both machines, or a manifest
   [`key`](https://developer.chrome.com/docs/extensions/reference/manifest/key)) is **not
   stated in Chrome's documentation**. Developers on the chromium-extensions list report that
@@ -159,7 +184,8 @@ a hash of the folder path, so different paths give two unrelated extensions.
 
 So "works on the other machine with nothing typed" is only assured for a store install.
 
-**What does Chrome permit on macOS outside the store?**
+**What does Chrome permit on macOS outside the store?** The quoted sentences were checked
+word for word against the fetched pages on 2026-11-19.
 
 - Local `.crx`: not allowed. "As of Chrome 44, no external installs are allowed from a path to
   a local CRX file on Mac OS."
@@ -168,7 +194,8 @@ So "works on the other machine with nothing typed" is only assured for a store i
   ([Alternative installation methods](https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions))
 - Force-install by policy from a self-hosted URL: only when the Mac "is managed via MDM,
   joined to a domain via MCX or enrolled in Chrome Enterprise Core"
-  (`ExtensionInstallForcelist`, Chromium policy definition).
+  ([`ExtensionInstallForcelist` policy definition](https://github.com/chromium/chromium/blob/main/components/policy/resources/templates/policy_definitions/Extensions/ExtensionInstallForcelist.yaml);
+  the rendered policy page did not load for me, so this is the Chromium source for it).
 - Load unpacked with Developer mode: allowed, by hand on each machine.
 - Unlisted store item: "does not create a listing" and "allows anyone to install your item if
   they know its Chrome Web Store URL"; "All visibility settings ... go through the same review
@@ -191,6 +218,7 @@ All of this needs a real Chrome and, for most of it, the upgraded daemon:
 - Chrome's Local Network Access checks. A reply on the chromium-extensions list says
   extensions with host permissions are not affected; not confirmed here.
 - Clicking a notification on macOS.
+- The side panel's connection dot in dark mode (grey in one headless capture, see above).
 - Uploading the zip to the Developer Dashboard and passing review.
 - The running daemon: it was not restarted, so `curl http://127.0.0.1:5555/api/health` still
   returns only `{"ok": true}`. The extension treats that as "no public address".
@@ -198,9 +226,10 @@ All of this needs a real Chrome and, for most of it, the upgraded daemon:
 
 ## Rollout (not done; each step is the owner's)
 
-1. Reinstall the daemon from this branch, then restart it with `mastisk restart`.
-   Order matters: `[server]` rejects unknown keys, so a daemon without this change will not
-   start if `public_url` is already in `config.toml`.
+1. Upgrade the daemon to this change by the procedure in
+   [README: Safe restarts](../../README.md#safe-restarts), which drains active runs before any
+   package file is replaced. Do this before step 2: `[server]` rejects unknown keys, so a
+   daemon without this change will not start if `public_url` is already in `config.toml`.
 2. Add `public_url = "https://<machine>.<tailnet>.ts.net:8443"` under `[server]` in
    `config.toml` and restart once more. Check `curl -s http://127.0.0.1:5555/api/health`.
 3. Reload the unpacked extension on the main machine and open the popup once. That writes the

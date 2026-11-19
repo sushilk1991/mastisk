@@ -106,14 +106,15 @@ Checked against Chrome's documentation on 2026-11-19.
 | `ExtensionInstallForcelist` policy with a self-hosted update URL | Only on a managed Mac: "managed via MDM, joined to a domain via MCX or enrolled in Chrome Enterprise Core". |
 
 Sources: [Alternative installation methods](https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions),
-[ExtensionInstallForcelist](https://chromeenterprise.google/policies/#ExtensionInstallForcelist),
+[ExtensionInstallForcelist policy definition](https://github.com/chromium/chromium/blob/main/components/policy/resources/templates/policy_definitions/Extensions/ExtensionInstallForcelist.yaml),
 [Chrome Web Store distribution](https://developer.chrome.com/docs/webstore/cws-dashboard-distribution).
 
 ### Sync between computers needs the same extension id
 
-`chrome.storage.sync` data belongs to an extension id. A store install has the same id
-everywhere, so the saved server URL and the public address follow you to every Chrome you are
-signed in to with sync on.
+`chrome.storage.sync` data is kept per extension id. Chrome's documentation does not spell
+that out; it is how developers on the chromium-extensions list describe it (links below). A
+store install has the same id everywhere, so the saved server URL and the public address
+follow you to every Chrome you are signed in to with sync on.
 
 An unpacked copy gets its id from the folder it was loaded from: Chromium hashes the path
 ([`GenerateIdForPath`](https://github.com/chromium/chromium/blob/main/components/crx_file/id_util.cc)).
