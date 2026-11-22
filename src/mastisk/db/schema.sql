@@ -1300,3 +1300,26 @@ CREATE TABLE IF NOT EXISTS lesson_chat_messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_lesson_chat_lesson ON lesson_chat_messages(lesson_id, id);
+
+-- ─────────────────────────────── Coreader reading notes ───────────────────────────────
+-- Mirror of <Coreader library>/Books/<slug>/notes.md. The Markdown file stays
+-- the only copy of the notes: `path` is relative to the configured library
+-- root and `search_text` is a derived index rebuilt from the file on change.
+
+CREATE TABLE IF NOT EXISTS coreader_books (
+  id              TEXT PRIMARY KEY,
+  slug            TEXT NOT NULL,
+  path            TEXT UNIQUE NOT NULL,
+  title           TEXT NOT NULL,
+  author          TEXT,
+  highlight_count INTEGER NOT NULL DEFAULT 0,
+  search_text     TEXT NOT NULL DEFAULT '',
+  file_mtime_ns   INTEGER,
+  file_size       INTEGER,
+  deleted_at      DATETIME,
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_coreader_books_active
+  ON coreader_books(id) WHERE deleted_at IS NULL;

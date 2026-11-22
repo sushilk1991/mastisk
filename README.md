@@ -20,6 +20,7 @@ Mastisk is the assistant that **reads, watches, listens, and thinks for you in t
 - [Phone setup](#phone-setup)
 - [Charts and diagrams](#charts-and-diagrams)
 - [Connecting your GitHub](#connecting-your-github)
+- [Connecting Coreader](#connecting-coreader)
 - [Connecting Google Calendar](#connecting-google-calendar)
 - [Capturing notes](#capturing-notes)
 - [Multi-LLM roundtable](#multi-llm-roundtable)
@@ -621,6 +622,21 @@ You can also point Mastisk at a checkout on your Mac (any git directory). The lo
 
 ---
 
+## Connecting Coreader
+
+Coreader (a Mac reading app) keeps each book's highlights and notes in one Markdown file, `<library>/Books/<slug>/notes.md`. Mastisk can index those files where they are, so reading notes show up in search and Ask without a second copy in the vault.
+
+```bash
+mastisk coreader connect                      # follow the folder the Coreader app uses
+mastisk coreader connect --library ~/Reading  # or name the library folder
+mastisk coreader status
+mastisk coreader disconnect
+```
+
+`connect` writes `[coreader] enabled` and `library_root` to `config.toml` and indexes the library at once. The daemon rereads that table on every five-minute scan, so no restart is needed. Mastisk only reads the library: it stores each file's path (relative to the library) and a search index rebuilt from the file, and Ask reads the file itself. A source of kind `coreader` links back with `coreader://open?book=<id>`.
+
+---
+
 ## Connecting Google Calendar
 
 Calendar is read-only. Mastisk requests only:
@@ -958,6 +974,7 @@ mastisk add-repo <slug>     track a GitHub repo (hourly poll + daily ideation)
 mastisk add-local-repo <path>  track a local git repo
 mastisk list-repos          list tracked repos
 mastisk remove-repo <slug>  tombstone a tracked repo
+mastisk coreader connect    index Coreader reading notes in place (also: status, scan, disconnect)
 mastisk logs [-n 50]        tail agent activity
 mastisk backfill-segments   backfill transcript segments for listened media
 mastisk repair-graph        rebuild missing link-graph edges

@@ -25,6 +25,7 @@ const KIND_GLYPH: Record<SearchResult['kind'], string> = {
   quote: '❝',
   inventory: '□',
   content: '▣',
+  coreader: '❞',
 };
 
 const DEBOUNCE_MS = 180;
@@ -164,6 +165,8 @@ export function CommandPalette({ open, onClose, onAsk, onNavigate }: Props) {
       case 'quote':   onNavigate('library', `quote:${r.id}`); break;
       case 'inventory': onNavigate('inventory'); break;
       case 'content': onNavigate('content'); break;
+      // Reading notes live in the Coreader app; link_target is its deep link.
+      case 'coreader': if (r.link_target) window.location.href = r.link_target; break;
       default: {
         // Exhaustive-switch sentinel: the unused binding makes TS error if a
         // new SearchResultKind is added without updating this switch. At

@@ -1707,3 +1707,105 @@ _STYLE_TEMPLATE = """# How I want articles written
 _LEARNINGS_TEMPLATE = """# Auto-learnings
 (Appended by the Reflection agent once it's running. Prune freely.)
 """
+
+
+# ─────────────────────────────── Coreader connector ───────────────────────────────
+
+coreader_app = typer.Typer(
+    help="Index Coreader reading notes where they already live (no copies).",
+    no_args_is_help=True,
+)
+app.add_typer(coreader_app, name="coreader")
+
+
+def _coreader_report(as_json: bool, scan: dict | None = None) -> None:
+    from mastisk.coreader.sync import status
+
+    report = status()
+    if scan is not None:
+        report["last_scan"] = scan
+    if as_json:
+        typer.echo(json.dumps(report))
+        return
+    state = "[green]on[/green]" if report["enabled"] else "[dim]off[/dim]"
+    console.print(f"Coreader connector: {state}")
+    console.print(f"  library: {report['library_root']} [dim]({report['root_source']})[/dim]")
+    if not report["library_exists"]:
+        console.print("  [yellow]no Books folder there yet[/yellow]")
+    console.print(f"  books indexed: {report['books']}")
+    if scan and scan.get("skipped"):
+        console.print(f"  [yellow]scan skipped: {scan['skipped']}[/yellow]")
+
+
+def _coreader_local_only() -> None:
+    # With MASTISK_URL set the daemon is on another machine and the database
+    # here is a stale copy that nothing may write to.
+    if os.environ.get("MASTISK_URL"):
+        typer.secho(
+            "MASTISK_URL is set: run this on the machine that hosts Mastisk.",
+            fg="red", err=True,
+        )
+        raise typer.Exit(code=1)
+
+
+@coreader_app.command("status")
+def coreader_status_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show whether the connector is on, which folder it reads, and how many books it sees."""
+    _coreader_local_only()
+    _ensure_db()
+    _coreader_report(as_json)
+
+
+@coreader_app.command("connect")
+def coreader_connect_cmd(
+    library: str = typer.Option(
+        "", "--library",
+        help="Coreader library folder (the one containing Books/). "
+             "Omit to follow the folder the Coreader app itself uses.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Turn the connector on and index the library now. No restart needed."""
+    from mastisk.coreader.sync import scan_coreader
+    from mastisk.settings import update_toml_key
+
+    _coreader_local_only()
+    root = ""
+    if library:
+        path = Path(library).expanduser().resolve()
+        if not path.is_dir():
+            typer.secho(f"not a directory: {path}", fg="red", err=True)
+            raise typer.Exit(code=1)
+        root = str(path)
+    _ensure_db()
+    update_toml_key("coreader", "library_root", root)
+    update_toml_key("coreader", "enabled", True)
+    _coreader_report(as_json, scan_coreader())
+
+
+@coreader_app.command("disconnect")
+def coreader_disconnect_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Turn the connector off. The notes leave search and Ask; no file is touched."""
+    from mastisk.coreader.sync import scan_coreader
+    from mastisk.settings import update_toml_key
+
+    _coreader_local_only()
+    _ensure_db()
+    update_toml_key("coreader", "enabled", False)
+    _coreader_report(as_json, scan_coreader())
+
+
+@coreader_app.command("scan")
+def coreader_scan_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Rescan the library now instead of waiting for the five-minute tick."""
+    from mastisk.coreader.sync import scan_coreader
+
+    _coreader_local_only()
+    _ensure_db()
+    _coreader_report(as_json, scan_coreader())

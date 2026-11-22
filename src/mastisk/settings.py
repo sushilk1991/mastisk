@@ -415,6 +415,18 @@ class TweetSettings(_Section):
     max_hook_chars: int = 180
 
 
+class CoreaderSettings(_Section):
+    """Reading notes from the Coreader app, indexed where they already live.
+
+    Read fresh from config.toml on every scan (see ``mastisk.coreader.config``),
+    so turning it on or off or moving the folder needs no daemon restart.
+    """
+    enabled: bool = False
+    # The Coreader library folder (the one that contains ``Books/``). Empty
+    # follows Coreader's own config.json, then its default locations.
+    library_root: str = ""
+
+
 class Settings(BaseSettings):
     # populate_by_name: accept both the field name (from TOML) AND the alias
     # (from env vars). Without this, pydantic v2 silently drops TOML kwargs
@@ -489,6 +501,8 @@ class Settings(BaseSettings):
     learning: LearningSettings = Field(default_factory=LearningSettings)
 
     tweet: TweetSettings = Field(default_factory=TweetSettings)
+
+    coreader: CoreaderSettings = Field(default_factory=CoreaderSettings)
 
     # RSS feeds to subscribe (managed via CLI, stored in DB — this is just the initial seed)
     seed_feeds: list[str] = Field(default_factory=list)

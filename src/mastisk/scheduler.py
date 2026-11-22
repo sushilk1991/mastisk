@@ -136,6 +136,7 @@ async def start_scheduler(gate: _RunGate | None = None):
         from mastisk.agents.studio import scan_agent_profiles, scan_agent_skills
         from mastisk.bgtasks.sync import scan_bg_tasks
         from mastisk.content.sync import scan_content
+        from mastisk.coreader.sync import scan_coreader
         from mastisk.inventory.sync import scan_inventory
         from mastisk.journal import scan_journal_days
         from mastisk.library.sync import scan_library
@@ -155,6 +156,7 @@ async def start_scheduler(gate: _RunGate | None = None):
                 scan_routines,
                 scan_people,
                 scan_library,
+                scan_coreader,
                 scan_inventory,
                 scan_agent_skills,
                 scan_agent_profiles,

@@ -409,7 +409,7 @@ export interface AskSource {
 export type SearchResultKind =
   | 'article' | 'note' | 'blog'
   | 'task' | 'project' | 'routine' | 'journal' | 'person'
-  | 'book' | 'quote' | 'inventory' | 'content';
+  | 'book' | 'quote' | 'inventory' | 'content' | 'coreader';
 
 export interface SearchResult {
   kind: SearchResultKind;

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from mastisk.paths import db_path
 from mastisk.synthesis_policy import _CRITIC_MAX_SCORE, _PUBLISH_MIN_SCORE
@@ -1323,6 +1324,19 @@ def _truncate(value: object, limit: int = 180) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+def _excerpt_around(value: object, terms: list[str], *, width: int = 240) -> str:
+    """A window of text around the first matching term, on one line."""
+    text = str(value or "")
+    lowered = text.casefold()
+    first = min(
+        (index for term in terms if (index := lowered.find(term.casefold())) >= 0),
+        default=0,
+    )
+    start = max(0, first - width // 3)
+    window = " ".join(text[start : start + width].split())
+    return ("…" if start > 0 else "") + window + ("…" if start + width < len(text) else "")
+
+
 def _search_personal_os_mirrors(
     conn: sqlite3.Connection,
     q: str,
@@ -1459,6 +1473,23 @@ def _search_personal_os_mirrors(
             subtitle="Quote",
             excerpt=_compact_parts(row.get("source_type"), row.get("source_ref"), row.get("tags_json")),
             link_target=f"/library/quotes/{row['id']}",
+            score=score,
+        ),
+    )
+    collect(
+        table="coreader_books",
+        columns=["title", "author", "search_text"],
+        where="deleted_at IS NULL",
+        order_by="updated_at DESC",
+        build=lambda row, score: _search_result(
+            kind="coreader",
+            id=row["id"],
+            slug=row["slug"],
+            title=row["title"],
+            subtitle=_compact_parts("Reading notes", row.get("author")),
+            excerpt=_excerpt_around(row.get("search_text"), terms),
+            # Opens the book in the Coreader app; there is no Mastisk page for it.
+            link_target=f"coreader://open?book={quote(str(row['id']), safe='')}",
             score=score,
         ),
     )
