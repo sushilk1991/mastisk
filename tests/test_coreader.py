@@ -244,6 +244,55 @@ def test_download_is_only_requested_for_icloud_paths(tmp_path, monkeypatch) -> N
     assert called == []
 
 
+def test_placeholder_only_notes_request_download_and_are_indexed_next_scan(
+    db, data_tmp, library, monkeypatch,
+) -> None:
+    from mastisk.coreader import sync
+    from mastisk.db import queries as q
+
+    _configure(data_tmp, enabled=True, library_root=library)
+    sync.scan_coreader()
+    books = library / "Books"
+    existing = books / "deep-work" / "notes.md"
+    fresh = books / "unread" / "notes.md"
+    genuinely_missing = books / "plain-article" / "notes.md"
+    existing.unlink()
+    genuinely_missing.unlink()
+    for notes in (existing, fresh):
+        notes.with_name(".notes.md.icloud").touch()
+
+    asked: list[Path] = []
+
+    def request(path: Path) -> bool:
+        asked.append(path)
+        return True  # Accepted by iCloud, but the file isn't available yet.
+
+    monkeypatch.setattr(sync, "_request_download", request)
+    pending = sync.scan_coreader()
+
+    assert asked == [existing, fresh]
+    assert (pending["unreadable"], pending["upserted"], pending["removed"]) == (2, 0, 1)
+    assert set(_rows(db)) == {"deep-work"}
+    assert "increasingly rare" in sync.read_notes("Books/deep-work/notes.md")
+    assert any(hit["kind"] == "coreader" for hit in q.search_all(db, "rare"))
+
+    for notes, content in (
+        (existing, DEEP_WORK_NOTES + "\n> Zanzibar has arrived.\n"),
+        (fresh, "> Hibiscus has arrived.\n"),
+    ):
+        notes.write_text(content, encoding="utf-8")
+        notes.with_name(".notes.md.icloud").unlink()
+
+    materialized = sync.scan_coreader()
+    assert (materialized["unreadable"], materialized["upserted"], materialized["removed"]) == (0, 2, 0)
+    assert set(_rows(db)) == {"deep-work", "unread"}
+    for term in ("zanzibar", "hibiscus"):
+        assert any(hit["kind"] == "coreader" for hit in q.search_all(db, term))
+    stable = sync.scan_coreader()
+    assert (stable["upserted"], stable["unchanged"]) == (0, 2)
+    assert asked == [existing, fresh]
+
+
 def test_bad_front_matter_and_duplicate_ids_do_not_break_the_scan(
     db, data_tmp, library,
 ) -> None:

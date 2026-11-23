@@ -134,6 +134,9 @@ def _scan(cfg: CoreaderConfig) -> dict[str, Any]:
             except FileNotFoundError:
                 # iCloud can replace an evicted file with a ".name.icloud" stub.
                 if (folder / ".notes.md.icloud").exists():
+                    # Request the logical file and let the next scan index it
+                    # after it arrives. Leave any last-good index intact meanwhile.
+                    _request_download(notes)
                     keep_previous()
                 continue
             except OSError:
