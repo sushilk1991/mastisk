@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
+import sys
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -46,6 +49,39 @@ def scan_coreader() -> dict[str, Any]:
         result["scanned_at"] = datetime.now(UTC).isoformat(timespec="seconds")
         _last_scan = result
         return result
+
+
+def _request_download(path: Path) -> bool:
+    """Ask iCloud to fetch an evicted file. Reading one does not trigger the
+    download for a daemon; it fails at once (EDEADLK), so notes that arrive
+    from another device as placeholders would never be indexed."""
+    if sys.platform != "darwin" or "/Mobile Documents/" not in str(path):
+        return False
+    try:
+        done = subprocess.run(
+            ["/usr/bin/brctl", "download", str(path)],
+            capture_output=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def _read_notes(path: Path, wait_seconds: float = 4.0) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        if not _request_download(path):
+            raise
+    # Notes files are small; a requested download usually lands within a second.
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.5)
 
 
 def _scan(cfg: CoreaderConfig) -> dict[str, Any]:
@@ -114,10 +150,10 @@ def _scan(cfg: CoreaderConfig) -> dict[str, Any]:
                 result["unchanged"] += 1
                 continue
             try:
-                text = notes.read_text(encoding="utf-8")
+                text = _read_notes(notes)
             except (OSError, UnicodeError) as exc:
-                # A background process cannot always fetch a file iCloud has
-                # evicted (EDEADLK). Keep what was indexed last time.
+                # iCloud evicted the file and the download did not arrive in
+                # time. Keep what was indexed last time; the next scan retries.
                 log.warning("coreader: cannot read %s: %s", notes, exc)
                 keep_previous()
                 continue

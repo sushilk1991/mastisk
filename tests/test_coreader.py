@@ -207,6 +207,43 @@ def test_unreadable_notes_keep_the_last_index_and_ask_falls_back_to_it(
     assert "increasingly rare" in fallback
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read a mode-000 file")
+def test_evicted_notes_are_requested_from_icloud_and_then_indexed(
+    db, data_tmp, library, monkeypatch,
+) -> None:
+    from mastisk.coreader import sync
+
+    _configure(data_tmp, enabled=True, library_root=library)
+    sync.scan_coreader()
+    notes = library / "Books" / "deep-work" / "notes.md"
+    notes.write_text(DEEP_WORK_NOTES + "\n> A line added on another device.\n", encoding="utf-8")
+    notes.chmod(0o000)
+    asked: list[Path] = []
+
+    def fetch(path: Path) -> bool:
+        # Stands in for `brctl download`: the file becomes readable.
+        asked.append(path)
+        path.chmod(0o644)
+        return True
+
+    monkeypatch.setattr(sync, "_request_download", fetch)
+    result = sync.scan_coreader()
+
+    assert asked == [notes]
+    assert result["unreadable"] == 0
+    assert result["upserted"] == 1
+    assert "added on another device" in sync.read_notes("Books/deep-work/notes.md")
+
+
+def test_download_is_only_requested_for_icloud_paths(tmp_path, monkeypatch) -> None:
+    from mastisk.coreader import sync
+
+    called: list[list[str]] = []
+    monkeypatch.setattr(sync.subprocess, "run", lambda *a, **k: called.append(a[0]))
+    assert sync._request_download(tmp_path / "notes.md") is False
+    assert called == []
+
+
 def test_bad_front_matter_and_duplicate_ids_do_not_break_the_scan(
     db, data_tmp, library,
 ) -> None:
